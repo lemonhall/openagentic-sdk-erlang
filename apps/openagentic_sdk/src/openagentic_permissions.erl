@@ -99,11 +99,21 @@ approve_mode(prompt, Gate, ToolName, _ToolInput, Context) ->
   case maps:get(user_answerer, Gate, undefined) of
     F when is_function(F, 1) ->
       Answer = F(Question),
+      AnswerTxt = truncate_bin(string:trim(to_bin(Answer)), 240),
       Allowed = parse_allowed(Answer),
       #{
         allowed => Allowed,
         question => Question,
-        deny_message => case Allowed of true -> undefined; false -> <<"PermissionGate: user denied tool '", ToolName/binary, "'">> end
+        deny_message =>
+          case Allowed of
+            true ->
+              undefined;
+            false ->
+              case byte_size(AnswerTxt) > 0 of
+                true -> <<"PermissionGate: user answered '", AnswerTxt/binary, "'; denied tool '", ToolName/binary, "'">>;
+                false -> <<"PermissionGate: user denied tool '", ToolName/binary, "'">>
+              end
+          end
       };
     _ ->
       ModeUpper = mode_upper(maps:get(mode, Gate, prompt)),
@@ -116,9 +126,12 @@ approve_mode(prompt, Gate, ToolName, _ToolInput, Context) ->
 
 safe_tools() ->
   [
+    <<"List">>,
     <<"Read">>,
     <<"Glob">>,
     <<"Grep">>,
+    <<"WebFetch">>,
+    <<"WebSearch">>,
     <<"Skill">>,
     <<"SlashCommand">>,
     <<"AskUserQuestion">>
@@ -131,6 +144,10 @@ safe_schema_ok(<<"List">>, Input) ->
 safe_schema_ok(<<"Glob">>, Input) ->
   non_empty_string_any(Input, [<<"pattern">>, pattern]);
 safe_schema_ok(<<"Grep">>, Input) ->
+  non_empty_string_any(Input, [<<"query">>, query]);
+safe_schema_ok(<<"WebFetch">>, Input) ->
+  non_empty_string_any(Input, [<<"url">>, url]);
+safe_schema_ok(<<"WebSearch">>, Input) ->
   non_empty_string_any(Input, [<<"query">>, query]);
 safe_schema_ok(_, _Input) ->
   true.
@@ -180,6 +197,13 @@ parse_allowed(Answer0) ->
 random_hex(NBytes) ->
   Bytes = crypto:strong_rand_bytes(NBytes),
   iolist_to_binary([io_lib:format("~2.16.0b", [X]) || <<X:8>> <= Bytes]).
+
+truncate_bin(Bin0, Max) when is_integer(Max), Max > 0 ->
+  Bin = to_bin(Bin0),
+  case byte_size(Bin) > Max of
+    true -> <<(binary:part(Bin, 0, Max))/binary, "...">>;
+    false -> Bin
+  end.
 
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);

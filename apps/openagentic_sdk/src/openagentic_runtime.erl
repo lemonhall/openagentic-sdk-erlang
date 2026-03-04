@@ -2,7 +2,7 @@
 
 -export([query/2]).
 
--define(DEFAULT_MAX_STEPS, 20).
+-define(DEFAULT_MAX_STEPS, 50).
 -define(DEFAULT_TIMEOUT_MS, 60000).
 
 query(Prompt0, Opts0) ->

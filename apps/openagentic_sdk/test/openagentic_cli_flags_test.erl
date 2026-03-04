@@ -21,6 +21,15 @@ no_stream_flag_disables_streaming_test() ->
     end
   ).
 
+max_steps_defaults_to_50_test() ->
+  with_cli_env(
+    fun (Tmp) ->
+      Opts = openagentic_cli:runtime_opts_for_test(#{project_dir => Tmp}),
+      ?assertEqual(50, maps:get(max_steps, Opts)),
+      ok
+    end
+  ).
+
 max_steps_clamps_to_kotlin_range_test() ->
   with_cli_env(
     fun (Tmp) ->

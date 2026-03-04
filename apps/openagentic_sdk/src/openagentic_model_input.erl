@@ -49,10 +49,19 @@ build_responses_input([E | Rest], State0) when is_map(E) ->
         case maps:get(ToolUseId, Paired, false) of
           true ->
             Output0 = maps:get(output, E, maps:get(<<"output">>, E, null)),
+            IsError = maps:get(is_error, E, maps:get(<<"is_error">>, E, false)),
+            ErrorType = to_bin(maps:get(error_type, E, maps:get(<<"error_type">>, E, <<>>))),
+            ErrorMessage = to_bin(maps:get(error_message, E, maps:get(<<"error_message">>, E, <<>>))),
             Output =
               case is_compacted(ToolUseId, State0) of
                 true -> <<"[Old tool result content cleared]">>;
-                false -> Output0
+                false ->
+                  case {IsError, Output0} of
+                    {true, null} -> tool_error_wrapper(ErrorType, ErrorMessage);
+                    {true, undefined} -> tool_error_wrapper(ErrorType, ErrorMessage);
+                    {true, _} -> #{<<"error">> => #{<<"type">> => ErrorType, <<"message">> => ErrorMessage}, <<"output">> => Output0};
+                    _ -> Output0
+                  end
               end,
             OutStr = encode_tool_output_for_model(Output),
             Item = #{
@@ -78,6 +87,16 @@ encode_tool_output_for_model(Out) ->
   openagentic_json:encode(Out).
 
 %% internal
+tool_error_wrapper(ErrorType0, ErrorMessage0) ->
+  ErrorType = string:trim(to_bin(ErrorType0)),
+  ErrorMessage = string:trim(to_bin(ErrorMessage0)),
+  #{
+    <<"error">> => #{
+      <<"type">> => ErrorType,
+      <<"message">> => ErrorMessage
+    }
+  }.
+
 compacted_tool_ids(Events0) ->
   Events = ensure_list(Events0),
   lists:foldl(

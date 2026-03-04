@@ -24,12 +24,23 @@ run(Input0, Ctx0) ->
         true ->
           Allowed = string_list(Input, <<"allowed_domains">>, allowed_domains),
           Blocked = string_list(Input, <<"blocked_domains">>, blocked_domains),
-          TavilyKey = string:trim(to_bin(os:getenv("TAVILY_API_KEY"))),
-          case byte_size(TavilyKey) > 0 of
+          DotEnv = tool_dotenv(Ctx),
+          TavilyKey =
+            first_non_blank([
+              os:getenv("TAVILY_API_KEY"),
+              openagentic_dotenv:get(<<"TAVILY_API_KEY">>, DotEnv)
+            ]),
+          TavilyUrl =
+            first_non_blank([
+              os:getenv("TAVILY_URL"),
+              openagentic_dotenv:get(<<"TAVILY_URL">>, DotEnv)
+            ]),
+          Endpoint = tavily_endpoint(TavilyUrl),
+          case byte_size(to_bin(TavilyKey)) > 0 of
             false ->
               ddg_out(Query, MaxResults0, Allowed, Blocked, Ctx);
             true ->
-              case tavily_out(Query, MaxResults0, Allowed, Blocked, TavilyKey, Ctx) of
+              case tavily_out(Query, MaxResults0, Allowed, Blocked, TavilyKey, Endpoint, Ctx) of
                 {ok, Out} -> {ok, Out};
                 {error, Err} ->
                   case ddg_out(Query, MaxResults0, Allowed, Blocked, Ctx) of
@@ -37,6 +48,7 @@ run(Input0, Ctx0) ->
                       Meta = #{
                         primary_source => <<"tavily">>,
                         fallback_source => <<"duckduckgo">>,
+                        tavily_url => to_bin(Endpoint),
                         tavily_error => to_bin(Err)
                       },
                       {ok, Out2#{meta => Meta}};
@@ -72,8 +84,8 @@ ddg_out(Query, MaxResults, Allowed, Blocked, Ctx) ->
       {error, {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"HTTP request failed: ">>, to_bin(Reason)])}}
   end.
 
-tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey, Ctx) ->
-  Endpoint = "https://api.tavily.com/search",
+tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey, Endpoint0, Ctx) ->
+  Endpoint = to_bin(Endpoint0),
   Payload = #{
     api_key => TavilyKey,
     query => Query,
@@ -99,6 +111,61 @@ tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey, Ctx) ->
       {error, trim_bin(Msg0)};
     {error, Err} ->
       {error, Err}
+  end.
+
+tool_dotenv(Ctx0) ->
+  %% Avoid implicit `.env` reads in unit tests that call tools directly without a project_dir.
+  Ctx = ensure_map(Ctx0),
+  case maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, undefined)) of
+    undefined -> #{};
+    null -> #{};
+    false -> #{};
+    <<>> -> #{};
+    "" -> #{};
+    ProjectDir0 ->
+      ProjectDir = string:trim(to_bin(ProjectDir0)),
+      case byte_size(ProjectDir) > 0 of
+        false -> #{};
+        true ->
+          openagentic_dotenv:load(filename:join([to_list(ProjectDir), ".env"]))
+      end
+  end.
+
+tavily_endpoint(undefined) -> <<"https://api.tavily.com/search">>;
+tavily_endpoint(null) -> <<"https://api.tavily.com/search">>;
+tavily_endpoint(false) -> <<"https://api.tavily.com/search">>;
+tavily_endpoint(<<>>) -> <<"https://api.tavily.com/search">>;
+tavily_endpoint("") -> <<"https://api.tavily.com/search">>;
+tavily_endpoint(Url0) ->
+  Url1 = string:trim(to_bin(Url0)),
+  Url = trim_trailing_slash(Url1),
+  case ends_with(Url, <<"/search">>) of
+    true -> Url;
+    false -> openagentic_http_url:join(Url, <<"search">>)
+  end.
+
+trim_trailing_slash(Bin0) ->
+  Bin = to_bin(Bin0),
+  case byte_size(Bin) of
+    0 -> Bin;
+    _ ->
+      case binary:last(Bin) of
+        $/ -> binary:part(Bin, 0, byte_size(Bin) - 1);
+        _ -> Bin
+      end
+  end.
+
+first_non_blank([]) -> undefined;
+first_non_blank([false | Rest]) -> first_non_blank(Rest);
+first_non_blank([undefined | Rest]) -> first_non_blank(Rest);
+first_non_blank([null | Rest]) -> first_non_blank(Rest);
+first_non_blank([V0 | Rest]) ->
+  V = string:trim(to_bin(V0)),
+  case V of
+    <<>> -> first_non_blank(Rest);
+    <<"undefined">> -> first_non_blank(Rest);
+    <<"false">> -> first_non_blank(Rest);
+    _ -> V
   end.
 
 tavily_results(ResultsIn, Allowed, Blocked, MaxResults) when is_list(ResultsIn) ->
