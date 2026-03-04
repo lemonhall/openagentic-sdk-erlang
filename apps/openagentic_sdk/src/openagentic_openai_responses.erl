@@ -5,7 +5,7 @@
 -export([complete/1, query/2]).
 
 -ifdef(TEST).
--export([parse_assistant_text_for_test/1, parse_tool_calls_for_test/1]).
+-export([parse_assistant_text_for_test/1, parse_tool_calls_for_test/1, request_payload_for_test/5, build_headers_for_test/3]).
 -endif.
 
 -define(DEFAULT_BASE_URL, "https://api.openai.com/v1").
@@ -49,9 +49,11 @@ complete(Req0) ->
       InputItems = maps:get(input, Req, []),
       Tools = maps:get(tools, Req, []),
       Prev = maps:get(previous_response_id, Req, maps:get(previousResponseId, Req, undefined)),
-      Store = maps:get(store, Req, undefined),
+      Store = maps:get(store, Req, maps:get(<<"store">>, Req, undefined)),
+      DefaultStore = default_store(Req),
+      ApiKeyHeader = api_key_header(Req),
       OnDelta = maps:get(on_delta, Req, maps:get(onDelta, Req, undefined)),
-      do_complete(ApiKey, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, OnDelta);
+      do_complete(ApiKey, ApiKeyHeader, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, DefaultStore, OnDelta);
     {ApiKeyRes, ModelRes} ->
       {error, {missing_required, [ApiKeyRes, ModelRes]}}
   end.
@@ -70,25 +72,6 @@ query(Prompt0, Opts0) ->
     previous_response_id => maps:get(previous_response_id, Opts, maps:get(<<"previous_response_id">>, Opts, undefined))
   },
   complete(Req).
-
-do_complete(ApiKey, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, OnDelta) ->
-  ok = ensure_httpc_started(),
-  ok = configure_proxy(),
-  Url = BaseUrl ++ "/responses",
-  Body = request_body(Model, InputItems, Tools, Prev, Store),
-  Headers = [
-    {"authorization", "Bearer " ++ ApiKey},
-    {"content-type", "application/json"},
-    {"accept", "text/event-stream"}
-  ],
-  HttpOptions = [{timeout, TimeoutMs}],
-  Options = [{sync, false}, {stream, self()}, {body_format, binary}],
-  case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
-    {ok, ReqId} ->
-      collect_stream(ReqId, StreamReadTimeoutMs, OnDelta);
-    Error ->
-      {error, {httpc_request_failed, Error}}
-  end.
 
 ensure_httpc_started() ->
   application:ensure_all_started(inets),
@@ -163,13 +146,30 @@ parse_proxy_url(Url0) ->
       {error, T}
   end.
 
-request_body(Model, InputItems0, Tools0, Prev, Store) ->
+do_complete(ApiKey, ApiKeyHeader, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, DefaultStore, OnDelta) ->
+  ok = ensure_httpc_started(),
+  ok = configure_proxy(),
+  Url = BaseUrl ++ "/responses",
+  Body = request_body(Model, InputItems, Tools, Prev, Store, DefaultStore),
+  Headers = build_headers(ApiKeyHeader, ApiKey, true),
+  HttpOptions = [{timeout, TimeoutMs}],
+  Options = [{sync, false}, {stream, self()}, {body_format, binary}],
+  case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
+    {ok, ReqId} ->
+      collect_stream(ReqId, StreamReadTimeoutMs, OnDelta);
+    Error ->
+      {error, {httpc_request_failed, Error}}
+  end.
+
+request_body(Model, InputItems0, Tools0, Prev, Store0, DefaultStore0) ->
   InputItems = ensure_list(InputItems0),
   Tools = ensure_list(Tools0),
+  Store = store_flag(Store0, DefaultStore0),
   Payload0 = #{
     model => Model,
     input => InputItems,
-    stream => true
+    stream => true,
+    store => Store
   },
   Payload1 =
     case Tools of
@@ -183,12 +183,99 @@ request_body(Model, InputItems0, Tools0, Prev, Store) ->
       "" -> Payload1;
       V -> Payload1#{previous_response_id => to_bin(V)}
     end,
-  Payload =
-    case Store of
-      undefined -> Payload2;
-      V2 -> Payload2#{store => V2}
+  openagentic_json:encode(Payload2).
+
+store_flag(Store0, DefaultStore0) ->
+  DefaultStore = to_bool(DefaultStore0, true),
+  case Store0 of
+    undefined -> DefaultStore;
+    null -> DefaultStore;
+    V -> to_bool(V, DefaultStore)
+  end.
+
+default_store(Req) ->
+  case pick_first(Req, [default_store, defaultStore, <<"default_store">>, <<"defaultStore">>]) of
+    undefined -> true;
+    V -> to_bool(V, true)
+  end.
+
+api_key_header(Req) ->
+  H0 = pick_first(Req, [api_key_header, apiKeyHeader, <<"api_key_header">>, <<"apiKeyHeader">>]),
+  H1 = string:trim(to_bin(H0)),
+  case H1 of
+    <<>> -> <<"authorization">>;
+    <<"undefined">> -> <<"authorization">>;
+    _ -> H1
+  end.
+
+pick_first(_Map, []) ->
+  undefined;
+pick_first(Map, [K | Rest]) ->
+  case maps:get(K, Map, undefined) of
+    undefined -> pick_first(Map, Rest);
+    V -> V
+  end.
+
+build_headers(ApiKeyHeader0, ApiKey, AcceptEventStream) ->
+  ApiKeyHeader = to_list(string:trim(to_bin(ApiKeyHeader0))),
+  HeaderLower = string:lowercase(ApiKeyHeader),
+  KeyVal =
+    case HeaderLower of
+      "authorization" -> "Bearer " ++ ApiKey;
+      _ -> ApiKey
     end,
-  openagentic_json:encode(Payload).
+  Base = [{ApiKeyHeader, KeyVal}, {"content-type", "application/json"}],
+  case AcceptEventStream of
+    true -> Base ++ [{"accept", "text/event-stream"}];
+    false -> Base
+  end.
+
+to_bool(undefined, Default) -> Default;
+to_bool(null, Default) -> Default;
+to_bool(true, _Default) -> true;
+to_bool(false, _Default) -> false;
+to_bool(1, _Default) -> true;
+to_bool(0, _Default) -> false;
+to_bool(V, Default) ->
+  S = string:lowercase(string:trim(to_bin(V))),
+  case S of
+    <<"1">> -> true;
+    <<"true">> -> true;
+    <<"yes">> -> true;
+    <<"y">> -> true;
+    <<"on">> -> true;
+    <<"allow">> -> true;
+    <<"ok">> -> true;
+    <<"0">> -> false;
+    <<"false">> -> false;
+    <<"no">> -> false;
+    <<"n">> -> false;
+    <<"off">> -> false;
+    _ -> Default
+  end.
+
+-ifdef(TEST).
+request_payload_for_test(Model, InputItems0, Tools0, Prev, Req0) ->
+  Req = ensure_map(Req0),
+  Store0 = maps:get(store, Req, maps:get(<<"store">>, Req, undefined)),
+  DefaultStore0 = default_store(Req),
+  Store = store_flag(Store0, DefaultStore0),
+  InputItems = ensure_list(InputItems0),
+  Tools = ensure_list(Tools0),
+  Payload0 = #{model => to_bin(Model), input => InputItems, stream => true, store => Store},
+  Payload1 = case Tools of [] -> Payload0; _ -> Payload0#{tools => Tools} end,
+  Payload2 =
+    case Prev of
+      undefined -> Payload1;
+      <<>> -> Payload1;
+      "" -> Payload1;
+      V -> Payload1#{previous_response_id => to_bin(V)}
+    end,
+  Payload2.
+
+build_headers_for_test(ApiKeyHeader0, ApiKey0, AcceptEventStream) ->
+  build_headers(ApiKeyHeader0, to_list(ApiKey0), AcceptEventStream).
+-endif.
 
 collect_stream(ReqId, TimeoutMs, OnDelta) ->
   Sse0 = openagentic_sse:new(),

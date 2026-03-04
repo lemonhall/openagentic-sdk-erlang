@@ -271,10 +271,10 @@
 
 > 说明：本轮由 `docs/plans/2026-03-04-kotlin-vs-erlang-feature-matrix.md` 的“未打勾项”汇总而来；**LSP 扩展能力已明确不纳入对齐**。
 
-- [ ] Responses Provider：`store` 默认行为与 `--openai-store/--no-openai-store` 对齐（差异点 21）
-- [ ] Responses Provider：`api_key_header` / `apiKeyHeader` 对齐（差异点 22）
-- [ ] CLI：读取 `.env` + 补齐核心 flags（`--project-dir/--api-key/...`）（差异点 23）
-- [ ] Provider 扩展：Anthropic Messages（范围外可选，但 Kotlin 现有）（差异点 24）
+- [x] Responses Provider：`store` 默认行为与 `--openai-store/--no-openai-store` 对齐（差异点 21）
+- [x] Responses Provider：`api_key_header` / `apiKeyHeader` 对齐（差异点 22）
+- [x] CLI：读取 `.env` + 补齐核心 flags（`--project-dir/--api-key/...`）（差异点 23）
+- [x] Provider 扩展：Anthropic Messages（范围外可选，但 Kotlin 现有）（差异点 24）
 
 ---
 
@@ -374,6 +374,62 @@
   - `apps/openagentic_sdk/test/openagentic_cli_flags_test.erl`
 - Evidence（门禁）：
   - `rebar3 eunit --module=openagentic_cli_flags_test`（4 tests, 0 failures）
+
+#### ✅ 差异点 21：Responses Provider store 默认行为（已完成）
+
+- Kotlin 对齐点：
+  - Responses payload 必带 `store`，默认 true；compaction pass 强制 `store=false`。
+  - CLI 支持 `--openai-store/--no-openai-store`（影响 Responses 默认 store）。
+- 落地：
+  - `apps/openagentic_sdk/src/openagentic_openai_responses.erl`（store 默认与 payload 逻辑）
+  - `apps/openagentic_sdk/src/openagentic_runtime.erl`（将 `openai_store` 透传为 provider request `store`）
+  - `apps/openagentic_sdk/src/openagentic_cli.erl`（`--openai-store/--no-openai-store`）
+  - `apps/openagentic_sdk/test/openagentic_testing_provider_store.erl`
+  - `apps/openagentic_sdk/test/openagentic_runtime_openai_store_test.erl`
+  - `apps/openagentic_sdk/test/openagentic_openai_responses_test.erl`
+- Evidence（门禁）：
+  - `rebar3 eunit --module=openagentic_openai_responses_test --module=openagentic_runtime_openai_store_test`（3 tests, 0 failures）
+
+#### ✅ 差异点 22：Responses Provider apiKeyHeader（已完成）
+
+- Kotlin 对齐点：
+  - provider 支持 `apiKeyHeader` 配置；当 header 为 `authorization` 时写 `Bearer <key>`，否则写 `<key>`。
+- 落地：
+  - `apps/openagentic_sdk/src/openagentic_openai_responses.erl`（`api_key_header` 解析 + headers 构建）
+  - `apps/openagentic_sdk/src/openagentic_runtime.erl`（将 `api_key_header` 透传给 provider request）
+  - `apps/openagentic_sdk/test/openagentic_openai_responses_test.erl`（headers 构建门禁）
+  - `apps/openagentic_sdk/test/openagentic_testing_provider_api_key_header.erl`
+  - `apps/openagentic_sdk/test/openagentic_runtime_api_key_header_test.erl`
+- Evidence（门禁）：
+  - `rebar3 eunit --module=openagentic_openai_responses_test --module=openagentic_runtime_api_key_header_test`（5 tests, 0 failures）
+
+#### ✅ 差异点 23：CLI `.env` + flags 覆盖面（已完成）
+
+- Kotlin 对齐点：
+  - 从 `--project-dir`（默认 cwd）读取 `.env`，并与进程 env 合并（`.env` 优先；flags 优先于 `.env`）。
+  - flags 覆盖：`--api-key/--api-key-header/--openai-store/--no-openai-store/--project-dir(--cwd alias)`。
+- 落地：
+  - `apps/openagentic_sdk/src/openagentic_dotenv.erl`（`.env` 解析/加载）
+  - `apps/openagentic_sdk/src/openagentic_cli.erl`（读取 `.env` + flags + 优先级）
+  - `apps/openagentic_sdk/test/openagentic_dotenv_test.erl`
+  - `apps/openagentic_sdk/test/openagentic_cli_dotenv_precedence_test.erl`
+  - `apps/openagentic_sdk/test/openagentic_cli_flags_test.erl`（更新：使用临时 `--project-dir`，避免读取仓库根 `.env`）
+- Evidence（门禁）：
+  - `rebar3 eunit --module=openagentic_dotenv_test --module=openagentic_cli_dotenv_precedence_test --module=openagentic_cli_flags_test`（9 tests, 0 failures）
+
+#### ✅ 差异点 24：Anthropic Messages provider（已完成）
+
+- Kotlin 对齐点：
+  - Anthropic Messages API：Responses-format input/tools 转换、non-stream & SSE streaming（含 tool_use / input_json_delta）。
+  - 离线门禁必须覆盖 parsing/stream decoder（不打真实网络）。
+- 落地：
+  - `apps/openagentic_sdk/src/openagentic_anthropic_messages.erl`（provider；支持 `provider_mod` 注入）
+  - `apps/openagentic_sdk/src/openagentic_anthropic_parsing.erl`（input/tools/content 转换）
+  - `apps/openagentic_sdk/src/openagentic_anthropic_sse_decoder.erl`（SSE 事件解码 + delta）
+  - `apps/openagentic_sdk/test/openagentic_anthropic_parsing_test.erl`
+  - `apps/openagentic_sdk/test/openagentic_anthropic_sse_decoder_test.erl`
+- Evidence（门禁）：
+  - `rebar3 eunit --module=openagentic_anthropic_parsing_test --module=openagentic_anthropic_sse_decoder_test`（3 tests, 0 failures）
 
 #### ✅ 差异点 16：Built-in SubAgents（explore）（已完成）
 

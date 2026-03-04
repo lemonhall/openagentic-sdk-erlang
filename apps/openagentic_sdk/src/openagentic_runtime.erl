@@ -41,6 +41,16 @@ query(Prompt0, Opts0) ->
 
   ProviderRetry = maps:get(provider_retry, Opts, maps:get(providerRetry, Opts, #{})),
   IncludePartial = maps:get(include_partial_messages, Opts, maps:get(includePartialMessages, Opts, false)),
+  OpenAiStore0 =
+    pick_opt(Opts, [openai_store, openAiStore, <<"openai_store">>, <<"openAiStore">>, default_store, defaultStore, <<"default_store">>, <<"defaultStore">>]),
+  OpenAiStore = to_bool_default(OpenAiStore0, true),
+  ApiKeyHeader0 = pick_opt(Opts, [api_key_header, apiKeyHeader, <<"api_key_header">>, <<"apiKeyHeader">>]),
+  ApiKeyHeader =
+    case string:trim(to_bin(ApiKeyHeader0)) of
+      <<>> -> undefined;
+      <<"undefined">> -> undefined;
+      V -> V
+    end,
 
   Protocol0 =
     maps:get(
@@ -144,6 +154,8 @@ query(Prompt0, Opts0) ->
         provider_mod => ProviderMod,
         provider_retry => ProviderRetry,
         include_partial_messages => IncludePartial,
+        openai_store => OpenAiStore,
+        api_key_header => ApiKeyHeader,
         resume_max_events => ResumeMaxEvents,
         resume_max_bytes => ResumeMaxBytes,
         compaction => CompactionCfg,
@@ -836,14 +848,70 @@ bump_steps(State0) ->
   State0#{steps := Steps + 1}.
 
 build_provider_opts(State, InputItems, ToolSchemas) ->
-  #{
+  Protocol = maps:get(protocol, State, responses),
+  StoreFlag = maps:get(openai_store, State, true),
+  ApiKeyHeader0 = maps:get(api_key_header, State, undefined),
+  BaseUrl0 = maps:get(base_url, State, undefined),
+  OptsA = #{
     api_key => maps:get(api_key, State, <<"">>),
     model => maps:get(model, State, <<"">>),
-    base_url => maps:get(base_url, State, undefined),
     timeout_ms => maps:get(timeout_ms, State, ?DEFAULT_TIMEOUT_MS),
     input => InputItems,
     tools => ToolSchemas
-  }.
+  },
+  Opts0 =
+    case BaseUrl0 of
+      undefined -> OptsA;
+      null -> OptsA;
+      <<>> -> OptsA;
+      "" -> OptsA;
+      <<"undefined">> -> OptsA;
+      VUrl -> OptsA#{base_url => VUrl}
+    end,
+  Opts1 =
+    case Protocol of
+      responses -> Opts0#{store => StoreFlag};
+      _ -> Opts0
+    end,
+  case ApiKeyHeader0 of
+    undefined -> Opts1;
+    null -> Opts1;
+    <<>> -> Opts1;
+    "" -> Opts1;
+    VHdr -> Opts1#{api_key_header => VHdr}
+  end.
+
+pick_opt(_Map, []) ->
+  undefined;
+pick_opt(Map, [K | Rest]) ->
+  case maps:get(K, Map, undefined) of
+    undefined -> pick_opt(Map, Rest);
+    V -> V
+  end.
+
+to_bool_default(undefined, Default) -> Default;
+to_bool_default(null, Default) -> Default;
+to_bool_default(true, _Default) -> true;
+to_bool_default(false, _Default) -> false;
+to_bool_default(1, _Default) -> true;
+to_bool_default(0, _Default) -> false;
+to_bool_default(V, Default) ->
+  S = string:lowercase(string:trim(to_bin(V))),
+  case S of
+    <<"1">> -> true;
+    <<"true">> -> true;
+    <<"yes">> -> true;
+    <<"y">> -> true;
+    <<"on">> -> true;
+    <<"allow">> -> true;
+    <<"ok">> -> true;
+    <<"0">> -> false;
+    <<"false">> -> false;
+    <<"no">> -> false;
+    <<"n">> -> false;
+    <<"off">> -> false;
+    _ -> Default
+  end.
 
 is_tool_allowed(undefined, _ToolName) ->
   true;

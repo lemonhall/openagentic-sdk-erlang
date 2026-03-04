@@ -91,22 +91,34 @@ usage() ->
     "Usage:\\n"
     "  openagentic run [flags] <prompt>\\n"
     "  openagentic chat [flags]\\n\\n"
+    "Defaults:\\n"
+    "  - Reads .env in project dir (if present)\\n"
+    "  - Project dir defaults to current directory\\n"
+    "  - Streaming defaults to on\\n\\n"
     "Flags:\\n"
     "  --protocol <responses|legacy>\\n"
     "  --model <model>\\n"
+    "  --api-key <key>\\n"
     "  --base-url <url>\\n"
+    "  --api-key-header <header>\\n"
+    "  --cwd <dir> (legacy alias; prefer --project-dir)\\n"
+    "  --project-dir <dir>\\n"
     "  --resume <session_id>\\n"
     "  --permission <bypass|deny|prompt|default>\\n"
     "  --stream\\n"
     "  --no-stream\\n"
+    "  --openai-store <bool>\\n"
+    "  --no-openai-store\\n"
     "  --max-steps <1..200>\\n"
     "  --context-limit <n>\\n"
     "  --reserved <n>\\n"
     "  --input-limit <n>\\n\\n"
-    "Env (preferred):\\n"
+    "Env/.env keys:\\n"
     "  OPENAI_API_KEY (required)\\n"
     "  OPENAI_BASE_URL (optional)\\n"
-    "  OPENAI_MODEL (optional)\\n",
+    "  OPENAI_MODEL or MODEL (optional)\\n"
+    "  OPENAI_API_KEY_HEADER (optional)\\n"
+    "  OPENAI_STORE (optional)\\n",
     []
   ).
 
@@ -120,35 +132,53 @@ runtime_opts_for_test(Flags0) ->
 
 runtime_opts(Flags0) ->
   Flags = ensure_map(Flags0),
+  ProjectDir0 = maps:get(project_dir, Flags, maps:get(cwd, Flags, cwd_safe())),
+  ProjectDir = to_list(string:trim(to_bin(ProjectDir0))),
+  DotEnv = openagentic_dotenv:load(filename:join([ProjectDir, ".env"])),
+
   ApiKey =
-    case os:getenv("OPENAI_API_KEY") of
-      false -> undefined;
-      ApiKeyEnv -> iolist_to_binary(ApiKeyEnv)
-    end,
+    first_non_blank([
+      maps:get(api_key, Flags, undefined),
+      openagentic_dotenv:get(<<"OPENAI_API_KEY">>, DotEnv),
+      os:getenv("OPENAI_API_KEY")
+    ]),
+
   Model =
-    case maps:get(model, Flags, undefined) of
-      undefined ->
-        case os:getenv("OPENAI_MODEL") of
-          false -> undefined;
-          ModelEnv -> iolist_to_binary(ModelEnv)
-        end;
-      ModelFlag -> to_bin(ModelFlag)
-    end,
+    first_non_blank([
+      maps:get(model, Flags, undefined),
+      openagentic_dotenv:get(<<"OPENAI_MODEL">>, DotEnv),
+      openagentic_dotenv:get(<<"MODEL">>, DotEnv),
+      os:getenv("OPENAI_MODEL"),
+      os:getenv("MODEL")
+    ]),
+
   BaseUrl =
-    case maps:get(base_url, Flags, undefined) of
-      undefined ->
-        case os:getenv("OPENAI_BASE_URL") of
-          false -> undefined;
-          BaseUrlEnv -> iolist_to_binary(BaseUrlEnv)
-        end;
-      BaseUrlFlag -> to_bin(BaseUrlFlag)
-    end,
+    first_non_blank([
+      maps:get(base_url, Flags, undefined),
+      openagentic_dotenv:get(<<"OPENAI_BASE_URL">>, DotEnv),
+      os:getenv("OPENAI_BASE_URL"),
+      <<"https://api.openai.com/v1">>
+    ]),
+
+  ApiKeyHeader =
+    first_non_blank([
+      maps:get(api_key_header, Flags, undefined),
+      openagentic_dotenv:get(<<"OPENAI_API_KEY_HEADER">>, DotEnv),
+      os:getenv("OPENAI_API_KEY_HEADER"),
+      <<"authorization">>
+    ]),
   Protocol = maps:get(protocol, Flags, responses),
   Stream = maps:get(stream, Flags, true),
   Permission = maps:get(permission, Flags, default),
   Resume = maps:get(resume_session_id, Flags, undefined),
   MaxSteps = maps:get(max_steps, Flags, 20),
   Compaction = ensure_map(maps:get(compaction, Flags, #{})),
+  OpenAiStore0 =
+    case maps:is_key(openai_store, Flags) of
+      true -> maps:get(openai_store, Flags);
+      false -> first_non_blank([openagentic_dotenv:get(<<"OPENAI_STORE">>, DotEnv), os:getenv("OPENAI_STORE")])
+    end,
+  OpenAiStore = to_bool_default(OpenAiStore0, true),
 
   UserAnswerer = fun ask_user_answerer/1,
   Gate =
@@ -165,10 +195,10 @@ runtime_opts(Flags0) ->
 
   case {ApiKey, Model} of
     {undefined, _} ->
-      io:format("Missing env OPENAI_API_KEY.~n", []),
+      io:format("Missing API key. Use --api-key, or set OPENAI_API_KEY (env/.env).~n", []),
       halt(2);
     {_, undefined} ->
-      io:format("Missing model. Use --model or env OPENAI_MODEL.~n", []),
+      io:format("Missing model. Use --model, or set OPENAI_MODEL/MODEL (env/.env).~n", []),
       halt(2);
     _ ->
       ok
@@ -178,11 +208,15 @@ runtime_opts(Flags0) ->
     api_key => ApiKey,
     model => Model,
     base_url => BaseUrl,
+    api_key_header => ApiKeyHeader,
     protocol => Protocol,
     include_partial_messages => Stream,
     resume_session_id => Resume,
     max_steps => MaxSteps,
     compaction => Compaction,
+    openai_store => OpenAiStore,
+    cwd => ProjectDir,
+    project_dir => ProjectDir,
     permission_gate => Gate,
     user_answerer => UserAnswerer,
     task_progress_emitter => fun (Msg) -> io:format("~s~n", [to_list(Msg)]) end,
@@ -269,8 +303,16 @@ parse_flags(["--protocol", V | Rest], Acc) ->
   parse_flags(Rest, Acc#{protocol => P});
 parse_flags(["--model", V | Rest], Acc) ->
   parse_flags(Rest, Acc#{model => to_bin(V)});
+parse_flags(["--api-key", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{api_key => to_bin(V)});
 parse_flags(["--base-url", V | Rest], Acc) ->
   parse_flags(Rest, Acc#{base_url => to_bin(V)});
+parse_flags(["--api-key-header", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{api_key_header => to_bin(V)});
+parse_flags(["--cwd", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{project_dir => to_bin(V)});
+parse_flags(["--project-dir", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{project_dir => to_bin(V)});
 parse_flags(["--resume", V | Rest], Acc) ->
   parse_flags(Rest, Acc#{resume_session_id => to_bin(V)});
 parse_flags(["--permission", V0 | Rest], Acc) ->
@@ -288,6 +330,12 @@ parse_flags(["--stream" | Rest], Acc) ->
   parse_flags(Rest, Acc#{stream => true});
 parse_flags(["--no-stream" | Rest], Acc) ->
   parse_flags(Rest, Acc#{stream => false});
+parse_flags(["--openai-store", V0 | Rest], Acc) ->
+  V = string:lowercase(string:trim(to_bin(V0))),
+  Bool = V =/= <<"0">> andalso V =/= <<"false">> andalso V =/= <<"no">> andalso V =/= <<"off">>,
+  parse_flags(Rest, Acc#{openai_store => Bool});
+parse_flags(["--no-openai-store" | Rest], Acc) ->
+  parse_flags(Rest, Acc#{openai_store => false});
 parse_flags(["--max-steps", V0 | Rest], Acc) ->
   Max0 = parse_int(V0),
   Max =
@@ -340,6 +388,60 @@ parse_int(V0) ->
 
 clamp_int(I, Min, Max) when is_integer(I) ->
   erlang:min(Max, erlang:max(Min, I)).
+
+cwd_safe() ->
+  case file:get_cwd() of
+    {ok, V} -> V;
+    _ -> "."
+  end.
+
+first_non_blank([]) ->
+  undefined;
+first_non_blank([V0 | Rest]) ->
+  V1 = strip_wrapping_quotes(to_bin(V0)),
+  case byte_size(string:trim(V1)) > 0 of
+    true -> string:trim(V1);
+    false -> first_non_blank(Rest)
+  end.
+
+strip_wrapping_quotes(Val0) ->
+  Val = string:trim(to_bin(Val0)),
+  case byte_size(Val) >= 2 of
+    false ->
+      Val;
+    true ->
+      First = binary:at(Val, 0),
+      Last = binary:at(Val, byte_size(Val) - 1),
+      case {First, Last} of
+        {$", $"} -> string:trim(binary:part(Val, 1, byte_size(Val) - 2));
+        {$', $'} -> string:trim(binary:part(Val, 1, byte_size(Val) - 2));
+        _ -> Val
+      end
+  end.
+
+to_bool_default(undefined, Default) -> Default;
+to_bool_default(null, Default) -> Default;
+to_bool_default(true, _Default) -> true;
+to_bool_default(false, _Default) -> false;
+to_bool_default(1, _Default) -> true;
+to_bool_default(0, _Default) -> false;
+to_bool_default(V, Default) ->
+  S = string:lowercase(string:trim(to_bin(V))),
+  case S of
+    <<"1">> -> true;
+    <<"true">> -> true;
+    <<"yes">> -> true;
+    <<"y">> -> true;
+    <<"on">> -> true;
+    <<"allow">> -> true;
+    <<"ok">> -> true;
+    <<"0">> -> false;
+    <<"false">> -> false;
+    <<"no">> -> false;
+    <<"n">> -> false;
+    <<"off">> -> false;
+    _ -> Default
+  end.
 
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);
