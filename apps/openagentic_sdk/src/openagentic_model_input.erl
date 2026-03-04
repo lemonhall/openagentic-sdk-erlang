@@ -4,7 +4,8 @@
 
 build_responses_input(Events) when is_list(Events) ->
   Compacted = compacted_tool_ids(Events),
-  build_responses_input(Events, #{seen_call_ids => #{}, compacted_ids => Compacted}).
+  Paired = paired_tool_call_ids(Events),
+  build_responses_input(Events, #{paired_call_ids => Paired, compacted_ids => Compacted}).
 
 build_responses_input([], _State) ->
   [];
@@ -29,19 +30,23 @@ build_responses_input([E | Rest], State0) when is_map(E) ->
         Name = to_bin(maps:get(name, E, maps:get(<<"name">>, E, <<>>))),
         Args = ensure_map(maps:get(input, E, maps:get(<<"input">>, E, #{}))),
         ArgsStr = openagentic_json:encode(Args),
-        Seen0 = maps:get(seen_call_ids, State0, #{}),
-        Seen1 = Seen0#{ToolUseId => true},
-        Item = #{
-          type => <<"function_call">>,
-          call_id => ToolUseId,
-          name => Name,
-          arguments => ArgsStr
-        },
-        {[Item], State0#{seen_call_ids => Seen1}};
+        Paired = maps:get(paired_call_ids, State0, #{}),
+        case maps:get(ToolUseId, Paired, false) of
+          true ->
+            Item = #{
+              type => <<"function_call">>,
+              call_id => ToolUseId,
+              name => Name,
+              arguments => ArgsStr
+            },
+            {[Item], State0};
+          false ->
+            {[], State0}
+        end;
       <<"tool.result">> ->
         ToolUseId = to_bin(maps:get(tool_use_id, E, maps:get(<<"tool_use_id">>, E, <<>>))),
-        Seen = maps:get(seen_call_ids, State0, #{}),
-        case maps:get(ToolUseId, Seen, false) of
+        Paired = maps:get(paired_call_ids, State0, #{}),
+        case maps:get(ToolUseId, Paired, false) of
           true ->
             Output0 = maps:get(output, E, maps:get(<<"output">>, E, null)),
             Output =
@@ -83,6 +88,43 @@ compacted_tool_ids(Events0) ->
         <<"tool.output_compacted">> ->
           Tid = to_bin(maps:get(tool_use_id, E, maps:get(<<"tool_use_id">>, E, <<>>))),
           case byte_size(string:trim(Tid)) > 0 of true -> Acc0#{Tid => true}; false -> Acc0 end;
+        _ ->
+          Acc0
+      end
+    end,
+    #{},
+    Events
+  ).
+
+paired_tool_call_ids(Events0) ->
+  Events = ensure_list(Events0),
+  UseIds =
+    lists:foldl(
+      fun (E0, Acc0) ->
+        E = ensure_map(E0),
+        Type = to_bin(maps:get(type, E, maps:get(<<"type">>, E, <<>>))),
+        case Type of
+          <<"tool.use">> ->
+            Tid = to_bin(maps:get(tool_use_id, E, maps:get(<<"tool_use_id">>, E, <<>>))),
+            case byte_size(string:trim(Tid)) > 0 of true -> Acc0#{Tid => true}; false -> Acc0 end;
+          _ ->
+            Acc0
+        end
+      end,
+      #{},
+      Events
+    ),
+  lists:foldl(
+    fun (E0, Acc0) ->
+      E = ensure_map(E0),
+      Type = to_bin(maps:get(type, E, maps:get(<<"type">>, E, <<>>))),
+      case Type of
+        <<"tool.result">> ->
+          Tid = to_bin(maps:get(tool_use_id, E, maps:get(<<"tool_use_id">>, E, <<>>))),
+          case {byte_size(string:trim(Tid)) > 0, maps:get(Tid, UseIds, false)} of
+            {true, true} -> Acc0#{Tid => true};
+            _ -> Acc0
+          end;
         _ ->
           Acc0
       end

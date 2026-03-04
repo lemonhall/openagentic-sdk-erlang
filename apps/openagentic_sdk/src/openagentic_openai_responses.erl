@@ -443,9 +443,38 @@ parse_tool_calls(OutputItems0) ->
       Item = ensure_map(Item0),
       case to_bin(maps:get(<<"type">>, Item, maps:get(type, Item, <<>>))) of
         <<"function_call">> ->
-          CallId = to_bin(maps:get(<<"call_id">>, Item, maps:get(call_id, Item, <<>>))),
-          Name = to_bin(maps:get(<<"name">>, Item, maps:get(name, Item, <<>>))),
-          ArgsEl = maps:get(<<"arguments">>, Item, maps:get(arguments, Item, #{})),
+          %% Be tolerant to gateway variants:
+          %% - call id: call_id | id | tool_call_id
+          %% - name/args: top-level (Responses) or nested under "function" (ChatCompletions-like)
+          CallId0 =
+            pick_first(Item, [
+              <<"call_id">>,
+              call_id,
+              <<"id">>,
+              id,
+              <<"tool_call_id">>,
+              tool_call_id,
+              <<"toolCallId">>,
+              toolCallId
+            ]),
+          CallId1 = string:trim(to_bin(CallId0)),
+          CallId = case CallId1 of <<"undefined">> -> <<>>; _ -> CallId1 end,
+          Func = ensure_map(maps:get(<<"function">>, Item, maps:get(function, Item, #{}))),
+          Name0 =
+            pick_first(Item, [<<"name">>, name, <<"tool_name">>, tool_name, <<"toolName">>, toolName]),
+          Name = string:trim(to_bin(Name0)),
+          Name2 =
+            case Name of
+              <<>> -> to_bin(pick_first(Func, [<<"name">>, name]));
+              <<"undefined">> -> to_bin(pick_first(Func, [<<"name">>, name]));
+              _ -> Name
+            end,
+          ArgsEl0 = pick_first(Item, [<<"arguments">>, arguments]),
+          ArgsEl =
+            case ArgsEl0 of
+              undefined -> maps:get(<<"arguments">>, Func, maps:get(arguments, Func, #{}));
+              V -> V
+            end,
           Args =
             case ArgsEl of
               M when is_map(M) -> M;
@@ -453,10 +482,10 @@ parse_tool_calls(OutputItems0) ->
               L when is_list(L) -> parse_args(iolist_to_binary(L));
               _ -> #{<<"_raw">> => to_bin(ArgsEl)}
             end,
-          case {CallId, Name} of
+          case {string:trim(CallId), string:trim(Name2)} of
             {<<>>, _} -> Acc;
             {_, <<>>} -> Acc;
-            _ -> Acc ++ [#{tool_use_id => CallId, name => Name, arguments => ensure_map(Args)}]
+            _ -> Acc ++ [#{tool_use_id => CallId, name => Name2, arguments => ensure_map(Args)}]
           end;
         _ ->
           Acc

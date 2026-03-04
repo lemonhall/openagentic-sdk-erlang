@@ -24,6 +24,22 @@ offline_parse_output_items_test() ->
   [TC] = ToolCalls,
   ?assertEqual(<<"Hello">>, maps:get(<<"text">>, maps:get(arguments, TC))).
 
+offline_parse_tool_call_gateway_variant_id_function_test() ->
+  OutputItems = [
+    #{
+      <<"type">> => <<"function_call">>,
+      <<"id">> => <<"call_x">>,
+      <<"function">> => #{
+        <<"name">> => <<"Read">>,
+        <<"arguments">> => <<"{\"path\":\"README.md\"}">>
+      }
+    }
+  ],
+  ToolCalls = openagentic_openai_responses:parse_tool_calls_for_test(OutputItems),
+  ?assertMatch([#{tool_use_id := <<"call_x">>, name := <<"Read">>, arguments := _}], ToolCalls),
+  [TC] = ToolCalls,
+  ?assertEqual(<<"README.md">>, maps:get(<<"path">>, maps:get(arguments, TC))).
+
 request_payload_includes_store_default_true_test() ->
   Payload =
     openagentic_openai_responses:request_payload_for_test(
