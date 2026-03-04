@@ -1,0 +1,10 @@
+Reads a file (text or common image types) from the project workspace.
+
+Project root:
+- {{project_dir}}
+
+Usage:
+- Provide `file_path` (or `filePath`) as an absolute path or a project-root-relative path.
+- Any path that is outside the project root will be rejected.
+- Optional: `offset` (1-based) and `limit` can be used to read a slice of the file with line numbers.
+- Large files are truncated (up to {{maxBytes}} bytes).

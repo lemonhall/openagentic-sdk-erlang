@@ -1,0 +1,17 @@
+- Search the web for up-to-date information.
+- Primary backend: Tavily (`TAVILY_API_KEY`).
+- Fallback backend (when Tavily is missing or fails): DuckDuckGo HTML.
+- Use this tool when you need information beyond your knowledge cutoff, current prices, schedules, breaking news, etc.
+
+Input:
+  - query (string, required)
+  - max_results (int, optional; default ~5)
+  - allowed_domains (string[], optional)
+  - blocked_domains (string[], optional)
+
+Output:
+  - results: [{ title, url, content?, source }]
+  - total_results: int
+  - meta may include tavily_error when fallback is used.
+
+Today's date is {{date}}. Prefer including the current year in queries for "latest/today" requests.

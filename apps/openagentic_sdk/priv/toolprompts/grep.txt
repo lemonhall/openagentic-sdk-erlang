@@ -1,0 +1,10 @@
+Searches file contents using a regular expression within the project workspace.
+
+Project root:
+- {{project_dir}}
+
+Usage:
+- Provide `query` (regex) and optional `file_glob` (defaults to `**/*`).
+- Optional: restrict the search base with `root` (or `path`). Relative paths are resolved against the project root.
+- Any path outside the project root will be rejected.
+- Use `mode="files_with_matches"` to list only matched files, or omit to include per-line matches.

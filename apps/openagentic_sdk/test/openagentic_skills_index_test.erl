@@ -1,0 +1,95 @@
+-module(openagentic_skills_index_test).
+
+-include_lib("eunit/include/eunit.hrl").
+
+indexes_claude_skills_test() ->
+  Root = test_root(),
+  ProjectDir = filename:join([Root, "proj"]),
+  SkillDir = filename:join([ProjectDir, ".claude", "skills", "a"]),
+  ok = filelib:ensure_dir(filename:join([SkillDir, "x"])),
+  ok = file:write_file(filename:join([SkillDir, "SKILL.md"]), <<"# a\n\nsummary\n">>),
+
+  AgentsHome = filename:join([Root, "agents"]),
+  GlobalHome = filename:join([Root, "home"]),
+  ok = filelib:ensure_dir(filename:join([AgentsHome, "x"])),
+  ok = filelib:ensure_dir(filename:join([GlobalHome, "x"])),
+
+  OldAgents = os:getenv("OPENAGENTIC_AGENTS_HOME"),
+  OldSdk = os:getenv("OPENAGENTIC_SDK_HOME"),
+  try
+    true = os:putenv("OPENAGENTIC_AGENTS_HOME", AgentsHome),
+    true = os:putenv("OPENAGENTIC_SDK_HOME", GlobalHome),
+    Infos = openagentic_skills:index(ProjectDir),
+    Names = [maps:get(name, I) || I <- Infos],
+    ?assert(lists:member(<<"a">>, Names))
+  after
+    restore_env("OPENAGENTIC_AGENTS_HOME", OldAgents),
+    restore_env("OPENAGENTIC_SDK_HOME", OldSdk)
+  end.
+
+includes_global_skills_test() ->
+  Root = test_root(),
+  ProjectDir = filename:join([Root, "proj2"]),
+  GlobalHome = filename:join([Root, "home"]),
+  AgentsHome = filename:join([Root, "agents"]),
+  ok = filelib:ensure_dir(filename:join([GlobalHome, "x"])),
+  ok = filelib:ensure_dir(filename:join([AgentsHome, "x"])),
+
+  OldAgents = os:getenv("OPENAGENTIC_AGENTS_HOME"),
+  OldSdk = os:getenv("OPENAGENTIC_SDK_HOME"),
+  try
+    true = os:putenv("OPENAGENTIC_AGENTS_HOME", AgentsHome),
+    true = os:putenv("OPENAGENTIC_SDK_HOME", GlobalHome),
+    G = filename:join([GlobalHome, "skills", "g"]),
+    ok = filelib:ensure_dir(filename:join([G, "x"])),
+    ok = file:write_file(
+      filename:join([G, "SKILL.md"]),
+      <<"---\nname: global-one\ndescription: gd\n---\n\n# global-one\n">>
+    ),
+    Infos = openagentic_skills:index(ProjectDir),
+    Names = [maps:get(name, I) || I <- Infos],
+    ?assert(lists:member(<<"global-one">>, Names))
+  after
+    restore_env("OPENAGENTIC_AGENTS_HOME", OldAgents),
+    restore_env("OPENAGENTIC_SDK_HOME", OldSdk)
+  end.
+
+project_overrides_global_on_name_collision_test() ->
+  Root = test_root(),
+  ProjectDir = filename:join([Root, "proj3"]),
+  GlobalHome = filename:join([Root, "home2"]),
+  AgentsHome = filename:join([Root, "agents"]),
+  ok = filelib:ensure_dir(filename:join([GlobalHome, "x"])),
+  ok = filelib:ensure_dir(filename:join([AgentsHome, "x"])),
+
+  OldAgents = os:getenv("OPENAGENTIC_AGENTS_HOME"),
+  OldSdk = os:getenv("OPENAGENTIC_SDK_HOME"),
+  try
+    true = os:putenv("OPENAGENTIC_AGENTS_HOME", AgentsHome),
+    true = os:putenv("OPENAGENTIC_SDK_HOME", GlobalHome),
+    G = filename:join([GlobalHome, "skills", "a"]),
+    ok = filelib:ensure_dir(filename:join([G, "x"])),
+    ok = file:write_file(filename:join([G, "SKILL.md"]), <<"---\nname: a\ndescription: global\n---\n\n# A\n">>),
+
+    P = filename:join([ProjectDir, ".claude", "skills", "a"]),
+    ok = filelib:ensure_dir(filename:join([P, "x"])),
+    ok = file:write_file(filename:join([P, "SKILL.md"]), <<"---\nname: a\ndescription: project\n---\n\n# A\n">>),
+
+    Infos = openagentic_skills:index(ProjectDir),
+    A = hd([I || I <- Infos, maps:get(name, I) =:= <<"a">>]),
+    ?assertEqual(<<"project">>, maps:get(description, A))
+  after
+    restore_env("OPENAGENTIC_AGENTS_HOME", OldAgents),
+    restore_env("OPENAGENTIC_SDK_HOME", OldSdk)
+  end.
+
+restore_env(Name, false) ->
+  os:unsetenv(Name);
+restore_env(Name, Val) ->
+  os:putenv(Name, Val).
+
+test_root() ->
+  Base = code:lib_dir(openagentic_sdk),
+  Tmp = filename:join([Base, "tmp", integer_to_list(erlang:unique_integer([positive]))]),
+  ok = filelib:ensure_dir(filename:join([Tmp, "x"])),
+  Tmp.
