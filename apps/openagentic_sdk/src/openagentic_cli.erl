@@ -112,7 +112,8 @@ usage() ->
     "Defaults:\\n"
     "  - Reads .env in project dir (if present)\\n"
     "  - Project dir defaults to current directory\\n"
-    "  - Streaming defaults to on\\n\\n"
+    "  - Streaming defaults to on\\n"
+    "  - Colors default to on (set NO_COLOR=1 to disable)\\n\\n"
     "Flags:\\n"
     "  --protocol <responses|legacy>\\n"
     "  --model <model>\\n"
@@ -125,6 +126,10 @@ usage() ->
     "  --permission <bypass|deny|prompt|default>\\n"
     "  --stream\\n"
     "  --no-stream\\n"
+    "  --color\\n"
+    "  --no-color\\n"
+    "  --render-markdown (only affects non-stream output)\\n"
+    "  --no-render-markdown\\n"
     "  --openai-store <bool>\\n"
     "  --no-openai-store\\n"
     "  --max-steps <1..200>\\n"
@@ -198,6 +203,14 @@ runtime_opts(Flags0) ->
     ]),
   Protocol = maps:get(protocol, Flags, responses),
   Stream = maps:get(stream, Flags, true),
+  ColorFlag = maps:get(color, Flags, undefined),
+  Color =
+    case ColorFlag of
+      true -> true;
+      false -> false;
+      _ -> auto_color()
+    end,
+  RenderMarkdown = to_bool_default(maps:get(render_markdown, Flags, true), true),
   Permission = maps:get(permission, Flags, default),
   Resume = maps:get(resume_session_id, Flags, undefined),
   MaxSteps = maps:get(max_steps, Flags, 50),
@@ -250,7 +263,7 @@ runtime_opts(Flags0) ->
     user_answerer => UserAnswerer,
     task_progress_emitter => fun (Msg) -> io:format("~ts~n", [to_text(Msg)]) end,
     task_agents => TaskAgents,
-    event_sink => event_sink(Stream)
+    event_sink => event_sink(Stream, #{color => Color, render_markdown => RenderMarkdown})
   }.
 
 -ifdef(TEST).
@@ -299,7 +312,10 @@ ask_user_answerer(Question0) ->
       string:trim(to_bin(Ans0))
   end.
 
-event_sink(Stream) ->
+event_sink(Stream, Fmt0) ->
+  Fmt = ensure_map(Fmt0),
+  Color = to_bool_default(maps:get(color, Fmt, auto_color()), auto_color()),
+  RenderMarkdown = to_bool_default(maps:get(render_markdown, Fmt, true), true),
   fun (Ev0) ->
     Ev = ensure_map(Ev0),
     Type = to_bin(maps:get(type, Ev, maps:get(<<"type">>, Ev, <<>>))),
@@ -316,7 +332,11 @@ event_sink(Stream) ->
             io:format("~n", []);
           _ ->
             Txt = to_bin(maps:get(text, Ev, maps:get(<<"text">>, Ev, <<>>))),
-            io:format("assistant: ~ts~n", [to_text(Txt)])
+            Txt2 = format_assistant_text(Txt, Color, RenderMarkdown),
+            io:format(
+              "~ts~n",
+              [to_text(iolist_to_binary([ansi(<<"magenta">>, <<"assistant:">>, Color), <<" ">>, Txt2]))]
+            )
         end;
       <<"tool.use">> ->
         maybe_break_delta(),
@@ -325,7 +345,8 @@ event_sink(Stream) ->
         Input = ensure_map(maps:get(input, Ev, maps:get(<<"input">>, Ev, #{}))),
         _ = remember_tool_name(ToolUseId, Name),
         Summary = tool_use_summary(Name, Input),
-        io:format("tool.use ~ts~ts~n", [to_text(Name), to_text(Summary)]);
+        Line = [ansi(<<"cyan">>, <<"tool.use">>, Color), <<" ">>, ansi(<<"cyan">>, Name, Color), format_cli_line(Summary, Color)],
+        io:format("~ts~n", [to_text(iolist_to_binary(Line))]);
       <<"tool.result">> ->
         maybe_break_delta(),
         ToolUseId = to_bin(maps:get(tool_use_id, Ev, maps:get(<<"tool_use_id">>, Ev, <<>>))),
@@ -335,23 +356,35 @@ event_sink(Stream) ->
           true ->
             Et = to_bin(maps:get(error_type, Ev, maps:get(<<"error_type">>, Ev, <<"error">>))),
             Em = to_bin(maps:get(error_message, Ev, maps:get(<<"error_message">>, Ev, <<>>))),
-            io:format("tool.result ERROR ~ts: ~ts~n", [to_text(Et), to_text(Em)]);
+            io:format(
+              "~ts~n",
+              [to_text(iolist_to_binary([ansi(<<"red">>, <<"tool.result ERROR">>, Color), <<" ">>, ansi(<<"red">>, Et, Color), <<": ">>, format_cli_line(Em, Color)]))]
+            ),
+            io:format("~n", []),
+            maybe_forget_tool_name(ToolUseId);
           false ->
             Output = maps:get(output, Ev, maps:get(<<"output">>, Ev, undefined)),
             Lines = tool_result_lines(ToolName, Output),
-            io:format("tool.result ok~n", []),
-            lists:foreach(fun (L) -> io:format("~ts~n", [to_text(L)]) end, Lines),
+            io:format("~ts~n", [to_text(ansi(<<"green">>, <<"tool.result ok">>, Color))]),
+            lists:foreach(fun (L0) -> io:format("~ts~n", [to_text(format_cli_line(L0, Color))]) end, Lines),
+            io:format("~n", []),
             maybe_forget_tool_name(ToolUseId)
         end;
       <<"runtime.error">> ->
         maybe_break_delta(),
         Phase = to_bin(maps:get(phase, Ev, maps:get(<<"phase">>, Ev, <<>>))),
         Et = to_bin(maps:get(error_type, Ev, maps:get(<<"error_type">>, Ev, <<>>))),
-        io:format("runtime.error ~ts ~ts~n", [to_text(Phase), to_text(Et)]);
+        io:format(
+          "~ts~n~n",
+          [to_text(iolist_to_binary([ansi(<<"red">>, <<"runtime.error">>, Color), <<" ">>, ansi(<<"red">>, Phase, Color), <<" ">>, ansi(<<"red">>, Et, Color)]))]
+        );
       <<"result">> ->
         maybe_break_delta(),
         Stop = to_bin(maps:get(stop_reason, Ev, maps:get(<<"stop_reason">>, Ev, <<>>))),
-        io:format("result stop_reason=~ts~n", [to_text(Stop)]);
+        io:format(
+          "~ts~n",
+          [to_text(iolist_to_binary([ansi(<<"yellow">>, <<"result">>, Color), <<" stop_reason=">>, ansi(<<"yellow">>, Stop, Color)]))]
+        );
       _ ->
         ok
     end
@@ -400,6 +433,14 @@ parse_flags(["--stream" | Rest], Acc) ->
   parse_flags(Rest, Acc#{stream => true});
 parse_flags(["--no-stream" | Rest], Acc) ->
   parse_flags(Rest, Acc#{stream => false});
+parse_flags(["--color" | Rest], Acc) ->
+  parse_flags(Rest, Acc#{color => true});
+parse_flags(["--no-color" | Rest], Acc) ->
+  parse_flags(Rest, Acc#{color => false});
+parse_flags(["--render-markdown" | Rest], Acc) ->
+  parse_flags(Rest, Acc#{render_markdown => true});
+parse_flags(["--no-render-markdown" | Rest], Acc) ->
+  parse_flags(Rest, Acc#{render_markdown => false});
 parse_flags(["--openai-store", V0 | Rest], Acc) ->
   V = string:lowercase(string:trim(to_bin(V0))),
   Bool = V =/= <<"0">> andalso V =/= <<"false">> andalso V =/= <<"no">> andalso V =/= <<"off">>,
@@ -979,4 +1020,159 @@ re_replace(Bin, Pattern, Replace) ->
     re:replace(Bin, Pattern, Replace, [global, {return, binary}])
   catch
     _:_ -> Bin
+  end.
+
+%% --- Terminal formatting helpers (best-effort; safe to disable via --no-color / NO_COLOR) ---
+
+auto_color() ->
+  %% Follow https://no-color.org/ : if NO_COLOR is set (any value), disable ANSI.
+  case os:getenv("NO_COLOR") of
+    false ->
+      case os:getenv("OPENAGENTIC_NO_COLOR") of
+        false ->
+          case os:getenv("TERM") of
+            "dumb" -> false;
+            _ -> true
+          end;
+        _ ->
+          false
+      end;
+    _ ->
+      false
+  end.
+
+ansi_reset() -> <<"\033[0m">>.
+
+ansi_seq(<<"red">>) -> <<"\033[31m">>;
+ansi_seq(<<"green">>) -> <<"\033[32m">>;
+ansi_seq(<<"yellow">>) -> <<"\033[33m">>;
+ansi_seq(<<"blue">>) -> <<"\033[34m">>;
+ansi_seq(<<"magenta">>) -> <<"\033[35m">>;
+ansi_seq(<<"cyan">>) -> <<"\033[36m">>;
+ansi_seq(<<"dim">>) -> <<"\033[2m">>;
+ansi_seq(<<"bold">>) -> <<"\033[1m">>;
+ansi_seq(<<"underline">>) -> <<"\033[4m">>;
+ansi_seq(<<"blue_under">>) -> <<"\033[34m\033[4m">>;
+ansi_seq(_) -> <<>>.
+
+ansi(Style0, Text0, Enabled) ->
+  case Enabled of
+    true ->
+      Style = to_bin(Style0),
+      Text = to_bin(Text0),
+      [ansi_seq(Style), Text, ansi_reset()];
+    false ->
+      to_bin(Text0)
+  end.
+
+format_cli_line(Line0, Color) ->
+  Bin0 = redact_secrets(to_bin(Line0)),
+  Bin = normalize_newlines(Bin0),
+  highlight_common(Bin, Color).
+
+format_assistant_text(Txt0, Color, RenderMarkdown) ->
+  Txt1 = redact_secrets(to_bin(Txt0)),
+  Txt = normalize_newlines(Txt1),
+  case RenderMarkdown of
+    true -> render_markdown(Txt, Color);
+    false -> highlight_common(Txt, Color)
+  end.
+
+normalize_newlines(Bin0) ->
+  Bin = to_bin(Bin0),
+  re_replace(Bin, <<"\r\n">>, <<"\n">>).
+
+highlight_common(Bin0, false) ->
+  to_bin(Bin0);
+highlight_common(Bin0, true) ->
+  Bin = to_bin(Bin0),
+  %% highlight URLs, quoted commands, and common filesystem paths/kv pairs.
+  B1 = highlight_quoted_kv(Bin),
+  B2 = highlight_urls(B1),
+  B3 = highlight_paths(B2),
+  B4 = highlight_inline_code(B3),
+  B4.
+
+highlight_urls(Bin0) ->
+  UrlStyle = ansi_seq(<<"blue_under">>),
+  Reset = ansi_reset(),
+  %% keep it conservative: stop at whitespace or common closing delimiters
+  Pattern = <<"(https?://[^\\s\\)\\]}>\\\"\\']+)">>,
+  Replace = iolist_to_binary([UrlStyle, <<"\\1">>, Reset]),
+  re_replace(Bin0, Pattern, Replace).
+
+highlight_paths(Bin0) ->
+  Blue = ansi_seq(<<"blue">>),
+  Reset = ansi_reset(),
+  %% Windows drive paths: E:\foo or e:/foo
+  P1 = <<"(?i)([a-z]:[\\\\/][^\\s\\)\\]}>\\\"\\']+)">>,
+  R1 = iolist_to_binary([Blue, <<"\\1">>, Reset]),
+  B1 = re_replace(Bin0, P1, R1),
+  %% Relative paths: ./foo or .\foo
+  P2 = <<"(\\./[^\\s\\)\\]}>\\\"\\']+|\\.\\\\[^\\s\\)\\]}>\\\"\\']+)">>,
+  R2 = iolist_to_binary([Blue, <<"\\1">>, Reset]),
+  re_replace(B1, P2, R2).
+
+highlight_quoted_kv(Bin0) ->
+  Yellow = ansi_seq(<<"yellow">>),
+  Reset = ansi_reset(),
+  %% command="...": highlight the inside
+  P1 = <<"command=\\\"([^\\\"]+)\\\"">>,
+  R1 = iolist_to_binary([<<"command=\\\"">>, Yellow, <<"\\1">>, Reset, <<"\\\"">>]),
+  B1 = re_replace(Bin0, P1, R1),
+  %% file_path=/path or workdir=...: highlight value part
+  P2 = <<"(?i)\\b(file_path|path|root|workdir|url)=(\\S+)">>,
+  R2 = iolist_to_binary([<<"\\1=">>, Yellow, <<"\\2">>, Reset]),
+  re_replace(B1, P2, R2).
+
+highlight_inline_code(Bin0) ->
+  Yellow = ansi_seq(<<"yellow">>),
+  Reset = ansi_reset(),
+  %% inline `code`
+  P = <<"`([^`\\n]+)`">>,
+  R = iolist_to_binary([Yellow, <<"`\\1`">>, Reset]),
+  re_replace(Bin0, P, R).
+
+render_markdown(Text0, Color) ->
+  Text = to_bin(Text0),
+  Lines = binary:split(Text, <<"\n">>, [global]),
+  {OutLines, _} = render_markdown_lines(Lines, Color, false, []),
+  iolist_to_binary(lists:join(<<"\n">>, lists:reverse(OutLines))).
+
+render_markdown_lines([], _Color, InCode, Acc) ->
+  {Acc, InCode};
+render_markdown_lines([Line0 | Rest], Color, InCode0, Acc0) ->
+  Line = to_bin(Line0),
+  Trim = string:trim(Line),
+  case starts_with(Trim, <<"```">>) of
+    true ->
+      %% show fence dim and toggle code mode
+      L2 = iolist_to_binary(ansi(<<"dim">>, Line, Color)),
+      render_markdown_lines(Rest, Color, not InCode0, [L2 | Acc0]);
+    false when InCode0 =:= true ->
+      L2 = iolist_to_binary(ansi(<<"yellow">>, Line, Color)),
+      render_markdown_lines(Rest, Color, InCode0, [L2 | Acc0]);
+    false ->
+      L2 = render_markdown_line(Line, Color),
+      render_markdown_lines(Rest, Color, InCode0, [L2 | Acc0])
+  end.
+
+render_markdown_line(Line0, Color) ->
+  Line = to_bin(Line0),
+  case Line of
+    <<$#, _/binary>> ->
+      iolist_to_binary(ansi(<<"bold">>, highlight_common(Line, Color), Color));
+    <<"- ", Rest/binary>> ->
+      iolist_to_binary([ansi(<<"dim">>, <<"-">>, Color), <<" ">>, highlight_common(Rest, Color)]);
+    <<"* ", Rest/binary>> ->
+      iolist_to_binary([ansi(<<"dim">>, <<"*">>, Color), <<" ">>, highlight_common(Rest, Color)]);
+    _ ->
+      highlight_common(Line, Color)
+  end.
+
+starts_with(Bin, Prefix) when is_binary(Bin), is_binary(Prefix) ->
+  Sz = byte_size(Prefix),
+  case byte_size(Bin) >= Sz of
+    true -> binary:part(Bin, 0, Sz) =:= Prefix;
+    false -> false
   end.
