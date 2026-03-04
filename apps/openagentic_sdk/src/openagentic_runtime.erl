@@ -90,7 +90,8 @@ query(Prompt0, Opts0) ->
   Registry = openagentic_tool_registry:new(ToolMods),
 
   UserAnswerer = maps:get(user_answerer, Opts, undefined),
-  PermissionGate = maps:get(permission_gate, Opts, openagentic_permissions:default(UserAnswerer)),
+  PermissionGate0 = maps:get(permission_gate, Opts, openagentic_permissions:default(UserAnswerer)),
+  PermissionGate = effective_permission_gate(Opts, PermissionGate0, UserAnswerer),
   AllowedTools = maps:get(allowed_tools, Opts, undefined),
   TaskProgressEmitter = maps:get(task_progress_emitter, Opts, maps:get(taskProgressEmitter, Opts, undefined)),
   TaskRunner0 = maps:get(task_runner, Opts, undefined),
@@ -793,8 +794,8 @@ finalize_error(State0, Reason) ->
   Steps = maps:get(steps, State0, 0),
   Provider = maps:get(provider_mod, State0, undefined),
   Phase = error_phase(Reason),
-  ErrMsg = truncate_bin(to_bin(Reason), 2000),
   ErrType = error_type(Reason),
+  ErrMsg = error_message(State0, Reason),
   State1 = append_event(State0, openagentic_events:runtime_error(Phase, ErrType, ErrMsg, to_bin(Provider), undefined)),
   State2 =
     append_event(
@@ -1057,6 +1058,95 @@ first_non_empty(Map, [K | Rest]) ->
       end
   end.
 
+%% ---- permission gate helpers (Kotlin parity) ----
+
+effective_permission_gate(Opts0, Gate0, UserAnswerer0) ->
+  Opts = ensure_map(Opts0),
+  Gate = ensure_map(Gate0),
+
+  ModeOverride0 =
+    maps:get(
+      permission_mode_override,
+      Opts,
+      maps:get(
+        permissionModeOverride,
+        Opts,
+        maps:get(<<"permission_mode_override">>, Opts, maps:get(<<"permissionModeOverride">>, Opts, undefined))
+      )
+    ),
+  SessionMode0 =
+    maps:get(
+      session_permission_mode,
+      Opts,
+      maps:get(
+        sessionPermissionMode,
+        Opts,
+        maps:get(<<"session_permission_mode">>, Opts, maps:get(<<"sessionPermissionMode">>, Opts, undefined))
+      )
+    ),
+
+  ModeOverride = normalize_permission_mode(ModeOverride0),
+  SessionMode = normalize_permission_mode(SessionMode0),
+
+  GateMode = maps:get(mode, Gate, default),
+  DesiredMode =
+    case ModeOverride of
+      undefined ->
+        case SessionMode of
+          undefined -> GateMode;
+          M2 -> M2
+        end;
+      M1 -> M1
+    end,
+
+  case DesiredMode =:= GateMode of
+    true ->
+      Gate;
+    false ->
+      UA = effective_user_answerer(Gate, UserAnswerer0),
+      gate_for_mode(DesiredMode, UA)
+  end.
+
+effective_user_answerer(Gate, UserAnswerer0) ->
+  case maps:get(user_answerer, Gate, undefined) of
+    F when is_function(F, 1) -> F;
+    _ ->
+      case UserAnswerer0 of
+        F2 when is_function(F2, 1) -> F2;
+        _ -> undefined
+      end
+  end.
+
+gate_for_mode(bypass, _UA) -> openagentic_permissions:bypass();
+gate_for_mode(deny, _UA) -> openagentic_permissions:deny();
+gate_for_mode(default, UA) -> openagentic_permissions:default(UA);
+gate_for_mode(prompt, UA) -> openagentic_permissions:prompt(UA);
+gate_for_mode(_, UA) -> openagentic_permissions:default(UA).
+
+normalize_permission_mode(undefined) -> undefined;
+normalize_permission_mode(null) -> undefined;
+normalize_permission_mode(bypass) -> bypass;
+normalize_permission_mode(deny) -> deny;
+normalize_permission_mode(prompt) -> prompt;
+normalize_permission_mode(default) -> default;
+normalize_permission_mode(A) when is_atom(A) -> normalize_permission_mode(atom_to_binary(A, utf8));
+normalize_permission_mode(L) when is_list(L) -> normalize_permission_mode(unicode:characters_to_binary(L, utf8));
+normalize_permission_mode(B) when is_binary(B) ->
+  S = string:lowercase(string:trim(B)),
+  case S of
+    <<>> -> undefined;
+    <<"bypass">> -> bypass;
+    <<"allow">> -> bypass;
+    <<"yes">> -> bypass;
+    <<"deny">> -> deny;
+    <<"block">> -> deny;
+    <<"prompt">> -> prompt;
+    <<"ask">> -> prompt;
+    <<"default">> -> default;
+    _ -> undefined
+  end;
+normalize_permission_mode(_) -> undefined.
+
 %% ---- provider input helpers ----
 
 maybe_prepend_system_prompt(State0, InputItems0) ->
@@ -1082,17 +1172,125 @@ error_phase(Reason) ->
 
 error_type(Reason) ->
   case is_provider_error(Reason) of
-    true -> <<"ProviderError">>;
-    false -> <<"RuntimeError">>
+    true -> provider_error_type(Reason);
+    false -> session_error_type(Reason)
   end.
 
+provider_error_type({http_error, 429, _Headers, _Body}) -> <<"ProviderRateLimitException">>;
+provider_error_type({http_error, Status, _Headers, _Body}) when is_integer(Status) -> <<"ProviderHttpException">>;
+provider_error_type(timeout) -> <<"ProviderTimeoutException">>;
+provider_error_type({http_stream_error, _}) -> <<"ProviderTimeoutException">>;
+provider_error_type({httpc_request_failed, _}) -> <<"ProviderTimeoutException">>;
+provider_error_type(stream_ended_without_response_completed) -> <<"ProviderInvalidResponseException">>;
+provider_error_type({provider_error, _}) -> <<"ProviderInvalidResponseException">>;
+provider_error_type(_) -> <<"ProviderInvalidResponseException">>.
+
+session_error_type({missing_required, _}) -> <<"IllegalArgumentException">>;
+session_error_type({invalid_proxy, _}) -> <<"IllegalArgumentException">>;
+session_error_type({httpc_set_options_failed, _}) -> <<"IllegalArgumentException">>;
+session_error_type(_) -> <<"RuntimeException">>.
+
 is_provider_error({http_error, _Status, _Headers, _Body}) -> true;
+is_provider_error({http_stream_error, _}) -> true;
 is_provider_error({httpc_request_failed, _}) -> true;
-is_provider_error({httpc_set_options_failed, _}) -> true;
-is_provider_error({invalid_proxy, _}) -> true;
-is_provider_error({missing_required, _}) -> true;
-is_provider_error({missing, _}) -> true;
+is_provider_error(timeout) -> true;
+is_provider_error(stream_ended_without_response_completed) -> true;
+is_provider_error({provider_error, _}) -> true;
 is_provider_error(_) -> false.
+
+error_message(State0, Reason0) ->
+  Reason = Reason0,
+  ProviderMod = maps:get(provider_mod, State0, undefined),
+  ProviderLabel = provider_label(ProviderMod),
+  Url = provider_url(State0),
+  Msg =
+    case Reason of
+      {http_error, Status, _Headers, Body} when is_integer(Status) ->
+        Body2 = truncate_bin(to_bin(Body), 2000),
+        case Status of
+          429 ->
+            %% Kotlin parity: ProviderRateLimitException message starts with "HTTP 429 from <url>: ..."
+            <<"HTTP 429 from ", Url/binary, ": ", Body2/binary>>;
+          _ ->
+            iolist_to_binary(["HTTP ", integer_to_list(Status), " from ", Url, ": ", Body2])
+        end;
+      stream_ended_without_response_completed ->
+        %% Kotlin parity: runtime wraps stream failures as ProviderInvalidResponseException.
+        <<"provider stream failed: stream ended without response.completed">>;
+      {provider_error, ErrObj} ->
+        ErrStr = truncate_bin(to_bin(ErrObj), 2000),
+        <<"provider stream failed: ", ErrStr/binary>>;
+      {http_stream_error, R} ->
+        R2 = truncate_bin(to_bin(R), 2000),
+        <<"provider stream error: ", R2/binary>>;
+      timeout ->
+        <<ProviderLabel/binary, ": timeout">>;
+      {httpc_request_failed, R} ->
+        R2 = truncate_bin(to_bin(R), 2000),
+        <<ProviderLabel/binary, ": request failed: ", R2/binary>>;
+      {missing_required, Missing} ->
+        %% Kotlin parity: providers use require(...) which throws IllegalArgumentException with "XxxProvider: apiKey is required".
+        MissingKeys = missing_required_keys(Missing),
+        case lists:member(api_key, MissingKeys) of
+          true -> <<ProviderLabel/binary, ": apiKey is required">>;
+          false ->
+            case lists:member(model, MissingKeys) of
+              true -> <<ProviderLabel/binary, ": model is required">>;
+              false -> truncate_bin(to_bin(Reason), 2000)
+            end
+        end;
+      {invalid_proxy, R} ->
+        R2 = truncate_bin(to_bin(R), 2000),
+        <<"invalid proxy: ", R2/binary>>;
+      {httpc_set_options_failed, R} ->
+        R2 = truncate_bin(to_bin(R), 2000),
+        <<"httpc set_options failed: ", R2/binary>>;
+      _ ->
+        truncate_bin(to_bin(Reason), 2000)
+    end,
+  truncate_bin(to_bin(Msg), 2000).
+
+provider_label(openagentic_openai_responses) -> <<"OpenAIResponsesHttpProvider">>;
+provider_label(openagentic_openai_chat_completions) -> <<"OpenAIChatCompletionsHttpProvider">>;
+provider_label(Other) -> to_bin(Other).
+
+provider_url(State0) ->
+  Base0 = string:trim(to_bin(maps:get(base_url, State0, <<"">>))),
+  Base1 = trim_trailing_slash(Base0),
+  ProviderMod = maps:get(provider_mod, State0, undefined),
+  case ProviderMod of
+    openagentic_openai_chat_completions -> <<Base1/binary, "/chat/completions">>;
+    openagentic_openai_responses -> <<Base1/binary, "/responses">>;
+    _ -> Base1
+  end.
+
+trim_trailing_slash(Bin) when is_binary(Bin) ->
+  Sz = byte_size(Bin),
+  case Sz of
+    0 -> Bin;
+    _ ->
+      case binary:at(Bin, Sz - 1) of
+        $/ -> trim_trailing_slash(binary:part(Bin, 0, Sz - 1));
+        _ -> Bin
+      end
+  end;
+trim_trailing_slash(Other) ->
+  trim_trailing_slash(to_bin(Other)).
+
+missing_required_keys(Missing0) ->
+  Missing = ensure_list(Missing0),
+  lists:filtermap(
+    fun (One) ->
+      case One of
+        {error, {missing, K}} -> {true, K};
+        {error, {missing, K, _}} -> {true, K};
+        {missing, K} -> {true, K};
+        K when is_atom(K) -> {true, K};
+        _ -> false
+      end
+    end,
+    Missing
+  ).
 
 truncate_bin(Bin0, MaxChars0) ->
   Bin = to_bin(Bin0),

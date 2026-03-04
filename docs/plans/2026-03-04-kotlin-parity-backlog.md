@@ -261,11 +261,28 @@
 
 ---
 
+## 第五轮扩展门禁（CLI 细节对齐）
+
+- [x] CLI flags parity：`--no-stream/--max-steps/--context-limit/--reserved/--input-limit`（差异点 20）
+
+---
+
+## 第六轮扩展门禁（Provider/CLI 体验对齐；不含 LSP 扩展能力）
+
+> 说明：本轮由 `docs/plans/2026-03-04-kotlin-vs-erlang-feature-matrix.md` 的“未打勾项”汇总而来；**LSP 扩展能力已明确不纳入对齐**。
+
+- [ ] Responses Provider：`store` 默认行为与 `--openai-store/--no-openai-store` 对齐（差异点 21）
+- [ ] Responses Provider：`api_key_header` / `apiKeyHeader` 对齐（差异点 22）
+- [ ] CLI：读取 `.env` + 补齐核心 flags（`--project-dir/--api-key/...`）（差异点 23）
+- [ ] Provider 扩展：Anthropic Messages（范围外可选，但 Kotlin 现有）（差异点 24）
+
+---
+
 ## 执行记录（防 compact 丢清单）
 
 ### 2026-03-04（本轮累计进展）
 
-> NOTE（环境）：当前 Windows 环境下 `erl:open_port({spawn,...})` 返回 `einval`，导致 `rebar3` 的依赖/编译阶段无法稳定运行（需要进一步排查 OTP/系统策略）。本轮新增门禁已用“手工 `erlc` 编译 + `eunit:test(...)`”方式验证通过，避免被环境问题卡死。
+> NOTE（环境 / Codex 沙盒）：在 Codex 默认 sandbox（`workspace-write`）里，Erlang 的 `erl:open_port({spawn,...})` 会返回 `einval`，从而导致 `rebar3` 依赖/编译阶段不稳定（rebar3 内部会用 `open_port` 去跑 `cmd/mklink`，以及 kernel 的 `inet_gethost` 也依赖 `open_port`）。切到 `require_escalated`（非沙盒）执行后，`open_port` 正常，`rebar3 eunit` 也能完整跑通（77 tests, 0 failures）。为了不被沙盒卡死，本轮门禁同时保留了“手工 `erlc` 编译 + `eunit:test(...)`”的离线验证手段。
 
 #### ✅ 差异点 9：Sessions Resume（已完成）
 
@@ -346,6 +363,18 @@
 - 落地：
   - `apps/openagentic_sdk/src/openagentic_cli.erl`
 
+#### ✅ 差异点 20：CLI flags parity（已完成）
+
+- Kotlin 对齐点（参考 Kotlin CLI `Main.kt`）：
+  - streaming 默认开启（增加 `--no-stream`）
+  - `--max-steps <1..200>`
+  - compaction flags：`--context-limit/--reserved/--input-limit`
+- 落地：
+  - `apps/openagentic_sdk/src/openagentic_cli.erl`
+  - `apps/openagentic_sdk/test/openagentic_cli_flags_test.erl`
+- Evidence（门禁）：
+  - `rebar3 eunit --module=openagentic_cli_flags_test`（4 tests, 0 failures）
+
 #### ✅ 差异点 16：Built-in SubAgents（explore）（已完成）
 
 - Kotlin 对齐点：
@@ -360,3 +389,151 @@
   - `apps/openagentic_sdk/src/openagentic_tool_schemas.erl`（`agents` 注入）
 - Evidence（门禁）：
   - `apps/openagentic_sdk/test/openagentic_task_agents_render_test.erl`
+
+---
+
+## 第四轮（2026-03-04）Runtime / Provider 语义对齐（进行中）
+
+> 这一轮不再是“工具集合对齐”本身，而是对齐 Kotlin runtime/provider 的一些关键**行为语义**，否则模型/调用方会被细节差异误导。
+> 本节先把差异点 + DoD 写清楚（作为本轮门禁清单），实现完成后再逐项打勾，并补上可复现实证（eunit 输出 / 关键文件）。
+
+- [x] 17 PermissionMode 优先级（permissionModeOverride / sessionPermissionMode）
+- [x] 18 runtime.error 的 ProviderException 分类（phase/error_type/error_message）
+- [x] 19 SSE endOfInput flush + stream read timeout
+
+### 第四轮总门禁（完成后记录）
+
+- `rebar3 eunit`（84 tests, 0 failures）
+- `.\scripts\kotlin-parity-check.ps1`（OK）
+
+### 17) PermissionMode 优先级（permissionModeOverride / sessionPermissionMode）（中优先）
+
+- Kotlin：effective gate mode 选择逻辑为：
+  - `options.permissionModeOverride ?: options.sessionPermissionMode ?: options.permissionGate.mode`
+  - 如果 mode 变了，会用 `gateForMode()` 构造新的 gate（并继承 userAnswerer）
+- Erlang：此前只支持直接传 `permission_gate`（mode 固定），没有 override/session 两级。
+- DoD：
+  - runtime 支持：
+    - `permission_mode_override` / `permissionModeOverride`
+    - `session_permission_mode` / `sessionPermissionMode`
+  - 优先级与 Kotlin 一致；override 生效时不要求调用方重新构造 gate。
+  - 离线门禁：eunit 覆盖 “session 覆盖 gate”，“override 覆盖 session”。
+- 状态（进行中）：
+  - 已落地实现（已通过门禁）：
+    - `apps/openagentic_sdk/src/openagentic_runtime.erl`：`effective_permission_gate/3`
+    - `apps/openagentic_sdk/src/openagentic_permissions.erl`：新增 `prompt/0`（兼容无 user_answerer 的 gate 构造）
+  - Evidence（通过门禁后补）：
+    - `rebar3 eunit --module=openagentic_permission_mode_override_test`（3 tests, 0 failures）
+
+### 18) runtime.error 的 ProviderException 分类（phase/error_type/error_message）（高优先）
+
+- Kotlin：
+  - `phase = if (t is ProviderException) "provider" else "session"`
+  - `error_type = t::class.simpleName`（如 `ProviderRateLimitException` / `ProviderHttpException` / `ProviderTimeoutException` / `ProviderInvalidResponseException`）
+  - `error_message = t.message`
+- Erlang：此前只有粗粒度 `ProviderError/RuntimeError`，message 多为 `~p` 打印的 Reason。
+- DoD：
+  - `runtime.error` 的 `phase/error_type/error_message` 对齐 Kotlin 语义（允许 message 文案细微差异，但必须可归因）。
+  - 离线门禁：eunit 用 mock provider reason 覆盖 429/stream ended/timeout 等。
+- 状态（进行中）：
+  - 已落地实现（已通过门禁）：
+    - `apps/openagentic_sdk/src/openagentic_runtime.erl`：`provider_error_type/1`、`session_error_type/1`、`error_message/2`
+    - 新增测试 provider：
+      - `apps/openagentic_sdk/test/openagentic_testing_provider_http_429.erl`
+      - `apps/openagentic_sdk/test/openagentic_testing_provider_stream_fail.erl`
+      - `apps/openagentic_sdk/test/openagentic_testing_provider_missing_required.erl`
+    - 新增门禁：
+      - `apps/openagentic_sdk/test/openagentic_runtime_provider_error_semantics_test.erl`
+  - Evidence（通过门禁后补）：
+    - `rebar3 eunit --module=openagentic_runtime_provider_error_semantics_test`（3 tests, 0 failures）
+
+### 19) SSE endOfInput flush + stream read timeout（中优先）
+
+- Kotlin：`SseEventParser.endOfInput()` 会 flush buffer，并在输入结束时 finalize 当前 event（即使没有空行终止符）。
+- Erlang：原 `openagentic_sse` 只有按 `\n\n` finalize，若对端在最后一次 chunk 未带空行，可能丢最后一个 event。
+- DoD：
+  - 增加 `end_of_input/1`，并在 provider 收到 `stream_end` 时 flush。
+  - Streaming 读超时应该允许更长（Kotlin 默认 5 分钟），避免“长时间无 delta”被误判 timeout。
+- 状态（已完成）：
+  - 已落地实现（已通过门禁）：
+    - `apps/openagentic_sdk/src/openagentic_sse.erl`：新增 `end_of_input/1`
+    - `apps/openagentic_sdk/src/openagentic_openai_responses.erl`：`stream_end` 时调用 `end_of_input/1`；支持 `stream_read_timeout_ms`（默认 300000）
+    - 新增 eunit：
+      - `apps/openagentic_sdk/test/openagentic_sse_test.erl`：`end_of_input_flushes_pending_event_test/0`
+  - Evidence（通过门禁后补）：
+    - `rebar3 eunit --module=openagentic_sse_test`（2 tests, 0 failures）
+
+### 20) CLI flags（compaction/max_steps/stream toggles）差异（中优先）
+
+- Kotlin CLI（v4）：支持并使用以下行为/参数（参考 `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\cli\Main.kt`）：
+  - streaming 默认开启（`--no-stream` 可关闭）
+  - `--max-steps <n>`（1..200）
+  - compaction 相关 flags：`--context-limit/--reserved/--input-limit`
+- Erlang CLI：✅ 已对齐上述 flags（见 `openagentic_cli_flags_test` 门禁）。
+- DoD：
+  - `openagentic chat/run` 解析并透传：
+    - `--no-stream`（默认 streaming=on，对齐 Kotlin）
+    - `--max-steps <n>` → runtime `max_steps`
+    - `--context-limit/--reserved/--input-limit` → runtime `compaction` map（keys 与 runtime 现有解析一致）
+  - 门禁：新增 eunit 覆盖 CLI flags 解析与 opts 映射（避免只改 usage 文案）。
+
+### 21) Responses Provider：`store` 默认行为（defaultStore/openai-store）差异（高优先）
+
+- Kotlin（OpenAI Responses provider）：
+  - 请求 payload 会**总是**带 `store` 字段：`store = request.store ?: defaultStore`（默认 `defaultStore=true`）。
+  - compaction pass 会显式 `store=false`（避免把 compaction 产生的 response 写入 provider store）。
+- Erlang（OpenAI Responses provider）：
+  - 当前只有当 runtime 显式传入 `store` 时才写入 payload（否则不带 `store` 字段）。
+  - runtime compaction pass 已强制 `store=false`（已对齐 Kotlin 的 compaction 行为）。
+- 风险：真实 OpenAI 上，`previous_response_id` 的可用性与 provider store 行为强相关；不对齐会导致“看起来支持 resume，但线上不稳定/不可用”。
+- DoD：
+  - `openagentic_openai_responses` 的 request body 构建：当 `request.store` 未显式指定时，使用 `default_store`（默认 true），并且 **payload 必带 `store` 字段**。
+  - runtime 支持配置默认 store（例如 `openai_store/openAiStore/default_store/defaultStore` 等任一稳定入口；并明确优先级），并在普通模型调用中向 provider 传递。
+  - compaction pass 继续强制 `store=false`（保持现有）。
+  - 门禁：离线 eunit 覆盖 payload 是否含 `store` + defaultStore 覆盖逻辑（不依赖真实网络）。
+
+### 22) Responses Provider：`api_key_header` / `apiKeyHeader` 差异（中优先）
+
+- Kotlin：
+  - provider 支持 `apiKeyHeader` 配置；当 header 为 `authorization` 时会写 `Bearer <key>`，否则写 `<key>`（参考 `OpenAIResponsesHttpProvider` 的 header 构建逻辑）。
+- Erlang：
+  - 当前固定使用 `authorization: Bearer <key>`。
+- DoD：
+  - `openagentic_openai_responses` 支持可配置 `api_key_header`（含 `apiKeyHeader` 别名），并实现 Kotlin 一致的 header 写法（authorization=Bearer，其余为 raw key）。
+  - 门禁：离线 eunit 验证 headers 构建（authorization vs custom header）。
+
+### 23) CLI：`.env` 读取 + flags 覆盖面差异（中优先）
+
+- Kotlin CLI：
+  - 从 `--project-dir`（默认 cwd）读取 `.env`，并与进程 env 合并（`.env` 优先）。
+  - flags 覆盖：`--api-key/--api-key-header/--openai-store/--no-openai-store/--project-dir(--cwd alias)` 等。
+- Erlang CLI：
+  - 当前主要依赖 env（`OPENAI_API_KEY/OPENAI_MODEL/OPENAI_BASE_URL`），flags 覆盖面不足。
+- DoD：
+  - `openagentic` CLI 增加 `.env` 读取（按 Kotlin 兼容：支持引号、忽略空行/注释、key=value），并实现 Kotlin 同等优先级（`.env` > env）。
+  - 增加 flags（至少）：
+    - `--project-dir <dir>`（`--cwd` 作为 legacy alias）
+    - `--api-key <key>`（优先级最高）
+    - `--api-key-header <header>`
+    - `--openai-store <bool>` 与 `--no-openai-store`（影响 Responses provider 的 defaultStore）
+  - 门禁：eunit 覆盖 `.env` 解析与“flags/.env/env”优先级（不读用户真实 `.env`，用临时文件夹夹具）。
+
+### 24) Provider 扩展：Anthropic Messages（可选；Kotlin 已有）（高工作量）
+
+> 说明：此项不属于“OpenAI tool/runtime parity”的最小闭环，但 Kotlin repo 已包含该 provider；若目标是“功能面完全一致”，需纳入。
+
+- Kotlin：提供 `AnthropicMessagesHttpProvider`（complete + streaming）以及对应 parsing/decoder/异常语义。
+- Erlang：尚无对应 provider。
+- DoD：
+  - 增加 Erlang provider（实现 `openagentic_provider` 行为）并可通过 `provider_mod` 注入运行。
+  - 完成“最小可用”与错误语义对齐：timeout/http>=400/invalid JSON 等映射到 Kotlin 风格 `runtime.error` 归因。
+  - 门禁：离线 fixtures 覆盖 parsing/streaming decoder（不打真实网络）。
+
+### 本轮实现中的已知失败（待修复后再勾选）
+
+> 记录到这里是为了防止我 compact context 后忘掉“当前卡住点”，并保证后续修复也能回写 Evidence。
+
+- eunit 当前失败（2026-03-04）：无
+- 已修复（记录一下避免重复踩坑）：
+  - `openagentic_permission_mode_override_test:*`：原因是测试未 reset `openagentic_test_step`，导致 provider 不产出 tool call；已在测试里统一 `erlang:erase(openagentic_test_step)`
+  - `openagentic_runtime_resume_test:*`：同样需要 reset `openagentic_test_step`，否则会把 resume 的 `previous_response_id` 断言搞乱

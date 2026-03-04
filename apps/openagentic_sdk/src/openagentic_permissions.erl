@@ -3,6 +3,7 @@
 -export([
   bypass/0,
   deny/0,
+  prompt/0,
   prompt/1,
   default/1,
   approve/4
@@ -24,9 +25,17 @@ bypass() ->
 deny() ->
   #{mode => deny}.
 
--spec prompt(fun((map()) -> any())) -> gate().
-prompt(UserAnswerer) when is_function(UserAnswerer, 1) ->
-  #{mode => prompt, user_answerer => UserAnswerer}.
+-spec prompt() -> gate().
+prompt() ->
+  #{mode => prompt}.
+
+-spec prompt(any()) -> gate().
+prompt(UserAnswerer) ->
+  Gate = #{mode => prompt},
+  case UserAnswerer of
+    F when is_function(F, 1) -> Gate#{user_answerer => F};
+    _ -> Gate
+  end.
 
 -spec default(any()) -> gate().
 default(UserAnswererOrUndefined) ->
@@ -97,10 +106,11 @@ approve_mode(prompt, Gate, ToolName, _ToolInput, Context) ->
         deny_message => case Allowed of true -> undefined; false -> <<"PermissionGate: user denied tool '", ToolName/binary, "'">> end
       };
     _ ->
+      ModeUpper = mode_upper(maps:get(mode, Gate, prompt)),
       #{
         allowed => false,
         deny_message =>
-          <<"PermissionGate(mode=PROMPT) requires user_answerer, but none is configured for tool '", ToolName/binary, "'">>
+          <<"PermissionGate(mode=", ModeUpper/binary, ") requires userAnswerer, but none is configured for tool '", ToolName/binary, "'">>
       }
   end.
 
@@ -137,6 +147,13 @@ non_empty_string_any(Map, Keys) ->
     end,
     Keys
   ).
+
+mode_upper(bypass) -> <<"BYPASS">>;
+mode_upper(deny) -> <<"DENY">>;
+mode_upper(prompt) -> <<"PROMPT">>;
+mode_upper(default) -> <<"DEFAULT">>;
+mode_upper(A) when is_atom(A) -> mode_upper(prompt);
+mode_upper(_) -> <<"PROMPT">>.
 
 question_id(Context) ->
   case maps:get(tool_use_id, Context, maps:get(<<"tool_use_id">>, Context, undefined)) of

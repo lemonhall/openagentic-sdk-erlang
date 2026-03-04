@@ -1,6 +1,6 @@
 -module(openagentic_sse).
 
--export([new/0, feed/2]).
+-export([new/0, feed/2, end_of_input/1]).
 
 %% Minimal SSE decoder:
 %% - Accepts binary chunks.
@@ -26,6 +26,25 @@ new() ->
 feed(State0, Chunk) when is_map(State0), is_binary(Chunk) ->
   State1 = State0#{buf := <<(maps:get(buf, State0, <<>>))/binary, Chunk/binary>>},
   consume_lines(State1, []).
+
+%% Flush any pending buffered line / event at end-of-input.
+%%
+%% Kotlin parity: SseEventParser.endOfInput() will:
+%% - process the remaining buffer as a final line
+%% - finalize the current event even if no blank line terminator was received
+-spec end_of_input(state()) -> {state(), [map()]}.
+end_of_input(State0) when is_map(State0) ->
+  Buf = maps:get(buf, State0, <<>>),
+  State1 = State0#{buf := <<>>},
+  {State2, Ev1} =
+    case Buf of
+      <<>> -> {State1, []};
+      _ ->
+        Line = strip_cr(Buf),
+        handle_line(State1, Line)
+    end,
+  {State3, Ev2} = finalize_event(State2),
+  {State3, Ev1 ++ Ev2}.
 
 consume_lines(State0, AccEvents) ->
   Buf = maps:get(buf, State0, <<>>),

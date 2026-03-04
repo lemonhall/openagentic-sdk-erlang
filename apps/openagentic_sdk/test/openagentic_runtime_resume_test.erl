@@ -4,6 +4,7 @@
 
 resume_session_passes_previous_response_id_test() ->
   Root = test_root(),
+  _ = erlang:erase(openagentic_test_step),
   %% First run: create session and produce a result with response_id resp_2.
   {ok, Out1} =
     openagentic_runtime:query(

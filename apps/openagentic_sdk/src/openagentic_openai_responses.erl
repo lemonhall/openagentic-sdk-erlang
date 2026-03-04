@@ -10,6 +10,7 @@
 
 -define(DEFAULT_BASE_URL, "https://api.openai.com/v1").
 -define(DEFAULT_TIMEOUT_MS, 60000).
+-define(DEFAULT_STREAM_READ_TIMEOUT_MS, 300000).
 -define(HTTPC_PROFILE, openagentic).
 
 %% complete/1: OpenAI Responses API (SSE streaming).
@@ -35,12 +36,22 @@ complete(Req0) ->
       Model = to_bin(Model0),
       BaseUrl = to_list(maps:get(base_url, Req, ?DEFAULT_BASE_URL)),
       TimeoutMs = maps:get(timeout_ms, Req, ?DEFAULT_TIMEOUT_MS),
+      StreamReadTimeoutMs =
+        maps:get(
+          stream_read_timeout_ms,
+          Req,
+          maps:get(
+            streamReadTimeoutMs,
+            Req,
+            maps:get(<<"stream_read_timeout_ms">>, Req, maps:get(<<"streamReadTimeoutMs">>, Req, ?DEFAULT_STREAM_READ_TIMEOUT_MS))
+          )
+        ),
       InputItems = maps:get(input, Req, []),
       Tools = maps:get(tools, Req, []),
       Prev = maps:get(previous_response_id, Req, maps:get(previousResponseId, Req, undefined)),
       Store = maps:get(store, Req, undefined),
       OnDelta = maps:get(on_delta, Req, maps:get(onDelta, Req, undefined)),
-      do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store, OnDelta);
+      do_complete(ApiKey, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, OnDelta);
     {ApiKeyRes, ModelRes} ->
       {error, {missing_required, [ApiKeyRes, ModelRes]}}
   end.
@@ -60,7 +71,7 @@ query(Prompt0, Opts0) ->
   },
   complete(Req).
 
-do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store, OnDelta) ->
+do_complete(ApiKey, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, OnDelta) ->
   ok = ensure_httpc_started(),
   ok = configure_proxy(),
   Url = BaseUrl ++ "/responses",
@@ -74,7 +85,7 @@ do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store, O
   Options = [{sync, false}, {stream, self()}, {body_format, binary}],
   case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
     {ok, ReqId} ->
-      collect_stream(ReqId, TimeoutMs, OnDelta);
+      collect_stream(ReqId, StreamReadTimeoutMs, OnDelta);
     Error ->
       {error, {httpc_request_failed, Error}}
   end.
@@ -190,7 +201,9 @@ collect_loop(ReqId, TimeoutMs, SseState0, Acc0) ->
       Acc1 = handle_sse_events(SseEvents, Acc0),
       collect_loop(ReqId, TimeoutMs, SseState1, Acc1);
     {http, {ReqId, stream_end, _Trailers}} ->
-      finalize_to_model_output(Acc0);
+      {_, FlushEvents} = openagentic_sse:end_of_input(SseState0),
+      Acc1 = handle_sse_events(FlushEvents, Acc0),
+      finalize_to_model_output(Acc1);
     {http, {ReqId, {error, Reason}}} ->
       {error, {http_stream_error, Reason}};
     {http, {ReqId, stream_start, _Headers}} ->

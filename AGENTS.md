@@ -25,6 +25,7 @@
 说明：
 - 默认 shell 为 PowerShell 7.x，连续命令用 `;`。
 - 由于你在中国大陆网络环境，联网命令一般需要 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:7897`（建议用脚本设置）。
+- 运行 Erlang/rebar3 时尽量不要启用 Codex 沙盒（可能导致 `erl:open_port({spawn,...})` 返回 `einval`）；本仓库允许全权限执行。
 
 ## PowerShell 约定（不要用 bash 惯性）
 
@@ -110,6 +111,21 @@ User prompt
 - 已对齐：`WebFetch`（clean_html/markdown 清洗、链接绝对化、私网/localhost/IPv6 拦截）+ 离线 contract tests 门禁。
 - 已对齐：`Glob/Grep/Bash` 对 `root/workdir` 不存在/非目录的失败路径映射为 Kotlin 风格异常类型（避免落到 `ToolError`）。
 - ✅ 2026-03-04：用户明确不需要 `lsp` 的 Kotlin 扩展能力对齐（builtin registry/root resolver 等），保留最小可用实现即可。
+
+## Kotlin Parity 对齐工作流（强制）
+
+当任务目标是“对齐 openagentic-sdk-kotlin / parity backlog”时，必须严格按以下顺序执行（防止清单丢失与文档漂移）：
+
+1) 扫描差异（Kotlin ↔ Erlang），形成差异点列表
+2) 先把差异点逐条写入 `docs/plans/2026-03-04-kotlin-parity-backlog.md`，并以 `- [ ]` 形式作为可勾选 checklist（每条都要有 DoD）
+3) 只实现一个差异点（不要并行开多条）
+4) 该差异点完成后立即跑门禁（至少对应模块的 `rebar3 eunit` / `scripts/kotlin-parity-check.ps1` 等证据）
+5) 门禁通过后立刻回写 backlog：把对应项从 `- [ ]` 改为 `- [x]`，并补上落地文件路径 + Evidence（命令与关键输出摘要）
+6) 进入下一条差异点
+
+注意：
+- **禁止**“先改代码再补 backlog”；也**禁止**“全部改完最后一次性回写 backlog”。
+- 若遇到阻塞/失败，必须第一时间把“失败现象 + 复现命令 + 预期/实际”写回 backlog（避免 compact context 后遗忘）。
 
 ## Code Style & Conventions（Erlang）
 

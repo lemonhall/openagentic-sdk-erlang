@@ -2,6 +2,10 @@
 
 -export([main/1]).
 
+-ifdef(TEST).
+-export([parse_flags_for_test/1, runtime_opts_for_test/1]).
+-endif.
+
 main(Args0) ->
   Args = ensure_list(Args0),
   case Args of
@@ -93,13 +97,26 @@ usage() ->
     "  --base-url <url>\\n"
     "  --resume <session_id>\\n"
     "  --permission <bypass|deny|prompt|default>\\n"
-    "  --stream\\n\\n"
+    "  --stream\\n"
+    "  --no-stream\\n"
+    "  --max-steps <1..200>\\n"
+    "  --context-limit <n>\\n"
+    "  --reserved <n>\\n"
+    "  --input-limit <n>\\n\\n"
     "Env (preferred):\\n"
     "  OPENAI_API_KEY (required)\\n"
     "  OPENAI_BASE_URL (optional)\\n"
     "  OPENAI_MODEL (optional)\\n",
     []
   ).
+
+-ifdef(TEST).
+parse_flags_for_test(Args0) ->
+  parse_flags(ensure_list(Args0), #{}).
+
+runtime_opts_for_test(Flags0) ->
+  runtime_opts(ensure_map(Flags0)).
+-endif.
 
 runtime_opts(Flags0) ->
   Flags = ensure_map(Flags0),
@@ -127,9 +144,11 @@ runtime_opts(Flags0) ->
       BaseUrlFlag -> to_bin(BaseUrlFlag)
     end,
   Protocol = maps:get(protocol, Flags, responses),
-  Stream = maps:get(stream, Flags, false),
+  Stream = maps:get(stream, Flags, true),
   Permission = maps:get(permission, Flags, default),
   Resume = maps:get(resume_session_id, Flags, undefined),
+  MaxSteps = maps:get(max_steps, Flags, 20),
+  Compaction = ensure_map(maps:get(compaction, Flags, #{})),
 
   UserAnswerer = fun ask_user_answerer/1,
   Gate =
@@ -162,6 +181,8 @@ runtime_opts(Flags0) ->
     protocol => Protocol,
     include_partial_messages => Stream,
     resume_session_id => Resume,
+    max_steps => MaxSteps,
+    compaction => Compaction,
     permission_gate => Gate,
     user_answerer => UserAnswerer,
     task_progress_emitter => fun (Msg) -> io:format("~s~n", [to_list(Msg)]) end,
@@ -265,6 +286,37 @@ parse_flags(["--permission", V0 | Rest], Acc) ->
   parse_flags(Rest, Acc#{permission => Mode});
 parse_flags(["--stream" | Rest], Acc) ->
   parse_flags(Rest, Acc#{stream => true});
+parse_flags(["--no-stream" | Rest], Acc) ->
+  parse_flags(Rest, Acc#{stream => false});
+parse_flags(["--max-steps", V0 | Rest], Acc) ->
+  Max0 = parse_int(V0),
+  Max =
+    case Max0 of
+      I when is_integer(I) -> clamp_int(I, 1, 200);
+      _ -> 20
+    end,
+  parse_flags(Rest, Acc#{max_steps => Max});
+parse_flags(["--context-limit", V0 | Rest], Acc) ->
+  case parse_int(V0) of
+    I when is_integer(I), I >= 0 ->
+      parse_flags(Rest, set_compaction_opt(Acc, context_limit, I));
+    _ ->
+      parse_flags(Rest, Acc)
+  end;
+parse_flags(["--reserved", V0 | Rest], Acc) ->
+  case parse_int(V0) of
+    I when is_integer(I), I >= 0 ->
+      parse_flags(Rest, set_compaction_opt(Acc, reserved, I));
+    _ ->
+      parse_flags(Rest, Acc)
+  end;
+parse_flags(["--input-limit", V0 | Rest], Acc) ->
+  case parse_int(V0) of
+    I when is_integer(I), I >= 0 ->
+      parse_flags(Rest, set_compaction_opt(Acc, input_limit, I));
+    _ ->
+      parse_flags(Rest, Acc)
+  end;
 parse_flags(["-h" | _Rest], _Acc) ->
   usage(),
   halt(0);
@@ -274,6 +326,20 @@ parse_flags(["--help" | _Rest], _Acc) ->
 parse_flags([Arg | Rest], Acc) ->
   {Acc2, Pos} = parse_flags(Rest, Acc),
   {Acc2, [Arg | Pos]}.
+
+set_compaction_opt(Acc0, K, V) ->
+  Acc = ensure_map(Acc0),
+  Comp0 = ensure_map(maps:get(compaction, Acc, #{})),
+  Acc#{compaction => Comp0#{K => V}}.
+
+parse_int(V0) ->
+  case (catch binary_to_integer(string:trim(to_bin(V0)))) of
+    I when is_integer(I) -> I;
+    _ -> undefined
+  end.
+
+clamp_int(I, Min, Max) when is_integer(I) ->
+  erlang:min(Max, erlang:max(Min, I)).
 
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);
