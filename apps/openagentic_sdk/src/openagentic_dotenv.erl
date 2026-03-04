@@ -76,24 +76,57 @@ parse_kv(Line0, Acc0) ->
         <<>> -> Acc0;
         _ ->
           V1 = string:trim(V0),
-          V = strip_wrapping_quotes(V1),
+          %% Kotlin parity:
+          %% - If value is quoted, take substring between first quote and the last matching quote,
+          %%   allowing: KEY="value" # comment
+          %% - If value is unquoted, strip inline hash comment: KEY=value # comment
+          V = strip_quotes_or_hash_comment(V1),
           Acc0#{K => V}
       end
   end.
 
-strip_wrapping_quotes(Val0) ->
+strip_quotes_or_hash_comment(Val0) ->
   Val = string:trim(to_bin(Val0)),
-  case byte_size(Val) >= 2 of
-    false ->
-      Val;
-    true ->
+  case Val of
+    <<>> ->
+      <<>>;
+    _ ->
       First = binary:at(Val, 0),
-      Last = binary:at(Val, byte_size(Val) - 1),
-      case {First, Last} of
-        {$", $"} -> string:trim(binary:part(Val, 1, byte_size(Val) - 2));
-        {$', $'} -> string:trim(binary:part(Val, 1, byte_size(Val) - 2));
-        _ -> Val
+      case (First =:= $") orelse (First =:= $') of
+        true ->
+          strip_wrapping_quote_with_trailing(Val, First);
+        false ->
+          strip_inline_hash_comment(Val)
       end
+  end.
+
+strip_wrapping_quote_with_trailing(Val, Quote) ->
+  %% Find the last matching quote (Kotlin uses lastIndexOf).
+  %% If not found, keep raw.
+  case last_index_of_byte(Val, Quote) of
+    I when is_integer(I), I > 0 ->
+      binary:part(Val, 1, I - 1);
+    _ ->
+      Val
+  end.
+
+strip_inline_hash_comment(Val) ->
+  case binary:match(Val, <<"#">>) of
+    nomatch ->
+      Val;
+    {Pos, _Len} ->
+      string:trim(binary:part(Val, 0, Pos), trailing)
+  end.
+
+last_index_of_byte(Bin, Byte) when is_binary(Bin), is_integer(Byte) ->
+  %% 0-based index; returns -1 if not found.
+  Pat = <<Byte>>,
+  case binary:matches(Bin, Pat) of
+    [] ->
+      -1;
+    Ms ->
+      {Pos, _Len} = lists:last(Ms),
+      Pos
   end.
 
 ensure_map(M) when is_map(M) -> M;

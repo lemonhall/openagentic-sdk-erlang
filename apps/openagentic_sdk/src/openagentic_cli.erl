@@ -3,7 +3,7 @@
 -export([main/1]).
 
 -ifdef(TEST).
--export([parse_flags_for_test/1, runtime_opts_for_test/1]).
+-export([parse_flags_for_test/1, runtime_opts_for_test/1, resolve_project_dir_for_test/1]).
 -endif.
 
 main(Args0) ->
@@ -132,8 +132,19 @@ runtime_opts_for_test(Flags0) ->
 
 runtime_opts(Flags0) ->
   Flags = ensure_map(Flags0),
-  ProjectDir0 = maps:get(project_dir, Flags, maps:get(cwd, Flags, cwd_safe())),
-  ProjectDir = to_list(string:trim(to_bin(ProjectDir0))),
+  %% Kotlin CLI runs as a normal process so cwd is the project directory.
+  %% When running this Erlang CLI from `rebar3 shell`, cwd can be under `_build/`.
+  %% To reduce surprises, when project dir is not explicitly provided we search upwards
+  %% for a `.env` (or `rebar.config`) and treat that directory as project dir.
+  ExplicitProjectDir = maps:get(project_dir, Flags, maps:get(cwd, Flags, undefined)),
+  ProjectDir0 =
+    case ExplicitProjectDir of
+      undefined -> cwd_safe();
+      V -> V
+    end,
+  UsedDefault = ExplicitProjectDir =:= undefined,
+  ProjectDir1 = to_list(string:trim(to_bin(ProjectDir0))),
+  ProjectDir = case UsedDefault of true -> resolve_project_dir(ProjectDir1); false -> ProjectDir1 end,
   DotEnv = openagentic_dotenv:load(filename:join([ProjectDir, ".env"])),
 
   ApiKey =
@@ -223,6 +234,37 @@ runtime_opts(Flags0) ->
     task_agents => TaskAgents,
     event_sink => event_sink(Stream)
   }.
+
+-ifdef(TEST).
+resolve_project_dir_for_test(Cwd0) ->
+  resolve_project_dir(to_list(string:trim(to_bin(Cwd0)))).
+-endif.
+
+resolve_project_dir(Dir0) ->
+  Dir = to_list(string:trim(to_bin(Dir0))),
+  case Dir of
+    "" -> Dir;
+    _ -> resolve_project_dir_loop(Dir, 0)
+  end.
+
+resolve_project_dir_loop(Dir, Depth) when Depth >= 20 ->
+  %% Safety valve: don't walk indefinitely.
+  Dir;
+resolve_project_dir_loop(Dir, Depth) ->
+  DotEnv = filename:join([Dir, ".env"]),
+  Rebar = filename:join([Dir, "rebar.config"]),
+  case {filelib:is_file(DotEnv), filelib:is_file(Rebar)} of
+    {true, _} ->
+      Dir;
+    {_, true} ->
+      Dir;
+    _ ->
+      Parent = filename:dirname(Dir),
+      case Parent =:= Dir of
+        true -> Dir;
+        false -> resolve_project_dir_loop(Parent, Depth + 1)
+      end
+  end.
 
 ask_user_answerer(Question0) ->
   Q = ensure_map(Question0),
@@ -397,6 +439,13 @@ cwd_safe() ->
 
 first_non_blank([]) ->
   undefined;
+first_non_blank([false | Rest]) ->
+  %% os:getenv/1 returns the atom `false` when unset; treat as missing.
+  first_non_blank(Rest);
+first_non_blank([undefined | Rest]) ->
+  first_non_blank(Rest);
+first_non_blank([null | Rest]) ->
+  first_non_blank(Rest);
 first_non_blank([V0 | Rest]) ->
   V1 = strip_wrapping_quotes(to_bin(V0)),
   case byte_size(string:trim(V1)) > 0 of

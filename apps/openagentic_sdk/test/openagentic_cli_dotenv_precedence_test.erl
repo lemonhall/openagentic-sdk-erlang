@@ -54,6 +54,32 @@ flags_override_dotenv_test() ->
     }
   ).
 
+dotenv_missing_optional_keys_do_not_become_false_test() ->
+  Tmp = test_root(),
+  DotPath = filename:join([Tmp, ".env"]),
+  %% Only required keys; omit OPENAI_API_KEY_HEADER / OPENAI_BASE_URL.
+  ok = file:write_file(DotPath, <<"OPENAI_API_KEY=dotkey\nMODEL=dotmodel\n">>),
+  %% Ensure env vars are unset (os:getenv/1 -> false).
+  with_unset_env(
+    ["OPENAI_API_KEY_HEADER", "OPENAI_BASE_URL"],
+    fun () ->
+      {Flags, _} = openagentic_cli:parse_flags_for_test(["--project-dir", Tmp]),
+      Opts = openagentic_cli:runtime_opts_for_test(Flags),
+      ?assertEqual(<<"authorization">>, maps:get(api_key_header, Opts)),
+      ?assertEqual(<<"https://api.openai.com/v1">>, maps:get(base_url, Opts)),
+      ok
+    end
+  ).
+
+with_unset_env(Keys, Fun) ->
+  Old = [{K, os:getenv(K)} || K <- Keys],
+  lists:foreach(fun (K) -> _ = os:unsetenv(K) end, Keys),
+  try
+    Fun()
+  after
+    lists:foreach(fun ({K, false}) -> _ = os:unsetenv(K); ({K, V}) -> _ = os:putenv(K, V) end, Old)
+  end.
+
 with_env(Fun, Vars) ->
   %% Snapshot old values and restore after.
   Names = maps:keys(Vars),
@@ -72,4 +98,3 @@ test_root() ->
   Tmp = filename:join([Base, Id]),
   ok = filelib:ensure_dir(filename:join([Tmp, "x"])),
   Tmp.
-

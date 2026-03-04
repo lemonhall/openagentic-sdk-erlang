@@ -16,3 +16,23 @@
 rebar3 eunit
 ```
 
+## CLI（本地验证）
+
+当前仓库的 CLI 入口是 `openagentic_cli:main/1`（会读取项目目录下的 `.env`）。
+
+```powershell
+rebar3 shell
+```
+
+在 Erlang shell 里：
+
+```erlang
+openagentic_cli:main(["chat"]).
+%% 或：openagentic_cli:main(["run", "你好"]).
+```
+
+常用 `.env` 键：
+- `OPENAI_API_KEY`（必填）
+- `OPENAI_MODEL` 或 `MODEL`（必填）
+- `OPENAI_BASE_URL`（可选；默认 `https://api.openai.com/v1`）
+- `OPENAI_API_KEY_HEADER`（可选；默认 `authorization`，一些网关可能需要 `x-api-key` 等）

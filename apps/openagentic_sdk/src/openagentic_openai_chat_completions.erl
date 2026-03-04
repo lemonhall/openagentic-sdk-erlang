@@ -54,7 +54,7 @@ complete(Req0) ->
 do_complete(ApiKey, BaseUrl, Model, TimeoutMs, Messages, Tools) ->
   ok = ensure_httpc_started(),
   ok = configure_proxy(),
-  Url = BaseUrl ++ "/chat/completions",
+  Url = openagentic_http_url:join(BaseUrl, "/chat/completions"),
   Payload0 = #{model => Model, messages => Messages},
   Payload =
     case Tools of
@@ -67,7 +67,8 @@ do_complete(ApiKey, BaseUrl, Model, TimeoutMs, Messages, Tools) ->
     {"content-type", "application/json"},
     {"accept", "application/json"}
   ],
-  HttpOptions = [{timeout, TimeoutMs}],
+  %% Kotlin parity: disable automatic redirects (HttpURLConnection.instanceFollowRedirects=false).
+  HttpOptions = [{timeout, TimeoutMs}, {autoredirect, false}],
   Options = [{body_format, binary}],
   case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
     {ok, {{_Vsn, Status, _ReasonPhrase}, RespHeaders, RespBody}} ->

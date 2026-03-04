@@ -149,16 +149,33 @@ parse_proxy_url(Url0) ->
 do_complete(ApiKey, ApiKeyHeader, BaseUrl, Model, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Prev, Store, DefaultStore, OnDelta) ->
   ok = ensure_httpc_started(),
   ok = configure_proxy(),
-  Url = BaseUrl ++ "/responses",
+  Url = openagentic_http_url:join(BaseUrl, "/responses"),
   Body = request_body(Model, InputItems, Tools, Prev, Store, DefaultStore),
   Headers = build_headers(ApiKeyHeader, ApiKey, true),
-  HttpOptions = [{timeout, TimeoutMs}],
-  Options = [{sync, false}, {stream, self()}, {body_format, binary}],
+  _ = maybe_debug_http_request(Url, Headers),
+  %% Kotlin parity: disable automatic redirects (HttpURLConnection.instanceFollowRedirects=false).
+  HttpOptions = [{timeout, TimeoutMs}, {autoredirect, false}],
+  %% inets:httpc expects stream target to be `self` (atom) or `{self, once}`,
+  %% not a pid like `self()`.
+  Options = [{sync, false}, {stream, self}, {body_format, binary}],
   case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
     {ok, ReqId} ->
       collect_stream(ReqId, StreamReadTimeoutMs, OnDelta);
     Error ->
       {error, {httpc_request_failed, Error}}
+  end.
+
+maybe_debug_http_request(Url0, Headers0) ->
+  case os:getenv("OPENAGENTIC_DEBUG_HTTP") of
+    false -> ok;
+    "" -> ok;
+    "0" -> ok;
+    _ ->
+      %% Never print header values (may contain secrets). Print only header names and url.
+      Url = to_list(Url0),
+      HeaderNames = [K || {K, _V} <- ensure_list(Headers0)],
+      io:format("debug.http url=~s headers=~p~n", [Url, HeaderNames]),
+      ok
   end.
 
 request_body(Model, InputItems0, Tools0, Prev, Store0, DefaultStore0) ->

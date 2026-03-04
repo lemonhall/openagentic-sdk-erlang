@@ -43,7 +43,7 @@ complete(Req0) ->
 do_complete(ApiKey, BaseUrl, Version, Model, MaxTokens, TimeoutMs, StreamReadTimeoutMs, InputItems, Tools, Stream, OnDelta) ->
   ok = ensure_httpc_started(),
   ok = configure_proxy(),
-  Url = BaseUrl ++ "/v1/messages",
+  Url = openagentic_http_url:join(BaseUrl, "/v1/messages"),
   {System, Messages} = openagentic_anthropic_parsing:responses_input_to_messages(InputItems),
   AnthTools = openagentic_anthropic_parsing:responses_tools_to_anthropic_tools(Tools),
   Payload0 = #{model => Model, max_tokens => MaxTokens, messages => Messages},
@@ -57,7 +57,8 @@ do_complete(ApiKey, BaseUrl, Version, Model, MaxTokens, TimeoutMs, StreamReadTim
     {"anthropic-version", Version}
   ],
   Headers = case Stream of true -> Headers0 ++ [{"accept", "text/event-stream"}]; false -> Headers0 end,
-  HttpOptions = [{timeout, TimeoutMs}],
+  %% Kotlin parity: disable automatic redirects (HttpURLConnection.instanceFollowRedirects=false).
+  HttpOptions = [{timeout, TimeoutMs}, {autoredirect, false}],
   case Stream of
     false ->
       Options = [{sync, true}, {body_format, binary}],
@@ -71,7 +72,9 @@ do_complete(ApiKey, BaseUrl, Version, Model, MaxTokens, TimeoutMs, StreamReadTim
           {error, {httpc_request_failed, Err}}
       end;
     true ->
-      Options = [{sync, false}, {stream, self()}, {body_format, binary}],
+      %% inets:httpc expects stream target to be `self` (atom) or `{self, once}`,
+      %% not a pid like `self()`.
+      Options = [{sync, false}, {stream, self}, {body_format, binary}],
       case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
         {ok, ReqId} ->
           collect_stream(ReqId, StreamReadTimeoutMs, OnDelta);
@@ -237,4 +240,3 @@ to_bin(L) when is_list(L) -> unicode:characters_to_binary(L, utf8);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> iolist_to_binary(integer_to_list(I));
 to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other]), utf8).
-
