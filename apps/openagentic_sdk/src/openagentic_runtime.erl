@@ -11,57 +11,219 @@ query(Prompt0, Opts0) ->
 
   RootDir = ensure_list(maps:get(session_root, Opts, openagentic_paths:default_session_root())),
   Metadata = maps:get(session_metadata, Opts, #{}),
-  {ok, SessionId} = openagentic_session_store:create_session(RootDir, Metadata),
+  Resume0 =
+    maps:get(
+      resume_session_id,
+      Opts,
+      maps:get(resumeSessionId, Opts, maps:get(<<"resume_session_id">>, Opts, maps:get(<<"resumeSessionId">>, Opts, undefined)))
+    ),
+  Resume1 =
+    case Resume0 of
+      undefined -> <<>>;
+      null -> <<>>;
+      _ -> string:trim(to_bin(Resume0))
+    end,
+  %% Defensive: tolerate callers passing the atom 'undefined' as a resume id (common in Erlang options maps).
+  Resume =
+    case Resume1 of
+      <<"undefined">> -> <<>>;
+      _ -> Resume1
+    end,
 
   Cwd = maps:get(cwd, Opts, ensure_list(file_get_cwd_safe())),
   ProjectDir = ensure_list(maps:get(project_dir, Opts, maps:get(projectDir, Opts, Cwd))),
-  {ok, InitEv} = openagentic_session_store:append_event(RootDir, SessionId, openagentic_events:system_init(SessionId, Cwd, #{})),
-  {ok, UserEv} = openagentic_session_store:append_event(RootDir, SessionId, openagentic_events:user_message(Prompt)),
+  EventSink = maps:get(event_sink, Opts, maps:get(eventSink, Opts, undefined)),
 
   ApiKey = maps:get(api_key, Opts, maps:get(<<"api_key">>, Opts, undefined)),
   Model = maps:get(model, Opts, maps:get(<<"model">>, Opts, undefined)),
   BaseUrl = maps:get(base_url, Opts, maps:get(<<"base_url">>, Opts, undefined)),
   TimeoutMs = maps:get(timeout_ms, Opts, maps:get(<<"timeout_ms">>, Opts, ?DEFAULT_TIMEOUT_MS)),
 
-  ProviderMod = maps:get(provider_mod, Opts, openagentic_openai_responses),
+  ProviderRetry = maps:get(provider_retry, Opts, maps:get(providerRetry, Opts, #{})),
+  IncludePartial = maps:get(include_partial_messages, Opts, maps:get(includePartialMessages, Opts, false)),
+
+  Protocol0 =
+    maps:get(
+      protocol,
+      Opts,
+      maps:get(
+        provider_protocol,
+        Opts,
+        maps:get(
+          providerProtocol,
+          Opts,
+          maps:get(
+            provider_protocol_override,
+            Opts,
+            maps:get(providerProtocolOverride, Opts, maps:get(<<"protocol">>, Opts, maps:get(<<"provider_protocol">>, Opts, maps:get(<<"providerProtocol">>, Opts, undefined))))
+          )
+        )
+      )
+    ),
+  Protocol = openagentic_provider_protocol:normalize(Protocol0),
+
+  ProviderMod =
+    case maps:get(provider_mod, Opts, undefined) of
+      undefined ->
+        case Protocol of
+          legacy -> openagentic_openai_chat_completions;
+          responses -> openagentic_openai_responses
+        end;
+      M -> M
+    end,
+
+  SystemPrompt0 =
+    maps:get(
+      system_prompt,
+      Opts,
+      maps:get(systemPrompt, Opts, maps:get(<<"system_prompt">>, Opts, maps:get(<<"systemPrompt">>, Opts, undefined)))
+    ),
+  SystemPrompt1 = string:trim(to_bin(SystemPrompt0)),
+  SystemPrompt = case SystemPrompt1 of <<>> -> undefined; <<"undefined">> -> undefined; _ -> SystemPrompt1 end,
+
+  TaskAgents = maps:get(task_agents, Opts, maps:get(taskAgents, Opts, [])),
+  AgentsVar = openagentic_task_agents:render_agents_for_prompt(TaskAgents),
+
   ToolMods = maps:get(tools, Opts, default_tools()),
-  ToolSchemas = openagentic_tool_schemas:responses_tools(ToolMods, #{project_dir => ProjectDir, directory => Cwd, cwd => Cwd}),
+  ToolSchemas =
+    openagentic_tool_schemas:responses_tools(ToolMods, #{project_dir => ProjectDir, directory => Cwd, cwd => Cwd, agents => AgentsVar}),
   Registry = openagentic_tool_registry:new(ToolMods),
 
   UserAnswerer = maps:get(user_answerer, Opts, undefined),
   PermissionGate = maps:get(permission_gate, Opts, openagentic_permissions:default(UserAnswerer)),
   AllowedTools = maps:get(allowed_tools, Opts, undefined),
-  TaskRunner = maps:get(task_runner, Opts, undefined),
+  TaskProgressEmitter = maps:get(task_progress_emitter, Opts, maps:get(taskProgressEmitter, Opts, undefined)),
+  TaskRunner0 = maps:get(task_runner, Opts, undefined),
   HookEngine = maps:get(hook_engine, Opts, maps:get(hookEngine, Opts, #{})),
   ToolOutputArtifacts = maps:get(tool_output_artifacts, Opts, maps:get(toolOutputArtifacts, Opts, #{})),
-  TaskAgents = maps:get(task_agents, Opts, maps:get(taskAgents, Opts, [])),
   MaxSteps = maps:get(max_steps, Opts, ?DEFAULT_MAX_STEPS),
+  ResumeMaxEvents = maps:get(resume_max_events, Opts, maps:get(resumeMaxEvents, Opts, 1000)),
+  ResumeMaxBytes = maps:get(resume_max_bytes, Opts, maps:get(resumeMaxBytes, Opts, 2000000)),
+  TaskRunner =
+    case {TaskRunner0, openagentic_task_agents:has_agent(<<"explore">>, TaskAgents)} of
+      {undefined, true} -> openagentic_task_runners:built_in_explore(Opts);
+      _ -> TaskRunner0
+    end,
 
-  State0 = #{
-    root => RootDir,
-    session_id => SessionId,
-    events => [InitEv, UserEv],
-    project_dir => ProjectDir,
-    api_key => ApiKey,
-    model => Model,
-    base_url => BaseUrl,
-    timeout_ms => TimeoutMs,
-    provider_mod => ProviderMod,
-    tool_schemas => ToolSchemas,
-    registry => Registry,
-    permission_gate => PermissionGate,
-    allowed_tools => AllowedTools,
-    user_answerer => UserAnswerer,
-    task_runner => TaskRunner,
-    hook_engine => HookEngine,
-    tool_output_artifacts => ToolOutputArtifacts,
-    task_agents => TaskAgents,
-    previous_response_id => undefined,
-    supports_previous_response_id => true,
-    steps => 0,
-    max_steps => MaxSteps
-  },
-  run_loop(State0).
+  SupportsPrevDefault = case Protocol of legacy -> false; responses -> true end,
+  SupportsPrev0 = maps:get(supports_previous_response_id, Opts, maps:get(supportsPreviousResponseId, Opts, SupportsPrevDefault)),
+  SupportsPrev = case SupportsPrev0 of true -> true; false -> false; _ -> SupportsPrevDefault end,
+  CompactionCfg = ensure_map(maps:get(compaction, Opts, maps:get(<<"compaction">>, Opts, #{}))),
+
+  ResumeRes =
+    case byte_size(Resume) > 0 of
+      true ->
+        try
+          _ = openagentic_session_store:session_dir(RootDir, Resume),
+          Past0 = openagentic_session_store:read_events(RootDir, Resume),
+          Past = trim_events_for_resume(Past0, ResumeMaxEvents, ResumeMaxBytes),
+          Prev = infer_previous_response_id(Past),
+          {ok, {Resume, Past, Prev}}
+        catch
+          _:_ -> {error, {invalid_session_id, Resume}}
+        end;
+      false ->
+        {ok, Sid} = openagentic_session_store:create_session(RootDir, Metadata),
+        {ok, {Sid, [], undefined}}
+    end,
+  case ResumeRes of
+    {error, Reason} ->
+      {error, Reason};
+    {ok, {SessionId, PastEvents, PrevRespId}} ->
+      State0 = #{
+        root => RootDir,
+        session_id => SessionId,
+        events => PastEvents,
+        event_sink => EventSink,
+        project_dir => ProjectDir,
+        api_key => ApiKey,
+        model => Model,
+        base_url => BaseUrl,
+        timeout_ms => TimeoutMs,
+        provider_mod => ProviderMod,
+        provider_retry => ProviderRetry,
+        include_partial_messages => IncludePartial,
+        resume_max_events => ResumeMaxEvents,
+        resume_max_bytes => ResumeMaxBytes,
+        compaction => CompactionCfg,
+        protocol => Protocol,
+        system_prompt => SystemPrompt,
+        tool_schemas => ToolSchemas,
+        registry => Registry,
+        permission_gate => PermissionGate,
+        allowed_tools => AllowedTools,
+        user_answerer => UserAnswerer,
+        task_progress_emitter => TaskProgressEmitter,
+        task_runner => TaskRunner,
+        hook_engine => HookEngine,
+        tool_output_artifacts => ToolOutputArtifacts,
+        task_agents => TaskAgents,
+        previous_response_id => PrevRespId,
+        supports_previous_response_id => SupportsPrev,
+        steps => 0,
+        max_steps => MaxSteps
+      },
+      State1 =
+        case byte_size(Resume) > 0 of
+          true -> State0;
+          false -> append_event(State0, openagentic_events:system_init(SessionId, Cwd, #{}))
+        end,
+      State2 = append_event(State1, openagentic_events:user_message(Prompt)),
+      run_loop(State2)
+  end.
+
+trim_events_for_resume(Events0, MaxEvents0, MaxBytes0) ->
+  Events = ensure_list(Events0),
+  MaxEvents = erlang:max(0, MaxEvents0),
+  MaxBytes = erlang:max(0, MaxBytes0),
+  case {MaxEvents =< 0, MaxBytes =< 0} of
+    {true, true} ->
+      Events;
+    _ ->
+      trim_events_for_resume_loop(lists:reverse(Events), MaxEvents, MaxBytes, [], 0)
+  end.
+
+trim_events_for_resume_loop([], _MaxEvents, _MaxBytes, Acc, _Bytes) ->
+  lists:reverse(Acc);
+trim_events_for_resume_loop([E | Rest], MaxEvents, MaxBytes, Acc0, Bytes0) ->
+  case (MaxEvents > 0 andalso length(Acc0) >= MaxEvents) of
+    true -> lists:reverse(Acc0);
+    false ->
+      Approx = safe_event_len(E),
+      case (MaxBytes > 0 andalso (Bytes0 + Approx) > MaxBytes andalso Acc0 =/= []) of
+        true ->
+          lists:reverse(Acc0);
+        false ->
+          trim_events_for_resume_loop(Rest, MaxEvents, MaxBytes, [E | Acc0], Bytes0 + Approx)
+      end
+  end.
+
+safe_event_len(E) ->
+  try
+    byte_size(openagentic_json:encode(ensure_map(E)))
+  catch
+    _:_ -> 0
+  end.
+
+infer_previous_response_id(Events0) ->
+  Events = ensure_list(Events0),
+  infer_previous_response_id_loop(lists:reverse(Events)).
+
+infer_previous_response_id_loop([]) ->
+  undefined;
+infer_previous_response_id_loop([E0 | Rest]) ->
+  E = ensure_map(E0),
+  Type = to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))),
+  case Type of
+    <<"result">> ->
+      Resp0 = maps:get(<<"response_id">>, E, maps:get(response_id, E, undefined)),
+      Resp = string:trim(to_bin(Resp0)),
+      case byte_size(Resp) > 0 of
+        true -> Resp;
+        false -> infer_previous_response_id_loop(Rest)
+      end;
+    _ -> infer_previous_response_id_loop(Rest)
+  end.
 
 run_loop(State0) ->
   Steps = maps:get(steps, State0),
@@ -80,21 +242,32 @@ run_loop(State0) ->
 
 call_model(State0) ->
   Events = maps:get(events, State0, []),
-  InputItems = openagentic_model_input:build_responses_input(Events),
+  InputItems0 = openagentic_model_input:build_responses_input(Events),
+  InputItems = maybe_prepend_system_prompt(State0, InputItems0),
   ProviderMod = maps:get(provider_mod, State0),
   ToolSchemas = maps:get(tool_schemas, State0, []),
   Opts = build_provider_opts(State0, InputItems, ToolSchemas),
+  RetryCfg = maps:get(provider_retry, State0, #{}),
+  OptsD =
+    case maps:get(include_partial_messages, State0, false) of
+      true ->
+        Sink = fun (DeltaBin) -> emit_transient_event(State0, openagentic_events:assistant_delta(DeltaBin)) end,
+        Opts#{on_delta => Sink};
+      false ->
+        Opts
+    end,
   PrevId = maps:get(previous_response_id, State0, undefined),
   SupportsPrev = maps:get(supports_previous_response_id, State0, true),
+  Protocol = maps:get(protocol, State0, responses),
   Opts2 =
-    case {SupportsPrev, PrevId} of
-      {true, undefined} -> Opts;
-      {true, <<>>} -> Opts;
-      {true, ""} -> Opts;
-      {true, PrevVal} -> Opts#{previous_response_id => PrevVal};
-      _ -> Opts
+    case {Protocol, SupportsPrev, PrevId} of
+      {responses, true, undefined} -> OptsD;
+      {responses, true, <<>>} -> OptsD;
+      {responses, true, ""} -> OptsD;
+      {responses, true, PrevVal} -> OptsD#{previous_response_id => PrevVal};
+      _ -> OptsD
     end,
-  case ProviderMod:complete(Opts2) of
+  case openagentic_provider_retry:call(fun () -> ProviderMod:complete(Opts2) end, RetryCfg) of
     {ok, ModelOut} ->
       RespId = maps:get(response_id, ModelOut, undefined),
       State1 =
@@ -107,11 +280,11 @@ call_model(State0) ->
       %% Kotlin-aligned fallback: if prev id breaks, retry without it once.
       Msg = string:lowercase(iolist_to_binary(io_lib:format("~p", [Reason]))),
       LooksPrev = (binary:match(Msg, <<"previous_response_id">>) =/= nomatch) orelse (binary:match(Msg, <<"previous response">>) =/= nomatch),
-      case {SupportsPrev, PrevId, LooksPrev} of
-        {true, PrevVal2, true} when PrevVal2 =/= undefined, PrevVal2 =/= <<>>, PrevVal2 =/= "" ->
+      case {Protocol, SupportsPrev, PrevId, LooksPrev} of
+        {responses, true, PrevVal2, true} when PrevVal2 =/= undefined, PrevVal2 =/= <<>>, PrevVal2 =/= "" ->
           State1 = State0#{supports_previous_response_id := false},
-          Opts3 = maps:remove(previous_response_id, Opts),
-          case ProviderMod:complete(Opts3) of
+          Opts3 = maps:remove(previous_response_id, OptsD),
+          case openagentic_provider_retry:call(fun () -> ProviderMod:complete(Opts3) end, RetryCfg) of
             {ok, ModelOut2} ->
               RespId2 = maps:get(response_id, ModelOut2, undefined),
               State2 =
@@ -139,11 +312,121 @@ handle_model_output(ModelOut0, State0) ->
           <<>> -> State0;
           _ -> append_event(State0, openagentic_events:assistant_message(AssistantText))
         end,
-      State2 = append_event(State1, openagentic_events:result(maps:get(response_id, ModelOut, <<>>), <<"end">>)),
-      {ok, #{session_id => maps:get(session_id, State2), final_text => AssistantText}};
+      %% Kotlin parity: after tool loop, optionally run compaction on overflow (eligible when we can't rely on previous_response_id).
+      case maybe_run_compaction_overflow(ModelOut, State1) of
+        {compacted, StateC} ->
+          run_loop(StateC);
+         {no_compaction, StateNC} ->
+      Usage0 = maps:get(usage, ModelOut, undefined),
+      Usage =
+        case Usage0 of
+          null -> undefined;
+          U when is_map(U) -> U;
+          _ -> undefined
+        end,
+      ResponseId0 = maps:get(previous_response_id, StateNC, undefined),
+      ResponseId1 = string:trim(to_bin(ResponseId0)),
+      ResponseId =
+        case ResponseId1 of
+          <<>> -> undefined;
+          <<"undefined">> -> undefined;
+          _ -> ResponseId1
+        end,
+      Steps = maps:get(steps, State1, 0),
+      Sid = maps:get(session_id, State1, <<>>),
+      State2 =
+        append_event(
+          StateNC,
+          openagentic_events:result(
+            AssistantText,
+            Sid,
+            <<"end">>,
+            Usage,
+            ResponseId,
+            undefined,
+            Steps
+          )
+        ),
+      {ok, #{session_id => maps:get(session_id, State2), final_text => AssistantText}}
+      end;
     _ ->
       State1 = lists:foldl(fun run_one_tool_call/2, State0, ToolCalls),
-      run_loop(State1)
+      State2 = maybe_prune_tool_outputs(State1),
+      run_loop(State2)
+  end.
+
+maybe_prune_tool_outputs(State0) ->
+  Compaction = ensure_map(maps:get(compaction, State0, #{})),
+  Prune = maps:get(prune, Compaction, maps:get(<<"prune">>, Compaction, true)),
+  case Prune of
+    false ->
+      State0;
+    _ ->
+      Ids = openagentic_compaction:select_tool_outputs_to_prune(maps:get(events, State0, []), Compaction),
+      case Ids of
+        [] -> State0;
+        _ ->
+          Now = erlang:system_time(millisecond) / 1000.0,
+          lists:foldl(
+            fun (Tid0, Acc) ->
+              Tid = to_bin(Tid0),
+              append_event(Acc, openagentic_events:tool_output_compacted(Tid, Now))
+            end,
+            State0,
+            Ids
+          )
+      end
+  end.
+
+maybe_run_compaction_overflow(ModelOut, State0) ->
+  Compaction = ensure_map(maps:get(compaction, State0, #{})),
+  Auto = maps:get(auto, Compaction, maps:get(<<"auto">>, Compaction, true)),
+  SupportsPrev = maps:get(supports_previous_response_id, State0, true),
+  Protocol = maps:get(protocol, State0, responses),
+  %% Kotlin parity: overflow compaction is eligible for legacy, or for responses providers that can't rely on previous_response_id.
+  Eligible = (Auto =:= true) andalso ((Protocol =:= legacy) orelse (SupportsPrev =:= false)),
+  Usage = maps:get(usage, ensure_map(ModelOut), undefined),
+  case Eligible andalso openagentic_compaction:would_overflow(Compaction, ensure_map(Usage)) of
+    true ->
+      State1 = append_event(State0, openagentic_events:user_compaction(true, <<"overflow">>)),
+      State2 = run_compaction_pass(State1),
+      {compacted, State2#{previous_response_id := undefined}};
+    false ->
+      {no_compaction, State0}
+  end.
+
+run_compaction_pass(State0) ->
+  Root = maps:get(root, State0),
+  Sid0 = maps:get(session_id, State0, <<>>),
+  Sid = to_bin(Sid0),
+  ResumeMaxEvents = maps:get(resume_max_events, State0, 1000),
+  ResumeMaxBytes = maps:get(resume_max_bytes, State0, 2000000),
+  Events0 = openagentic_session_store:read_events(Root, Sid),
+  History =
+    openagentic_compaction:build_compaction_transcript(
+      Events0,
+      ResumeMaxEvents,
+      ResumeMaxBytes,
+      openagentic_compaction:tool_output_placeholder()
+    ),
+  InputItems =
+    [#{role => <<"system">>, content => openagentic_compaction:compaction_system_prompt()}] ++
+      History ++
+      [#{role => <<"user">>, content => openagentic_compaction:compaction_user_instruction()}],
+  ProviderMod = maps:get(provider_mod, State0),
+  RetryCfg = maps:get(provider_retry, State0, #{}),
+  Req0 = build_provider_opts(State0, InputItems, []),
+  Req = Req0#{store => false},
+  case openagentic_provider_retry:call(fun () -> ProviderMod:complete(Req) end, RetryCfg) of
+    {ok, ModelOut} ->
+      Summary = maps:get(assistant_text, ensure_map(ModelOut), <<>>),
+      case byte_size(string:trim(to_bin(Summary))) > 0 of
+        true -> append_event(State0, openagentic_events:assistant_message(Summary, true));
+        false -> State0
+      end;
+    {error, Reason} ->
+      %% Best-effort: record error and continue without compaction.
+      append_event(State0, openagentic_events:runtime_error(<<"compaction">>, <<"CompactionError">>, to_bin(Reason), to_bin(ProviderMod), undefined))
   end.
 
 run_one_tool_call(ToolCall0, State0) ->
@@ -242,8 +525,25 @@ append_event(State0, Event0) ->
   Root = maps:get(root, State0),
   SessionId = maps:get(session_id, State0),
   {ok, Stored} = openagentic_session_store:append_event(Root, SessionId, Event0),
+  _ = maybe_emit_event(State0, Stored),
   Events0 = maps:get(events, State0, []),
   State0#{events := Events0 ++ [Stored]}.
+
+maybe_emit_event(State0, Event) ->
+  case maps:get(event_sink, State0, undefined) of
+    F when is_function(F, 1) ->
+      try
+        F(Event)
+      catch
+        _:_ -> ok
+      end;
+    _ -> ok
+  end.
+
+emit_transient_event(State0, Event) ->
+  %% Transient events are not persisted and do not affect session history.
+  _ = maybe_emit_event(State0, Event),
+  ok.
 
 append_hook_events(State0, Events0) ->
   Events = ensure_list(Events0),
@@ -489,12 +789,45 @@ int_default(Map, Keys, Default) ->
   end.
 
 finalize_error(State0, Reason) ->
-  State1 = append_event(State0, openagentic_events:runtime_error(<<"runtime_error">>, Reason)),
-  State2 = append_event(State1, openagentic_events:result(<<>>, <<"error">>)),
+  Sid = maps:get(session_id, State0, <<>>),
+  Steps = maps:get(steps, State0, 0),
+  Provider = maps:get(provider_mod, State0, undefined),
+  Phase = error_phase(Reason),
+  ErrMsg = truncate_bin(to_bin(Reason), 2000),
+  ErrType = error_type(Reason),
+  State1 = append_event(State0, openagentic_events:runtime_error(Phase, ErrType, ErrMsg, to_bin(Provider), undefined)),
+  State2 =
+    append_event(
+      State1,
+      openagentic_events:result(
+        <<>>,
+        Sid,
+        <<"error">>,
+        undefined,
+        maps:get(previous_response_id, State0, undefined),
+        undefined,
+        Steps
+      )
+    ),
   {error, {runtime_error, Reason, maps:get(session_id, State2)}}.
 
 finalize_max_steps(State0) ->
-  State1 = append_event(State0, openagentic_events:result(maps:get(previous_response_id, State0, <<>>), <<"max_steps">>)),
+  Sid = maps:get(session_id, State0, <<>>),
+  Steps = maps:get(steps, State0, 0),
+  RespId = maps:get(previous_response_id, State0, undefined),
+  State1 =
+    append_event(
+      State0,
+      openagentic_events:result(
+        <<>>,
+        Sid,
+        <<"max_steps">>,
+        undefined,
+        RespId,
+        undefined,
+        Steps
+      )
+    ),
   {ok, #{session_id => maps:get(session_id, State1), final_text => <<>>}}.
 
 bump_steps(State0) ->
@@ -577,7 +910,12 @@ handle_task(ToolUseId, ToolName0, ToolInput0, HookCtx, State0) ->
       case maps:get(task_runner, State0, undefined) of
         F when is_function(F, 3) ->
           SessionId = maps:get(session_id, State0, <<>>),
-          ToolCtx = #{session_id => SessionId, tool_use_id => ToolUseId},
+          Emit = maps:get(task_progress_emitter, State0, undefined),
+          ToolCtx =
+            case Emit of
+              Ef when is_function(Ef, 1) -> #{session_id => SessionId, tool_use_id => ToolUseId, emit_progress => Ef};
+              _ -> #{session_id => SessionId, tool_use_id => ToolUseId}
+            end,
           try
             Out = F(Agent, Prompt, ToolCtx),
             finish_tool_success(ToolUseId, ToolName, Out, HookCtx, State0)
@@ -716,6 +1054,66 @@ first_non_empty(Map, [K | Rest]) ->
       case byte_size(string:trim(Bin)) > 0 of
         true -> Bin;
         false -> first_non_empty(Map, Rest)
+      end
+  end.
+
+%% ---- provider input helpers ----
+
+maybe_prepend_system_prompt(State0, InputItems0) ->
+  InputItems = ensure_list(InputItems0),
+  case maps:get(system_prompt, State0, undefined) of
+    P when is_binary(P) ->
+      P2 = string:trim(P),
+      case byte_size(P2) > 0 of
+        true -> [#{role => <<"system">>, content => P2} | InputItems];
+        false -> InputItems
+      end;
+    _ ->
+      InputItems
+  end.
+
+%% ---- error helpers ----
+
+error_phase(Reason) ->
+  case is_provider_error(Reason) of
+    true -> <<"provider">>;
+    false -> <<"session">>
+  end.
+
+error_type(Reason) ->
+  case is_provider_error(Reason) of
+    true -> <<"ProviderError">>;
+    false -> <<"RuntimeError">>
+  end.
+
+is_provider_error({http_error, _Status, _Headers, _Body}) -> true;
+is_provider_error({httpc_request_failed, _}) -> true;
+is_provider_error({httpc_set_options_failed, _}) -> true;
+is_provider_error({invalid_proxy, _}) -> true;
+is_provider_error({missing_required, _}) -> true;
+is_provider_error({missing, _}) -> true;
+is_provider_error(_) -> false.
+
+truncate_bin(Bin0, MaxChars0) ->
+  Bin = to_bin(Bin0),
+  MaxChars = erlang:max(0, MaxChars0),
+  case MaxChars =< 0 of
+    true ->
+      <<>>;
+    false ->
+      try
+        L = unicode:characters_to_list(Bin, utf8),
+        case length(L) =< MaxChars of
+          true -> unicode:characters_to_binary(L, utf8);
+          false -> unicode:characters_to_binary(lists:sublist(L, MaxChars), utf8)
+        end
+      catch
+        _:_ ->
+          %% Best-effort: fall back to bytes.
+          case byte_size(Bin) =< MaxChars of
+            true -> Bin;
+            false -> binary:part(Bin, 0, MaxChars)
+          end
       end
   end.
 

@@ -39,7 +39,8 @@ complete(Req0) ->
       Tools = maps:get(tools, Req, []),
       Prev = maps:get(previous_response_id, Req, maps:get(previousResponseId, Req, undefined)),
       Store = maps:get(store, Req, undefined),
-      do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store);
+      OnDelta = maps:get(on_delta, Req, maps:get(onDelta, Req, undefined)),
+      do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store, OnDelta);
     {ApiKeyRes, ModelRes} ->
       {error, {missing_required, [ApiKeyRes, ModelRes]}}
   end.
@@ -59,7 +60,7 @@ query(Prompt0, Opts0) ->
   },
   complete(Req).
 
-do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store) ->
+do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store, OnDelta) ->
   ok = ensure_httpc_started(),
   ok = configure_proxy(),
   Url = BaseUrl ++ "/responses",
@@ -73,7 +74,7 @@ do_complete(ApiKey, BaseUrl, Model, TimeoutMs, InputItems, Tools, Prev, Store) -
   Options = [{sync, false}, {stream, self()}, {body_format, binary}],
   case httpc:request(post, {Url, Headers, "application/json", Body}, HttpOptions, Options, ?HTTPC_PROFILE) of
     {ok, ReqId} ->
-      collect_stream(ReqId, TimeoutMs);
+      collect_stream(ReqId, TimeoutMs, OnDelta);
     Error ->
       {error, {httpc_request_failed, Error}}
   end.
@@ -178,9 +179,9 @@ request_body(Model, InputItems0, Tools0, Prev, Store) ->
     end,
   openagentic_json:encode(Payload).
 
-collect_stream(ReqId, TimeoutMs) ->
+collect_stream(ReqId, TimeoutMs, OnDelta) ->
   Sse0 = openagentic_sse:new(),
-  collect_loop(ReqId, TimeoutMs, Sse0, #{delta_text => <<>>, last_response => undefined, failed => undefined}).
+  collect_loop(ReqId, TimeoutMs, Sse0, #{delta_text => <<>>, last_response => undefined, failed => undefined, on_delta => OnDelta}).
 
 collect_loop(ReqId, TimeoutMs, SseState0, Acc0) ->
   receive
@@ -194,8 +195,8 @@ collect_loop(ReqId, TimeoutMs, SseState0, Acc0) ->
       {error, {http_stream_error, Reason}};
     {http, {ReqId, stream_start, _Headers}} ->
       collect_loop(ReqId, TimeoutMs, SseState0, Acc0);
-    {http, {ReqId, {{_Vsn, Status, _ReasonPhrase}, _Headers, Body}}} ->
-      {error, {unexpected_non_stream_response, Status, Body}};
+    {http, {ReqId, {{_Vsn, Status, _ReasonPhrase}, Headers, Body}}} ->
+      {error, {http_error, Status, Headers, Body}};
     _Other ->
       collect_loop(ReqId, TimeoutMs, SseState0, Acc0)
   after TimeoutMs ->
@@ -229,6 +230,7 @@ handle_one_sse(#{data := Data}, Acc0) ->
 
 handle_openai_type(<<"response.output_text.delta">>, Obj, Acc0) ->
   Delta = to_bin(maps:get(<<"delta">>, Obj, maps:get(delta, Obj, <<>>))),
+  _ = maybe_emit_delta(Acc0, Delta),
   Prev = maps:get(delta_text, Acc0, <<>>),
   Acc0#{delta_text := <<Prev/binary, Delta/binary>>};
 handle_openai_type(<<"response.completed">>, Obj, Acc0) ->
@@ -238,6 +240,17 @@ handle_openai_type(<<"error">>, Obj, Acc0) ->
   Acc0#{failed := Obj};
 handle_openai_type(_, _Obj, Acc0) ->
   Acc0.
+
+maybe_emit_delta(Acc0, Delta) ->
+  case maps:get(on_delta, Acc0, undefined) of
+    F when is_function(F, 1) ->
+      try
+        F(Delta)
+      catch
+        _:_ -> ok
+      end;
+    _ -> ok
+  end.
 
 finalize_to_model_output(Acc0) ->
   case maps:get(failed, Acc0, undefined) of

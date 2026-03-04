@@ -82,12 +82,15 @@ prompt_vars(Ctx0) ->
   Ctx = ensure_map(Ctx0),
   ProjectDir = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
   Directory = maps:get(directory, Ctx, maps:get(cwd, Ctx, ProjectDir)),
+  Agents0 = maps:get(agents, Ctx, maps:get(<<"agents">>, Ctx, undefined)),
+  Agents1 = string:trim(to_bin(Agents0)),
+  Agents = case Agents1 of <<>> -> <<"  (none configured)">>; <<"undefined">> -> <<"  (none configured)">>; _ -> Agents1 end,
   #{
     directory => norm_bin(Directory),
     project_dir => norm_bin(ProjectDir),
     maxBytes => 1048576,
     maxLines => 2000,
-    agents => <<"  (none configured)">>
+    agents => Agents
   }.
 
 render_one_skill(Info0) ->

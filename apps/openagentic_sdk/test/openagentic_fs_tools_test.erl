@@ -251,8 +251,10 @@ norm(Other) ->
   norm(iolist_to_binary(io_lib:format("~p", [Other]))).
 
 test_root() ->
-  Base = code:lib_dir(openagentic_sdk),
-  Tmp = filename:join([Base, "tmp", integer_to_list(erlang:unique_integer([positive]))]),
+  {ok, Cwd} = file:get_cwd(),
+  Base = filename:join([Cwd, ".tmp", "eunit", "openagentic_fs_tools_test"]),
+  Id = lists:flatten(io_lib:format("~p_~p", [erlang:system_time(microsecond), erlang:unique_integer([positive, monotonic])])),
+  Tmp = filename:join([Base, Id]),
   ok = filelib:ensure_dir(filename:join([Tmp, "x"])),
   Tmp.
 
@@ -269,7 +271,10 @@ list_lists_files_and_ignores_common_dirs_test() ->
   {ok, Out} = openagentic_tool_list:run(#{path => <<"./">>}, #{project_dir => ProjectDir}),
   Output = maps:get(output, Out),
   ?assert(is_binary(Output)),
-  ?assert(binary:match(Output, <<"src/">>) =/= nomatch),
+  case binary:match(Output, <<"src/">>) of
+    nomatch -> erlang:error({missing_src_dir_in_output, ProjectDir, Out});
+    _ -> ok
+  end,
   ?assert(binary:match(Output, <<"a.erl">>) =/= nomatch),
   ?assert(binary:match(Output, <<".git">>) =:= nomatch),
   ?assert(binary:match(Output, <<"node_modules">>) =:= nomatch).

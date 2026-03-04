@@ -47,8 +47,10 @@ restore_env(Name, Val) ->
   os:putenv(Name, Val).
 
 test_root() ->
-  Base = code:lib_dir(openagentic_sdk),
-  Tmp = filename:join([Base, "tmp", integer_to_list(erlang:unique_integer([positive]))]),
+  {ok, Cwd} = file:get_cwd(),
+  Base = filename:join([Cwd, ".tmp", "eunit", "openagentic_tool_schemas_test"]),
+  Id = lists:flatten(io_lib:format("~p_~p", [erlang:system_time(microsecond), erlang:unique_integer([positive, monotonic])])),
+  Tmp = filename:join([Base, Id]),
   ok = filelib:ensure_dir(filename:join([Tmp, "x"])),
   Tmp.
 

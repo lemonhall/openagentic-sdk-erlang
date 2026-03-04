@@ -11,11 +11,27 @@ render(Name0, Vars0) ->
 
 template(Name0) ->
   Name = normalize_name(Name0),
-  Priv = code:priv_dir(openagentic_sdk),
+  Priv =
+    case code:priv_dir(openagentic_sdk) of
+      {error, _} -> fallback_priv_dir();
+      Dir -> Dir
+    end,
   Path = filename:join([Priv, "toolprompts", binary_to_list(Name) ++ ".txt"]),
   case file:read_file(Path) of
     {ok, Bin} -> normalize_newlines(Bin);
     _ -> <<>>
+  end.
+
+fallback_priv_dir() ->
+  case file:get_cwd() of
+    {ok, Cwd} ->
+      Dir = filename:join([Cwd, "apps", "openagentic_sdk", "priv"]),
+      case filelib:is_dir(Dir) of
+        true -> Dir;
+        false -> Cwd
+      end;
+    _ ->
+      "."
   end.
 
 apply_vars(Tpl, Vars) ->
