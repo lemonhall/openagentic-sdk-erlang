@@ -74,46 +74,39 @@
 
 - Kotlin：`resolveToolPath()` 会做 **symlink escape** 防护（canonicalize + realPath，拒绝通过符号链接越狱）。参考：
   - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\tools\ToolPathResolver.kt`
-- Erlang：`openagentic_fs:resolve_tool_path/2` 目前仅做“词法归一化 + 前缀判定”，**未做 symlink escape**。
+- Erlang：✅ 已补齐 `openagentic_fs:resolve_tool_path/2` 的 symlink escape 防护（nearest-existing prefix canonicalize + link resolution），并新增 eunit 覆盖（`projectRoot/link -> outside`）。
   - `apps/openagentic_sdk/src/openagentic_fs.erl`
-- DoD：补齐与 Kotlin 等价的 symlink escape 检测 + eunit（至少覆盖：`projectRoot/link -> outside` 场景）。
+  - `apps/openagentic_sdk/test/openagentic_fs_tools_test.erl`
 
 ### 2) 错误语义（exception 类型/消息）仍存在系统性差异（高优先）
 
 - Kotlin runtime：工具抛出的异常类型会被写入 `tool.result.error_type = e::class.simpleName`，错误信息来自 `e.message`。参考：
   - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\runtime\OpenAgenticSdk.kt`
-- Erlang runtime：目前仅对 `{error, {kotlin_error, Type, Msg}}` 做精确映射；大量 I/O 错误仍会落到 `ToolError`（tuple stringify），与 Kotlin 不一致。
+- Erlang runtime：✅ 已将核心工具的常见失败路径统一映射为 Kotlin 风格的 `{kotlin_error, Type, Msg}`（避免落到 `ToolError`），并补齐离线 contract tests 做门禁。
   - `apps/openagentic_sdk/src/openagentic_runtime.erl`
-- 待补齐的典型场景（示例，非穷尽）：
-  - `Read`：文件不存在/不可读时 Kotlin 倾向于 `FileNotFoundException`/I/O 异常；Erlang 目前 `{read_failed, ...}`。
-  - `Grep`：Kotlin `Regex(query)` 可能抛 `PatternSyntaxException`；Erlang 目前 `{invalid_input, {bad_regex, ...}}`。
-  - `Glob/Grep`：Kotlin 对 `root/path` 非目录/不存在的行为更偏“抛异常”；Erlang 目前多为显式 `{not_a_directory,...}`。
-- DoD：为每个默认工具补齐“失败路径”的 error_type/error_message 对齐用例，并把 Erlang 侧错误统一映射到 Kotlin 异常类型名（至少覆盖：`IllegalArgumentException/IllegalStateException/FileNotFoundException/RuntimeException/PatternSyntaxException`）。
+  - `apps/openagentic_sdk/test/openagentic_tools_contract_test.erl`
 
 ### 3) LSP 工具能力差异（较大缺口）
 
-- Kotlin：`lsp` 具备 **builtin server registry + root resolver**（按 lockfiles/项目文件定位 root），并支持通过配置覆盖/禁用 builtin；无可用 server 时抛 `RuntimeException("No LSP server available for this file type.")`。参考：
-  - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\lsp\LspRegistry.kt`
-  - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\lsp\LspManager.kt`
-- Erlang：当前 `lsp` 为最小实现，仅解析 OpenCode config 并启动 stdio JSON-RPC；**无 builtin registry/root resolver**，且部分错误类型未对齐 Kotlin。
-  - `apps/openagentic_sdk/src/openagentic_tool_lsp.erl`
-- DoD：对齐 Kotlin 的 builtin registry（至少覆盖常用：`pyright/rust-analyzer/clangd/kotlin-ls/bash` 等）+ root resolver 策略 + 错误类型/消息。
+> ✅ 2026-03-04：用户明确表示 **不需要 LSP 的 Kotlin 扩展能力对齐**（builtin registry/root resolver 等），本条差异点从“扩展门禁”中移除。
+
+- 保留现状：Erlang `lsp` 作为最小可用实现即可（OpenCode config + stdio JSON-RPC）。
 
 ### 4) WebFetch 清洗/Markdown 语义差异（中-高优先）
 
 - Kotlin：`WebFetch` 使用 jsoup + safelist + boilerplate stripping + absolutize links + html2md（markdown 模式）。参考：
   - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\tools\WebFetchTool.kt`
-- Erlang：当前实现为 best-effort 的正则去标签/去块，`clean_html/markdown` 语义与 Kotlin 差异显著。
+- Erlang：✅ 已补齐“去 boilerplate + 主内容选择 + allowlist + 链接绝对化 + Markdown 规范化”的最小等价实现，并新增离线门禁用例确保输出稳定。
   - `apps/openagentic_sdk/src/openagentic_tool_webfetch.erl`
-- DoD：补齐更接近 Kotlin 的清洗策略（至少：去 nav/footer/ads、链接绝对化、markdown 规范化），并加离线 fixtures 测试确保输出稳定。
+  - `apps/openagentic_sdk/test/openagentic_tools_contract_test.erl`
 
 ### 5) WebSearch（DDG fallback）失败行为差异（中优先）
 
 - Kotlin：DDG fallback 的 HTTP GET 若 `status>=400` 会抛异常（RuntimeException），并会影响 tool.result 的 error_type/error_message。参考：
   - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\tools\WebSearchTool.kt`
-- Erlang：DDG 请求失败时通常返回空结果而非抛错（当前更“宽松”）。
+- Erlang：✅ 已对齐 DDG fallback 的 `HTTP>=400` 失败语义为 `RuntimeException`，并新增离线门禁用例（transport 模拟）。
   - `apps/openagentic_sdk/src/openagentic_tool_websearch.erl`
-- DoD：对齐 Kotlin 的失败语义（HTTP 错误时抛错/错误类型一致），并新增离线测试（通过 transport/fixture 模拟）。
+  - `apps/openagentic_sdk/test/openagentic_tools_contract_test.erl`
 
 ### 6) Runtime Hook / Tool Output Artifacts 差异（中-高优先）
 
@@ -122,6 +115,36 @@
     - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\runtime\OpenAgenticSdk.kt`
   - 对超大 tool output 支持 externalize 到 artifact 文件，并用 wrapper 返回 `artifact_path/preview/hint`（模型可继续用 `Read` 读取）。参考：
     - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\runtime\OpenAgenticSdk.kt`
-- Erlang runtime：当前无 hooks、无 tool output externalization（大输出只会直接写入 events.jsonl 或被上游截断）。
+- Erlang runtime：✅ 已补齐 hooks（pre/post，可 block，产出 `hook.event`，并对齐 `HookBlocked`）与 output externalization（artifact 文件 + truncated wrapper），并新增离线门禁测试。
+  - `apps/openagentic_sdk/src/openagentic_hook_engine.erl`
   - `apps/openagentic_sdk/src/openagentic_runtime.erl`
-- DoD：补齐 hooks（至少：pre_tool_use/post_tool_use 的 allow/block 机制）与 output externalization（目录、命名、wrapper JSON 结构）并新增离线门禁测试。
+  - `apps/openagentic_sdk/test/openagentic_tool_loop_test.erl`
+
+### 7) WebFetch 私网/本机地址拦截差异（IPv6/保留段覆盖）（高风险）
+
+- Kotlin：`WebFetch` 通过 `InetAddress.getAllByName(host)` 做解析，并用 `isAnyLocalAddress/isLoopbackAddress/isLinkLocalAddress/isSiteLocalAddress` 等判断拦截；因此 **IPv4/IPv6** 都会覆盖。参考：
+  - `E:\development\openagentic-sdk-kotlin\src\main\kotlin\me\lemonhall\openagentic\sdk\tools\WebFetchTool.kt`
+- Erlang：✅ 已增加 IPv6 解析与拦截（`inet6` + ULA/link-local/loopback/unspecified + IPv4-mapped），并补齐离线门禁覆盖：`localhost`、`.localhost`、IPv4 私网、IPv6 loopback/ULA。
+  - `apps/openagentic_sdk/src/openagentic_tool_webfetch.erl`
+  - `apps/openagentic_sdk/test/openagentic_tools_contract_test.erl`
+
+### 8) Glob/Grep 对 root/path 不存在/非目录时的异常类型差异（中优先）
+
+- Kotlin：`Glob/Grep` 依赖 Okio `listRecursively/list` 等 API；当 root 不存在或不是目录时，通常会抛出 I/O 异常（error_type 往往为 `FileNotFoundException`/`IOException` 等，message 由底层决定）。
+- Erlang：✅ 已将 `root`/`base` 的“不存在/非目录”失败路径映射为 Kotlin 风格异常类型（避免 `{not_a_directory,...}` 落到 `ToolError`），并补齐离线门禁用例。
+  - `apps/openagentic_sdk/src/openagentic_tool_glob.erl`
+  - `apps/openagentic_sdk/src/openagentic_tool_grep.erl`
+  - `apps/openagentic_sdk/src/openagentic_tool_bash.erl`
+  - `apps/openagentic_sdk/test/openagentic_tools_contract_test.erl`
+- DoD：将此类 I/O/路径失败统一纳入“错误语义系统性对齐”（见差异点 2），对齐到 Kotlin 的 `error_type`（至少 `FileNotFoundException`/`RuntimeException`）与可接受的 message 策略，并补齐失败路径用例。
+
+---
+
+## 下一轮扩展门禁（基于复扫差异点，全部通过后才算“最终无差异”）
+
+- [x] `resolve_tool_path` symlink escape 防护 + 覆盖用例（差异点 1）
+- [x] 错误语义系统性对齐（差异点 2 + 8）
+- [x] WebFetch 清洗/markdown 语义对齐（差异点 4）
+- [x] WebSearch DDG fallback 的 HTTP>=400 失败语义对齐（差异点 5）
+- [x] Runtime hooks + tool output artifacts 对齐（差异点 6）
+- [x] WebFetch 私网/本机拦截 IPv6 覆盖（差异点 7）

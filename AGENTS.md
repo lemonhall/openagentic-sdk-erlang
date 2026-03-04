@@ -105,6 +105,11 @@ User prompt
 - 已提升模型可用性：新增 `List` 工具（递归列目录树 + 常见目录忽略 + `limit` 截断），默认放行，便于模型先“发现文件”再 `Read/Grep/Glob`。
 - 已提升模型可用性：`Grep` 输出包含 `relative_path` 且按（`relative_path`，`line`）稳定排序，便于模型直接 follow-up `Read`。
 - 已提升模型可用性：`Read` 支持 `offset` 1-based + 行号输出（分页更可引用），并返回 `file_size/bytes_returned/truncated` 元数据。
+- 已对齐：Runtime hooks（`PreToolUse`/`PostToolUse`）+ `hook.event` 事件写入，支持阻断工具调用（`HookBlocked`）。
+- 已对齐：Tool output artifacts（超大 tool output 外置到 artifact 文件 + truncated wrapper：`artifact_path/preview/hint`）。
+- 已对齐：`WebFetch`（clean_html/markdown 清洗、链接绝对化、私网/localhost/IPv6 拦截）+ 离线 contract tests 门禁。
+- 已对齐：`Glob/Grep/Bash` 对 `root/workdir` 不存在/非目录的失败路径映射为 Kotlin 风格异常类型（避免落到 `ToolError`）。
+- ✅ 2026-03-04：用户明确不需要 `lsp` 的 Kotlin 扩展能力对齐（builtin registry/root resolver 等），保留最小可用实现即可。
 
 ## Code Style & Conventions（Erlang）
 

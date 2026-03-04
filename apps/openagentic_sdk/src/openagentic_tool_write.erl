@@ -73,7 +73,14 @@ write_atomic(FullPath, Content) ->
   catch
     C:R ->
       _ = file:delete(Tmp),
-      {error, {write_failed, {C, R}}}
+      Msg =
+        iolist_to_binary([
+          <<"Write failed: ">>,
+          openagentic_fs:norm_abs_bin(FullPath),
+          <<" reason=">>,
+          to_bin({C, R})
+        ]),
+      {error, {kotlin_error, <<"RuntimeException">>, Msg}}
   end.
 
 tmp_name(Base0) ->

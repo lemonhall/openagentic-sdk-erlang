@@ -43,10 +43,8 @@ run(Input0, Ctx0) ->
               {error, Reason};
             {ok, RootDir0} ->
               RootDir = ensure_list(RootDir0),
-              case filelib:is_dir(RootDir) of
-                false ->
-                  {error, {not_a_directory, openagentic_fs:norm_abs_bin(RootDir)}};
-                true ->
+              case file:read_file_info(RootDir) of
+                {ok, Info} when Info#file_info.type =:= directory ->
                   CaseSensitive = bool_opt(Input, [<<"case_sensitive">>, case_sensitive], true) =/= false,
                   IncludeHidden = bool_opt(Input, [<<"include_hidden">>, include_hidden], true) =/= false,
                   Mode0 = maps:get(<<"mode">>, Input, maps:get(mode, Input, <<"content">>)),
@@ -61,11 +59,21 @@ run(Input0, Ctx0) ->
                           FileGlobRe = openagentic_glob:to_re(FileGlob),
                           do_grep(Query, QueryRe, FileGlobRe, RootDir, IncludeHidden, Mode, BeforeN, AfterN);
                         {error, Err} ->
-                          {error, {invalid_input, {bad_regex, Err}}}
+                          Msg = pattern_syntax_message(Query, Err),
+                          {error, {kotlin_error, <<"PatternSyntaxException">>, Msg}}
                       end;
                     {kotlin_error, Msg} ->
                       {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}}
-                  end
+                  end;
+                {ok, _Info} ->
+                  Msg = iolist_to_binary([<<"Grep: not a directory: ">>, openagentic_fs:norm_abs_bin(RootDir)]),
+                  {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}};
+                {error, enoent} ->
+                  Msg = iolist_to_binary([<<"Grep: not found: ">>, openagentic_fs:norm_abs_bin(RootDir)]),
+                  {error, {kotlin_error, <<"FileNotFoundException">>, Msg}};
+                {error, E} ->
+                  Msg = iolist_to_binary([<<"Grep: cannot access root: ">>, openagentic_fs:norm_abs_bin(RootDir), <<" error=">>, to_bin(E)]),
+                  {error, {kotlin_error, <<"RuntimeException">>, Msg}}
               end
           end
       end
@@ -420,3 +428,28 @@ to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> iolist_to_binary(integer_to_list(I));
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
+
+pattern_syntax_message(Pattern0, Err0) ->
+  Pattern = to_bin(Pattern0),
+  {Desc0, Pos0} =
+    case Err0 of
+      {Desc, Pos} when (is_list(Desc) orelse is_binary(Desc)) andalso is_integer(Pos) -> {to_bin(Desc), Pos};
+      Desc when is_list(Desc) orelse is_binary(Desc) -> {to_bin(Desc), 1};
+      _ -> {to_bin(Err0), 1}
+    end,
+  Idx0 =
+    case Pos0 of
+      I when is_integer(I), I > 0 -> I - 1;
+      _ -> 0
+    end,
+  Spaces = lists:duplicate(Idx0, $\s),
+  iolist_to_binary([
+    Desc0,
+    <<" near index ">>,
+    integer_to_binary(Idx0),
+    <<"\n">>,
+    Pattern,
+    <<"\n">>,
+    Spaces,
+    <<"^">>
+  ]).

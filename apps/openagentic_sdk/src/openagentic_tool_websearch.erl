@@ -9,8 +9,9 @@ name() -> <<"WebSearch">>.
 description() ->
   <<"Search the web (Tavily backend; falls back to DuckDuckGo HTML when TAVILY_API_KEY is missing).">>.
 
-run(Input0, _Ctx0) ->
+run(Input0, Ctx0) ->
   Input = ensure_map(Input0),
+  Ctx = ensure_map(Ctx0),
   Query0 = maps:get(<<"query">>, Input, maps:get(query, Input, undefined)),
   Query = string:trim(to_bin(Query0)),
   case byte_size(Query) > 0 of
@@ -26,47 +27,52 @@ run(Input0, _Ctx0) ->
           TavilyKey = string:trim(to_bin(os:getenv("TAVILY_API_KEY"))),
           case byte_size(TavilyKey) > 0 of
             false ->
-              ddg_out(Query, MaxResults0, Allowed, Blocked);
+              ddg_out(Query, MaxResults0, Allowed, Blocked, Ctx);
             true ->
-              case tavily_out(Query, MaxResults0, Allowed, Blocked, TavilyKey) of
+              case tavily_out(Query, MaxResults0, Allowed, Blocked, TavilyKey, Ctx) of
                 {ok, Out} -> {ok, Out};
                 {error, Err} ->
-                  {ok, Out2} = ddg_out(Query, MaxResults0, Allowed, Blocked),
-                  Meta = #{
-                    primary_source => <<"tavily">>,
-                    fallback_source => <<"duckduckgo">>,
-                    tavily_error => to_bin(Err)
-                  },
-                  {ok, Out2#{meta => Meta}}
+                  case ddg_out(Query, MaxResults0, Allowed, Blocked, Ctx) of
+                    {ok, Out2} ->
+                      Meta = #{
+                        primary_source => <<"tavily">>,
+                        fallback_source => <<"duckduckgo">>,
+                        tavily_error => to_bin(Err)
+                      },
+                      {ok, Out2#{meta => Meta}};
+                    {error, DdgErr} ->
+                      {error, DdgErr}
+                  end
               end
           end
       end
   end.
 
-ddg_out(Query, MaxResults, Allowed, Blocked) ->
-  ok = ensure_httpc_started(),
-  ok = configure_proxy(),
+ddg_out(Query, MaxResults, Allowed, Blocked, Ctx) ->
   Url = <<"https://html.duckduckgo.com/html/?q=", (urlencode(Query))/binary>>,
   Headers = [{"user-agent", "openagentic-sdk-erlang/0.1"}, {"accept", "text/html,application/xhtml+xml"}],
-  Raw =
-    case httpc:request(get, {binary_to_list(Url), Headers}, [{timeout, 60000}], [{body_format, binary}], openagentic_websearch) of
-      {ok, {{_, 200, _}, _RespHeaders, Body}} -> Body;
-      _ -> <<>>
-    end,
-  Results =
-    case byte_size(Raw) > 0 of
-      true -> ddg_parse_results(Raw, MaxResults, Allowed, Blocked);
-      false -> []
-    end,
-  {ok, #{
-    query => Query,
-    results => Results,
-    total_results => length(Results)
-  }}.
+  case http_request(get, Url, Headers, <<>>, Ctx) of
+    {ok, {Status, _RespHeaders, Body}} when Status >= 400 ->
+      Raw = to_bin_safe_utf8(Body),
+      Msg0 = iolist_to_binary([<<"HTTP ">>, integer_to_binary(Status), <<" from ">>, Url, <<": ">>, Raw]),
+      {error, {kotlin_error, <<"RuntimeException">>, trim_bin(Msg0)}};
+    {ok, {_Status, _RespHeaders, Body}} ->
+      Raw = to_bin_safe_utf8(Body),
+      Results =
+        case byte_size(Raw) > 0 of
+          true -> ddg_parse_results(Raw, MaxResults, Allowed, Blocked);
+          false -> []
+        end,
+      {ok, #{
+        query => Query,
+        results => Results,
+        total_results => length(Results)
+      }};
+    {error, Reason} ->
+      {error, {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"HTTP request failed: ">>, to_bin(Reason)])}}
+  end.
 
-tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey) ->
-  ok = ensure_httpc_started(),
-  ok = configure_proxy(),
+tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey, Ctx) ->
   Endpoint = "https://api.tavily.com/search",
   Payload = #{
     api_key => TavilyKey,
@@ -75,9 +81,9 @@ tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey) ->
   },
   Body = openagentic_json:encode(Payload),
   Headers = [{"content-type", "application/json"}],
-  case httpc:request(post, {Endpoint, Headers, "application/json", Body}, [{timeout, 60000}], [{body_format, binary}], openagentic_websearch) of
-    {ok, {{_, Status, _}, _RespHeaders, RespBody}} when Status >= 200, Status < 300 ->
-      Obj0 = openagentic_json:decode(RespBody),
+  case http_request(post, Endpoint, Headers, Body, Ctx) of
+    {ok, {Status, _RespHeaders, RespBody}} when Status >= 200, Status < 300 ->
+      Obj0 = openagentic_json:decode(to_bin_safe_utf8(RespBody)),
       Obj = ensure_map(Obj0),
       ResultsIn = maps:get(<<"results">>, Obj, []),
       Results = tavily_results(ResultsIn, Allowed, Blocked, MaxResults),
@@ -86,9 +92,12 @@ tavily_out(Query, MaxResults, Allowed, Blocked, TavilyKey) ->
         results => Results,
         total_results => length(Results)
       }};
-    {ok, {{_, Status, _}, _RespHeaders, RespBody}} ->
-      {error, iolist_to_binary([<<"HTTP ">>, integer_to_binary(Status), <<" from tavily: ">>, RespBody])};
-    Err ->
+    {ok, {Status, _RespHeaders, RespBody}} ->
+      UrlBin = to_bin(Endpoint),
+      Raw = to_bin_safe_utf8(RespBody),
+      Msg0 = iolist_to_binary([<<"HTTP ">>, integer_to_binary(Status), <<" from ">>, UrlBin, <<": ">>, Raw]),
+      {error, trim_bin(Msg0)};
+    {error, Err} ->
       {error, Err}
   end.
 
@@ -233,8 +242,28 @@ html_unescape(S0) ->
   binary:replace(S4, <<"&#39;">>, <<"'">>, [global]).
 
 urlencode(Bin0) ->
-  Bin = to_bin(Bin0),
-  uri_string:percent_encode(Bin, uri_string:urlchar_reserved()).
+  %% Match java.net.URLEncoder (UTF-8) behavior used in Kotlin:
+  %% - space becomes '+'
+  %% - unreserved: ALPHA / DIGIT / '-' / '_' / '.' / '*'
+  %% - everything else percent-encoded (uppercase hex)
+  Bin = unicode:characters_to_binary(to_bin(Bin0), utf8),
+  iolist_to_binary([urlencode_byte(B) || <<B:8>> <= Bin]).
+
+urlencode_byte($ ) -> $+;
+urlencode_byte(B) when B >= $a, B =< $z -> B;
+urlencode_byte(B) when B >= $A, B =< $Z -> B;
+urlencode_byte(B) when B >= $0, B =< $9 -> B;
+urlencode_byte($-) -> $-;
+urlencode_byte($_) -> $_;
+urlencode_byte($.) -> $.;
+urlencode_byte($*) -> $*;
+urlencode_byte(B) ->
+  Hi = hex((B bsr 4) band 15),
+  Lo = hex(B band 15),
+  [$%, Hi, Lo].
+
+hex(N) when N >= 0, N =< 9 -> $0 + N;
+hex(N) when N >= 10, N =< 15 -> $A + (N - 10).
 
 string_list(Input, KeyBin, KeyAtom) ->
   case maps:get(KeyBin, Input, maps:get(KeyAtom, Input, [])) of
@@ -352,3 +381,49 @@ to_bin(L) when is_list(L) -> unicode:characters_to_binary(L, utf8);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> iolist_to_binary(integer_to_list(I));
 to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other]), utf8).
+
+http_request(Method, Url0, Headers0, Body0, Ctx0) ->
+  Ctx = ensure_map(Ctx0),
+  case maps:get(websearch_transport, Ctx, undefined) of
+    Fun when is_function(Fun, 4) ->
+      Fun(Method, Url0, Headers0, Body0);
+    _ ->
+      ok = ensure_httpc_started(),
+      ok = configure_proxy(),
+      default_http_request(Method, Url0, Headers0, Body0)
+  end.
+
+default_http_request(Method0, Url0, Headers0, Body0) ->
+  Method = Method0,
+  Url = binary_to_list(to_bin(Url0)),
+  Headers = Headers0,
+  case Method of
+    get ->
+      case httpc:request(get, {Url, Headers}, [{timeout, 60000}], [{body_format, binary}], openagentic_websearch) of
+        {ok, {{_, Status, _}, RespHeaders, RespBody}} ->
+          {ok, {Status, RespHeaders, RespBody}};
+        Err ->
+          {error, Err}
+      end;
+    post ->
+      case httpc:request(post, {Url, Headers, "application/json", Body0}, [{timeout, 60000}], [{body_format, binary}], openagentic_websearch) of
+        {ok, {{_, Status, _}, RespHeaders, RespBody}} ->
+          {ok, {Status, RespHeaders, RespBody}};
+        Err ->
+          {error, Err}
+      end;
+    _ ->
+      {error, {unsupported_method, Method}}
+  end.
+
+to_bin_safe_utf8(Bin) when is_binary(Bin) ->
+  try unicode:characters_to_binary(Bin, utf8)
+  catch
+    _:_ -> Bin
+  end;
+to_bin_safe_utf8(Other) ->
+  to_bin(Other).
+
+trim_bin(Bin0) ->
+  Bin = to_bin(Bin0),
+  string:trim(Bin).

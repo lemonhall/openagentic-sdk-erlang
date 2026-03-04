@@ -89,7 +89,26 @@ edit_file(FullPath, Old, New, Count, Before, After) ->
           end
       end;
     Err ->
-      {error, {read_failed, Err}}
+      {error, edit_io_error(FullPath, Err)}
+  end.
+
+edit_io_error(FullPath0, Err0) ->
+  FullPath = FullPath0,
+  Abs = openagentic_fs:norm_abs_bin(FullPath),
+  Reason =
+    case Err0 of
+      {error, R} -> R;
+      R -> R
+    end,
+  case Reason of
+    enoent ->
+      {kotlin_error, <<"FileNotFoundException">>, iolist_to_binary([<<"Edit: not found: ">>, Abs])};
+    enotdir ->
+      {kotlin_error, <<"FileNotFoundException">>, iolist_to_binary([<<"Edit: not found: ">>, Abs])};
+    eacces ->
+      {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"Edit: access denied: ">>, Abs])};
+    _ ->
+      {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"Edit failed: ">>, to_bin(Err0)])}
   end.
 
 anchors_ok(_Text, _IdxOld, undefined, undefined) -> ok;

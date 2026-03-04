@@ -1,5 +1,7 @@
 -module(openagentic_tool_glob).
 
+-include_lib("kernel/include/file.hrl").
+
 -behaviour(openagentic_tool).
 
 -export([name/0, description/0, run/2]).
@@ -41,10 +43,8 @@ run(Input0, Ctx0) ->
               {error, Reason};
             {ok, BaseDir0} ->
               BaseDir = ensure_list(BaseDir0),
-              case filelib:is_dir(BaseDir) of
-                false ->
-                  {error, {not_a_directory, openagentic_fs:norm_abs_bin(BaseDir)}};
-                true ->
+              case file:read_file_info(BaseDir) of
+                {ok, Info} when Info#file_info.type =:= directory ->
                   EarlyExit = should_early_exit_after_first_match(Pattern),
                   MaxMatches = ?DEFAULT_MAX_MATCHES,
                   MaxScanned = ?DEFAULT_MAX_SCANNED_PATHS,
@@ -96,7 +96,16 @@ run(Input0, Ctx0) ->
                         count => length(Matches),
                         truncated => false
                       }}
-                  end
+                  end;
+                {ok, _Info} ->
+                  Msg = iolist_to_binary([<<"Glob: not a directory: ">>, openagentic_fs:norm_abs_bin(BaseDir)]),
+                  {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}};
+                {error, enoent} ->
+                  Msg = iolist_to_binary([<<"Glob: not found: ">>, openagentic_fs:norm_abs_bin(BaseDir)]),
+                  {error, {kotlin_error, <<"FileNotFoundException">>, Msg}};
+                {error, E} ->
+                  Msg = iolist_to_binary([<<"Glob: cannot access root: ">>, openagentic_fs:norm_abs_bin(BaseDir), <<" error=">>, to_bin(E)]),
+                  {error, {kotlin_error, <<"RuntimeException">>, Msg}}
               end
           end
       end

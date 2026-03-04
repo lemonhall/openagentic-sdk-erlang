@@ -21,6 +21,28 @@ read_respects_offset_limit_and_blocks_traversal_test() ->
     openagentic_tool_read:run(#{file_path => <<"../x.txt">>}, #{project_dir => ProjectDir}),
   ?assert(binary:match(Msg, <<"Tool path must be under project root:">>) =/= nomatch).
 
+resolve_tool_path_blocks_symlink_escape_test() ->
+  Root = test_root(),
+  ProjectDir = Root,
+  Outside = test_root(),
+
+  OutsideFile = filename:join([Outside, "outside.txt"]),
+  ok = file:write_file(OutsideFile, <<"x">>),
+
+  LinkPath = filename:join([ProjectDir, "link"]),
+  case file:make_symlink(OutsideFile, LinkPath) of
+    ok ->
+      %% "link" exists, but points outside project root: "link/evil.txt" must be rejected.
+      Res = openagentic_fs:resolve_tool_path(ProjectDir, filename:join(["link", "evil.txt"])),
+      ?assertMatch({error, {kotlin_error, <<"IllegalArgumentException">>, _}}, Res),
+      {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}} = Res,
+      ?assert(binary:match(Msg, <<"Tool path escapes project root via symlink:">>) =/= nomatch),
+      ok;
+    {error, _Reason} ->
+      %% Some Windows setups require elevated permissions or Developer Mode for symlinks.
+      ok
+  end.
+
 read_reads_images_as_base64_test() ->
   Root = test_root(),
   ProjectDir = Root,
@@ -30,6 +52,13 @@ read_reads_images_as_base64_test() ->
   ?assertEqual(<<"image/png">>, maps:get(mime_type, Out)),
   ?assertEqual(base64:encode(Bytes), maps:get(image, Out)),
   ?assertEqual(false, maps:get(truncated, Out)).
+
+read_missing_file_is_file_not_found_exception_test() ->
+  Root = test_root(),
+  ProjectDir = Root,
+  {error, {kotlin_error, <<"FileNotFoundException">>, Msg}} =
+    openagentic_tool_read:run(#{file_path => <<"missing.txt">>}, #{project_dir => ProjectDir}),
+  ?assert(binary:match(Msg, <<"Read: not found:">>) =/= nomatch).
 
 glob_blocks_unsafe_pattern_test() ->
   Root = test_root(),
@@ -107,6 +136,14 @@ grep_finds_matches_test() ->
   ?assertEqual(false, maps:get(truncated, Out)),
   ?assert(maps:get(total_matches, Out) >= 2).
 
+grep_invalid_regex_uses_pattern_syntax_exception_test() ->
+  Root = test_root(),
+  ProjectDir = Root,
+  ok = file:write_file(filename:join([ProjectDir, "g.txt"]), <<"hello\n">>),
+  {error, {kotlin_error, <<"PatternSyntaxException">>, Msg}} =
+    openagentic_tool_grep:run(#{query => <<"(">>, file_glob => <<"**/*">>}, #{project_dir => ProjectDir}),
+  ?assert(binary:match(Msg, <<"near index">>) =/= nomatch).
+
 grep_respects_glob_filter_with_starstar_test() ->
   Root = test_root(),
   ProjectDir = Root,
@@ -166,7 +203,13 @@ grep_supports_context_and_case_insensitive_test() ->
       #{project_dir => ProjectDir}
     ),
   Ms = maps:get(matches, Out),
-  [M | _] = [X || X <- Ms, maps:get(line, X, 0) =:= 2],
+  [M | _] =
+    [
+      X
+      || X <- Ms,
+         maps:get(line, X, 0) =:= 2,
+         (binary:match(norm(maps:get(file_path, X, <<>>)), <<"c.txt">>) =/= nomatch)
+    ],
   ?assertEqual([<<"before">>], maps:get(before_context, M)),
   ?assertEqual([<<"after">>], maps:get(after_context, M)).
 
@@ -284,6 +327,14 @@ edit_applies_replace_and_reports_missing_old_test() ->
       #{file_path => <<"e.txt">>, old => <<"does-not-exist">>, new => <<"x">>},
       #{project_dir => ProjectDir}
     ),
+  ok.
+
+edit_missing_file_is_file_not_found_exception_test() ->
+  Root = test_root(),
+  ProjectDir = Root,
+  {error, {kotlin_error, <<"FileNotFoundException">>, Msg}} =
+    openagentic_tool_edit:run(#{file_path => <<"missing.txt">>, old => <<"a">>, new => <<"b">>}, #{project_dir => ProjectDir}),
+  ?assert(binary:match(Msg, <<"Edit: not found:">>) =/= nomatch),
   ok.
 
 list_not_found_is_illegal_argument_test() ->

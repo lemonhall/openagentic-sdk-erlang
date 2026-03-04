@@ -125,7 +125,26 @@ read_file(FullPath, OffsetOpt, LimitOpt) ->
           end
       end;
     {error, Reason} ->
-      {error, {read_failed, Reason}}
+      {error, read_io_error(FullPath, Reason)}
+  end.
+
+read_io_error(FullPath0, Reason0) ->
+  FullPath = FullPath0,
+  Abs = openagentic_fs:norm_abs_bin(FullPath),
+  Reason =
+    case Reason0 of
+      {error, R} -> R;
+      R -> R
+    end,
+  case Reason of
+    enoent ->
+      {kotlin_error, <<"FileNotFoundException">>, iolist_to_binary([<<"Read: not found: ">>, Abs])};
+    enotdir ->
+      {kotlin_error, <<"FileNotFoundException">>, iolist_to_binary([<<"Read: not found: ">>, Abs])};
+    eacces ->
+      {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"Read: access denied: ">>, Abs])};
+    _ ->
+      {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"Read failed: ">>, to_bin(Reason0)])}
   end.
 
 normalize_offset_opt(undefined) -> undefined;

@@ -45,9 +45,17 @@ resolve_workdir(ProjectDir, Workdir) ->
       {error, Reason};
     {ok, P0} ->
       P = ensure_list(P0),
-      case filelib:is_dir(P) of
-        true -> {ok, P};
-        false -> {error, {not_a_directory, openagentic_fs:norm_abs_bin(P)}}
+      case file:read_file_info(P) of
+        {ok, Info} when Info#file_info.type =:= directory -> {ok, P};
+        {ok, _Info} ->
+          Msg = iolist_to_binary([<<"Bash: not a directory: ">>, openagentic_fs:norm_abs_bin(P)]),
+          {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}};
+        {error, enoent} ->
+          Msg = iolist_to_binary([<<"Bash: not found: ">>, openagentic_fs:norm_abs_bin(P)]),
+          {error, {kotlin_error, <<"FileNotFoundException">>, Msg}};
+        {error, E} ->
+          Msg = iolist_to_binary([<<"Bash: cannot access workdir: ">>, openagentic_fs:norm_abs_bin(P), <<" error=">>, to_bin(E)]),
+          {error, {kotlin_error, <<"RuntimeException">>, Msg}}
       end
   end.
 

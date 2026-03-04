@@ -1,5 +1,7 @@
 -module(openagentic_fs).
 
+-include_lib("kernel/include/file.hrl").
+
 -export([resolve_project_path/2, resolve_tool_path/2, is_safe_rel_path/1, norm_abs/1, norm_abs_bin/1]).
 
 %% Resolve a user-provided relative path against a project directory.
@@ -46,10 +48,111 @@ resolve_tool_path(ProjectDir0, RawPath0) ->
       RootPrefix = RootNoSlash ++ "/",
       FullNorm = norm_abs_cmp(FullNative),
       case (FullNorm =:= RootNoSlash) orelse lists:prefix(RootPrefix, FullNorm) of
-        true -> {ok, FullNative};
+        true ->
+          case check_symlink_escape(ProjectDir, FullNative) of
+            ok ->
+              {ok, FullNative};
+            {error, Reason} ->
+              {error, Reason}
+          end;
         false -> {error, {kotlin_error, <<"IllegalArgumentException">>, iolist_to_binary([<<"Tool path must be under project root: ">>, RootShown])}}
       end
   end.
+
+check_symlink_escape(ProjectDir0, FullNative0) ->
+  ProjectDir = ensure_list(ProjectDir0),
+  FullNative = ensure_list(FullNative0),
+  case nearest_existing_prefix(FullNative) of
+    undefined ->
+      ok;
+    Prefix0 ->
+      BaseCanon = canonicalize_existing(ProjectDir),
+      PrefixCanon = canonicalize_existing(Prefix0),
+      case is_under_base(PrefixCanon, BaseCanon) of
+        true ->
+          ok;
+        false ->
+          Msg =
+            iolist_to_binary([
+              <<"Tool path escapes project root via symlink: base=">>,
+              norm_abs_bin(BaseCanon),
+              <<" prefix=">>,
+              norm_abs_bin(PrefixCanon)
+            ]),
+          {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}}
+      end
+  end.
+
+nearest_existing_prefix(Path0) ->
+  Path = ensure_list(Path0),
+  Abs = filename:absname(Path),
+  nearest_existing_prefix2(Abs).
+
+nearest_existing_prefix2(Path) ->
+  case file:read_link_info(Path) of
+    {ok, _Info} ->
+      Path;
+    _ ->
+      Parent = filename:dirname(Path),
+      case Parent =:= Path of
+        true -> undefined;
+        false -> nearest_existing_prefix2(Parent)
+      end
+  end.
+
+canonicalize_existing(Path0) ->
+  Path = abs_norm(ensure_list(Path0)),
+  Segs = filename:split(Path),
+  canonicalize_segments(Segs, "").
+
+canonicalize_segments([], Cur) ->
+  case Cur of
+    "" -> ".";
+    _ -> Cur
+  end;
+canonicalize_segments([Seg | Rest], Cur0) ->
+  Cur =
+    case Cur0 of
+      "" -> Seg;
+      _ -> filename:join([Cur0, Seg])
+    end,
+  case file:read_link_info(Cur) of
+    {ok, Info} when Info#file_info.type =:= symlink ->
+      case file:read_link(Cur) of
+        {ok, Target0} ->
+          TargetAbs = abs_norm(resolve_link_target(Cur, Target0)),
+          canonicalize_segments(filename:split(TargetAbs) ++ Rest, "");
+        _ ->
+          canonicalize_segments(Rest, Cur)
+      end;
+    _ ->
+      canonicalize_segments(Rest, Cur)
+  end.
+
+resolve_link_target(LinkPath0, Target0) ->
+  LinkPath = ensure_list(LinkPath0),
+  Target = ensure_list(Target0),
+  case has_drive_prefix(Target) orelse is_abs(Target) of
+    true ->
+      Target;
+    false ->
+      filename:join([filename:dirname(LinkPath), Target])
+  end.
+
+is_under_base(Child0, Base0) ->
+  Child = norm_abs_cmp(ensure_list(Child0)),
+  Base = norm_abs_cmp(ensure_list(Base0)),
+  BaseNoSlash =
+    case Base of
+      [] -> [];
+      _ ->
+        case lists:last(Base) of
+          $/ -> lists:sublist(Base, length(Base) - 1);
+          _ -> Base
+        end
+    end,
+  Prefix = BaseNoSlash ++ "/",
+  (Child =:= BaseNoSlash) orelse lists:prefix(Prefix, Child).
 
 is_safe_rel_path(Path0) ->
   Path = ensure_list(Path0),

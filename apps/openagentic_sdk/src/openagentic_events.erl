@@ -4,6 +4,7 @@
   system_init/3,
   user_message/1,
   user_question/3,
+  hook_event/7,
   tool_use/3,
   tool_result/5,
   provider_event/1,
@@ -36,6 +37,39 @@ user_question(QuestionId, Prompt, Choices) ->
     prompt => to_bin(Prompt),
     choices => [to_bin(C) || C <- Choices]
   }.
+
+hook_event(HookPoint, Name, Matched, DurationMs, Action, ErrorType, ErrorMessage) ->
+  Base = #{
+    type => <<"hook.event">>,
+    hook_point => to_bin(HookPoint),
+    name => to_bin(Name),
+    matched => Matched
+  },
+  Base2 =
+    case DurationMs of
+      undefined -> Base;
+      _ -> Base#{duration_ms => DurationMs}
+    end,
+  Base3 =
+    case Action of
+      undefined -> Base2;
+      <<>> -> Base2;
+      "" -> Base2;
+      _ -> Base2#{action => to_bin(Action)}
+    end,
+  Base4 =
+    case ErrorType of
+      undefined -> Base3;
+      <<>> -> Base3;
+      "" -> Base3;
+      _ -> Base3#{error_type => to_bin(ErrorType)}
+    end,
+  case ErrorMessage of
+    undefined -> Base4;
+    <<>> -> Base4;
+    "" -> Base4;
+    _ -> Base4#{error_message => to_bin(ErrorMessage)}
+  end.
 
 tool_use(ToolUseId, Name, Input) ->
   #{
