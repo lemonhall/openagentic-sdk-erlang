@@ -20,6 +20,11 @@ This project is under active development. Expect some rough edges, but the repo 
 - Deterministic unit tests (offline): `rebar3 eunit`
 - Optional online E2E suite (real network + real API keys): `.\scripts\e2e-online-suite.ps1 -E2E`
 
+## Specs
+
+- Remote subagents (HTTP + SSE): `docs/spec/agent-host-protocol.md`
+- 中文说明：`docs/spec/agent-host-protocol.zh_ch.md`
+
 ## Requirements
 
 - Erlang/OTP 28 (tested)
