@@ -20,7 +20,8 @@ create_session(RootDir0, Metadata) ->
     created_at => CreatedAt,
     metadata => ensure_map(Metadata)
   },
-  MetaBin = openagentic_json:encode(Meta),
+  MetaJson = openagentic_json:to_json_term(Meta),
+  MetaBin = openagentic_json:encode(MetaJson),
   ok = write_text(filename:join([Dir, "meta.json"]), <<MetaBin/binary, "\n">>),
   {ok, SessionId}.
 
@@ -33,7 +34,8 @@ append_event(RootDir0, SessionId0, Event0) ->
   ok = repair_truncated_tail(Path),
   NextSeq = infer_next_seq(Path) + 1,
   Ts = erlang:system_time(millisecond) / 1000.0,
-  Event = with_meta(Event0, NextSeq, Ts),
+  Event1 = with_meta(Event0, NextSeq, Ts),
+  Event = openagentic_json:to_json_term(Event1),
   Line = openagentic_json:encode(Event),
   ok = append_text(Path, <<Line/binary, "\n">>),
   {ok, Event}.

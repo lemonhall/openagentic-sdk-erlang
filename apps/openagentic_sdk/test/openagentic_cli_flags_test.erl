@@ -74,6 +74,16 @@ workflow_dsl_flag_parses_test() ->
     end
   ).
 
+web_bind_port_flags_parse_test() ->
+  with_cli_env(
+    fun (Tmp) ->
+      {Flags, _Pos} = openagentic_cli:parse_flags_for_test(["--project-dir", Tmp, "--web-bind", "0.0.0.0", "--web-port", "9090"]),
+      ?assertEqual(<<"0.0.0.0">>, maps:get(web_bind, Flags)),
+      ?assertEqual(9090, maps:get(web_port, Flags)),
+      ok
+    end
+  ).
+
 with_cli_env(Fun) when is_function(Fun, 1) ->
   OldKey = os:getenv("OPENAI_API_KEY"),
   OldModel = os:getenv("OPENAI_MODEL"),

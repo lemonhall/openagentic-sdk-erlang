@@ -68,7 +68,11 @@ openagentic_cli:main(["chat"]).
 openagentic_cli:main(["run", "你好，Erlang!"]).
 %% Workflow（硬流程，DSL 驱动）：
 openagentic_cli:main(["workflow", "--dsl", "workflows/three-provinces-six-ministries.v1.json", "请按三省六部流程完成：..."]).
+%% Web UI（左侧：三省六部流程图；右侧：对话窗口）：
+openagentic_cli:main(["web"]).
 ```
+
+启动 Web UI 后，按控制台输出的 URL 用浏览器打开即可（默认：`http://127.0.0.1:8088/`）。
 
 ## 配置（.env）
 

@@ -17,6 +17,7 @@
   workflow_init/5,
   workflow_step_start/5,
   workflow_step_output/6,
+  workflow_step_event/5,
   workflow_guard_fail/5,
   workflow_step_pass/4,
   workflow_transition/5,
@@ -203,6 +204,23 @@ workflow_step_output(WorkflowId0, StepId0, Attempt0, StepSessionId0, Output0, Ou
     "" -> Base;
     F -> Base#{output_format => to_bin(F)}
   end.
+
+workflow_step_event(WorkflowId0, StepId0, StepSessionId0, StepEvent0, Extra0) ->
+  StepEvent = ensure_map(StepEvent0),
+  Extra1 =
+    case Extra0 of
+      M when is_map(M) -> M;
+      _ -> #{}
+    end,
+  Extra = drop_undefined(Extra1),
+  Base = #{
+    type => <<"workflow.step.event">>,
+    workflow_id => to_bin(WorkflowId0),
+    step_id => to_bin(StepId0),
+    step_session_id => to_bin(StepSessionId0),
+    step_event => StepEvent
+  },
+  maps:merge(Base, Extra).
 
 workflow_guard_fail(WorkflowId0, StepId0, Attempt0, GuardName0, Reasons0) ->
   Reasons =
@@ -394,6 +412,11 @@ runtime_error(Message, Raw) ->
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);
 ensure_map(_) -> #{}.
+
+drop_undefined(M) when is_map(M) ->
+  maps:from_list([{K, V} || {K, V} <- maps:to_list(M), V =/= undefined]);
+drop_undefined(_) ->
+  #{}.
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> iolist_to_binary(L);

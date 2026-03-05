@@ -69,7 +69,11 @@ openagentic_cli:main(["chat"]).
 openagentic_cli:main(["run", "Hello from Erlang!"]).
 %% Workflow (hard flow, DSL-driven):
 openagentic_cli:main(["workflow", "--dsl", "workflows/three-provinces-six-ministries.v1.json", "Plan and implement X"]).
+%% Web UI (left: 三省六部 diagram, right: chat):
+openagentic_cli:main(["web"]).
 ```
+
+After starting the Web UI, open the printed URL in your browser (default: `http://127.0.0.1:8088/`).
 
 ## Configuration (.env)
 

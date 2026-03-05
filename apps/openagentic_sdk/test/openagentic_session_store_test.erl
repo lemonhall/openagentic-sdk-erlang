@@ -32,6 +32,32 @@ repair_truncated_tail_test() ->
   %% Should parse at least the first valid line and the appended one.
   ?assert(length(Events) >= 2).
 
+append_event_sanitizes_undefined_and_terms_test() ->
+  Root = test_root(),
+  {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+  %% These values would previously crash jsone:encode/1 (undefined/pid/fun).
+  Ev0 =
+    #{
+      type => <<"t">>,
+      undef => undefined,
+      pid => self(),
+      'fun' => fun () -> ok end,
+      tuple => {a, 1}
+    },
+  {ok, Stored} = openagentic_session_store:append_event(Root, Sid, Ev0),
+  ?assertEqual(<<"t">>, maps:get(type, Stored)),
+  ?assertNot(maps:is_key(undef, Stored)),
+  ?assert(is_binary(maps:get(pid, Stored))),
+  ?assert(is_binary(maps:get('fun', Stored))),
+  ?assert(is_binary(maps:get(tuple, Stored))),
+  Events = openagentic_session_store:read_events(Root, Sid),
+  %% Decoded keys are binaries; ensure our "pid"/"fun"/"tuple" fields survived as strings.
+  [Last | _] = lists:reverse(Events),
+  ?assert(maps:is_key(<<"pid">>, Last)),
+  ?assert(maps:is_key(<<"fun">>, Last)),
+  ?assert(maps:is_key(<<"tuple">>, Last)),
+  ok.
+
 test_root() ->
   {ok, Cwd} = file:get_cwd(),
   Base = filename:join([Cwd, ".tmp", "eunit", "openagentic_session_store_test"]),

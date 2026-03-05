@@ -45,6 +45,33 @@ workflow_engine_contract_fail_test() ->
   ?assertEqual(<<"failed">>, maps:get(status, Res)),
   ok.
 
+workflow_engine_retry_includes_failure_reason_test() ->
+  Root = test_root(),
+  ok = write_workflow_retry(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      Attempt = maps:get(attempt, Ctx, 1),
+      Prompt = maps:get(user_prompt, Ctx, <<>>),
+      case {StepId, Attempt} of
+        {<<"a">>, 1} ->
+          %% Missing required section "A"
+          {ok, <<"nope\n">>};
+        {<<"a">>, 2} ->
+          %% Retry should carry the previous failure reason to help self-correct.
+          ?assert(binary:match(Prompt, <<"missing sections: A">>) =/= nomatch),
+          {ok, <<"# A\n\nok\n">>};
+        {<<"b">>, _} ->
+          {ok, <<"{\"decision\":\"approve\",\"reasons\":[],\"required_changes\":[]}">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_retry.json", <<"hello">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  ok.
+
 write_workflow(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
   ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
@@ -76,6 +103,39 @@ write_workflow(Root) ->
       "}",
       "]}">>,
   write_file(filename:join([Root, "workflows", "w.json"]), Json).
+
+write_workflow_retry(Root) ->
+  ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
+  Json =
+    <<
+      "{",
+      "\"workflow_version\":\"1.0\",",
+      "\"name\":\"t\",",
+      "\"steps\":[",
+      "{",
+      "\"id\":\"a\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"controller_input\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/a.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"A\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":\"b\",",
+      "\"on_fail\":\"a\",",
+      "\"max_attempts\":2",
+      "},",
+      "{",
+      "\"id\":\"b\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"a\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/b.md\"},",
+      "\"output_contract\":{\"type\":\"decision\",\"allowed\":[\"approve\",\"reject\"],\"format\":\"json\",\"fields\":[\"decision\",\"reasons\",\"required_changes\"]},",
+      "\"guards\":[{\"type\":\"decision_requires_reasons\",\"when\":\"reject\"}],",
+      "\"on_pass\":null,",
+      "\"on_fail\":null",
+      "}",
+      "]}">>,
+  write_file(filename:join([Root, "workflows", "w_retry.json"]), Json).
 
 test_root() ->
   {ok, Cwd} = file:get_cwd(),

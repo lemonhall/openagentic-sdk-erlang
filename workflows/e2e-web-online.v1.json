@@ -1,0 +1,41 @@
+{
+  "workflow_version": "1.0",
+  "name": "e2e-web-online.v1",
+  "description": "Online E2E via Web API + OpenAI Responses: force safe tool calls and ensure end-to-end tool loop works.",
+  "defaults": {
+    "max_attempts": 1,
+    "timeout_seconds": 180,
+    "tool_policy": {
+      "mode": "default",
+      "allow": ["List", "Read"],
+      "deny": ["Write", "Edit", "Bash", "Task", "WebSearch", "WebFetch"]
+    }
+  },
+  "roles": {
+    "taizi": { "purpose": "E2E: call tools deterministically and output a JSON object." }
+  },
+  "steps": [
+    {
+      "id": "e2e",
+      "role": "taizi",
+      "input": { "type": "controller_input" },
+      "prompt": { "type": "file", "path": "workflows/prompts/e2e_web_online.md" },
+      "output_contract": {
+        "type": "json_object",
+        "schema_hint": {
+          "ok": true,
+          "readme_first_line": "string",
+          "list_count": 0
+        }
+      },
+      "guards": [
+        { "type": "regex_must_match", "pattern": "\"ok\"\\s*:\\s*true" }
+      ],
+      "on_pass": null,
+      "on_fail": null,
+      "max_attempts": 1,
+      "timeout_seconds": 180
+    }
+  ]
+}
+

@@ -1,6 +1,6 @@
 -module(openagentic_workflow_engine).
 
--export([run/4]).
+-export([run/4, start/4]).
 
 -define(DEFAULT_MAX_STEPS, 50).
 
@@ -20,6 +20,41 @@ run(ProjectDir0, WorkflowRelPath0, ControllerInput0, Opts0) ->
   Opts = ensure_map(Opts0),
   SessionRoot = ensure_list_str(maps:get(session_root, Opts, openagentic_paths:default_session_root())),
 
+  case init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) of
+    {ok, Start, State0} ->
+      execute(Start, State0);
+    Err ->
+      Err
+  end.
+
+%% Start a workflow asynchronously (returns ids immediately).
+%% The workflow continues in a spawned process and writes events to workflow session.
+start(ProjectDir0, WorkflowRelPath0, ControllerInput0, Opts0) ->
+  ProjectDir = ensure_list_str(ProjectDir0),
+  WorkflowRelPath = ensure_list_str(WorkflowRelPath0),
+  ControllerInput = to_bin(ControllerInput0),
+  Opts = ensure_map(Opts0),
+  SessionRoot = ensure_list_str(maps:get(session_root, Opts, openagentic_paths:default_session_root())),
+  case init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) of
+    {ok, Start, State0} ->
+      Pid =
+        spawn_link(
+          fun () ->
+            _ = execute(Start, State0),
+            ok
+          end
+        ),
+      {ok, #{
+        pid => Pid,
+        workflow_id => wf_id(State0),
+        workflow_name => maps:get(workflow_name, State0, <<>>),
+        workflow_session_id => to_bin(maps:get(workflow_session_id, State0, <<>>))
+      }};
+    Err ->
+      Err
+  end.
+
+init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
   case openagentic_workflow_dsl:load_and_validate(ProjectDir, WorkflowRelPath, Opts) of
     {ok, Wf} ->
       case read_workflow_source(ProjectDir, WorkflowRelPath) of
@@ -35,12 +70,19 @@ run(ProjectDir0, WorkflowRelPath0, ControllerInput0, Opts0) ->
               dsl_sha256 => DslHash
             }),
           WfSessionId = to_bin(WfSessionId0),
+          Opts2 = ensure_web_answerer(Opts, WfSessionId),
           ok = append_wf_event(SessionRoot, WfSessionId0, openagentic_events:system_init(WfSessionId, ProjectDir, #{})),
           ok =
             append_wf_event(
               SessionRoot,
               WfSessionId0,
-              openagentic_events:workflow_init(WorkflowId, WfName, WorkflowRelPath, DslHash, #{project_dir => to_bin(ProjectDir)})
+              openagentic_events:workflow_init(
+                WorkflowId,
+                WfName,
+                WorkflowRelPath,
+                DslHash,
+                #{project_dir => to_bin(ProjectDir), controller_input => ControllerInput}
+              )
             ),
           State0 =
             #{
@@ -55,15 +97,50 @@ run(ProjectDir0, WorkflowRelPath0, ControllerInput0, Opts0) ->
               controller_input => ControllerInput,
               step_outputs => #{},
               step_attempts => #{},
-              opts => Opts
+              step_failures => #{},
+              opts => Opts2
             },
           Start = maps:get(<<"start_step_id">>, Wf, <<>>),
-          run_loop(to_bin(Start), State0);
+          {ok, to_bin(Start), State0};
         {error, Reason} ->
           {error, Reason}
       end;
     Err ->
       Err
+  end.
+
+execute(StartStepId, State0) ->
+  try
+    run_loop(to_bin(StartStepId), State0)
+  catch
+    Class:Reason:Stack ->
+      Extra = #{error_class => Class, error_reason => Reason, stacktrace => Stack},
+      _ =
+        append_wf_event(
+          State0,
+          openagentic_events:workflow_done(
+            wf_id(State0),
+            maps:get(workflow_name, State0, <<>>),
+            <<"failed">>,
+            to_bin({Class, Reason}),
+            Extra
+          )
+        ),
+      {error, {Class, Reason}}
+  end.
+
+ensure_web_answerer(Opts0, WorkflowSessionId) ->
+  Opts = ensure_map(Opts0),
+  case maps:get(web_user_answerer, Opts, undefined) of
+    F when is_function(F, 1) ->
+      Opts;
+    _ ->
+      case to_bool_default(maps:get(web_hil, Opts, false), false) of
+        true ->
+          Opts#{web_user_answerer => fun (Q) -> openagentic_web_q:ask(WorkflowSessionId, Q) end};
+        false ->
+          Opts
+      end
   end.
 
 %% ---- main loop ----
@@ -105,7 +182,8 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
   case resolve_prompt(State0, StepRaw) of
     {ok, PromptText} ->
       InputText = bind_input(State0, StepRaw),
-      UserPrompt = build_user_prompt(PromptText, InputText),
+      Failures = maps:get(StepId, maps:get(step_failures, State0, #{}), []),
+      UserPrompt = build_user_prompt(PromptText, InputText, Attempt, Failures),
       ExecRes = run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw),
       case ExecRes of
         {ok, StepOut0} ->
@@ -132,7 +210,10 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
               ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"guard_failed">>)),
               case NextFail of
                 null -> finalize(State0, <<"failed">>, join_bins(Reasons, <<"\n">>));
-                _ -> run_loop(NextFail, State0)
+                _ ->
+                  %% Persist failure reasons in memory so retries can self-correct.
+                  StateFail = put_in(State0, [step_failures, StepId], Reasons),
+                  run_loop(NextFail, StateFail)
               end
           end;
         {error, Reason} ->
@@ -173,6 +254,44 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
   Opts0 = maps:get(opts, State0, #{}),
   MaxSteps = step_max_steps(StepRaw, State0, maps:get(max_steps, Opts0, ?DEFAULT_MAX_STEPS)),
   {Gate, AllowedTools} = tool_policy_for_step(StepRaw, State0),
+  WfId = wf_id(State0),
+  StepSessionIdBin = to_bin(StepSessionId0),
+  %% Bridge step events (tool.use/tool.result/user.question/assistant.* etc.) into the workflow session,
+  %% so the web UI can observe and answer HITL prompts.
+   BridgeSink =
+     fun (Ev0) ->
+       Ev = ensure_map(Ev0),
+       StepSeq = maps:get(seq, Ev, maps:get(<<"seq">>, Ev, undefined)),
+       StepTs = maps:get(ts, Ev, maps:get(<<"ts">>, Ev, undefined)),
+      %% NOTE: jsone:encode/1 crashes on `undefined`. Step events like assistant.delta
+      %% are transient and may not carry seq/ts, so only include them when present.
+      Extra0 = #{},
+      Extra1 =
+        case StepSeq of
+          undefined -> Extra0;
+          _ -> Extra0#{step_seq => StepSeq}
+        end,
+      Extra =
+        case StepTs of
+          undefined -> Extra1;
+          _ -> Extra1#{step_ts => StepTs}
+        end,
+       _ = append_wf_event(State0, openagentic_events:workflow_step_event(WfId, StepId, StepSessionIdBin, Ev, Extra)),
+       ok
+     end,
+  WebAnswerer0 = maps:get(web_user_answerer, Opts0, undefined),
+  WebAnswerer =
+    case WebAnswerer0 of
+      F when is_function(F, 1) -> F;
+      _ -> undefined
+    end,
+  UserAnswerer =
+    case WebAnswerer of
+      undefined ->
+        maps:get(user_answerer, Opts0, undefined);
+      _ ->
+        WebAnswerer
+    end,
   RuntimeOpts =
     Opts0#{
       project_dir => maps:get(project_dir, State0),
@@ -182,7 +301,9 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
       system_prompt => role_system_prompt(Role, StepId, Attempt),
       max_steps => MaxSteps,
       permission_gate => Gate,
-      allowed_tools => AllowedTools
+      allowed_tools => AllowedTools,
+      user_answerer => UserAnswerer,
+      event_sink => BridgeSink
     },
   case openagentic_runtime:query(UserPrompt, RuntimeOpts) of
     {ok, #{final_text := Txt}} -> {ok, Txt};
@@ -332,8 +453,22 @@ merge_sources([Src0 | Rest], StepOutputs, Idx, AccRev) ->
   Header = iolist_to_binary([<<"\n\n--- source ">>, integer_to_binary(Idx + 1), <<" (">>, T, <<") ---\n\n">>]),
   merge_sources(Rest, StepOutputs, Idx + 1, [Chunk, Header | AccRev]).
 
-build_user_prompt(PromptText, InputText) ->
-  iolist_to_binary([PromptText, <<"\n\n---\n\n# 输入\n\n">>, InputText, <<"\n">>]).
+build_user_prompt(PromptText, InputText, Attempt0, Failures0) ->
+  Attempt = int_or_default(Attempt0, 1),
+  Failures = [to_bin(X) || X <- ensure_list_value(Failures0)],
+  Base = iolist_to_binary([PromptText, <<"\n\n---\n\n# 输入\n\n">>, InputText, <<"\n">>]),
+  case {Attempt > 1, Failures =/= []} of
+    {true, true} ->
+      Hint =
+        iolist_to_binary([
+          <<"\n\n---\n\n# 上一次失败原因（必须修复）\n\n">>,
+          <<"- ">>, join_bins(Failures, <<"\n- ">>), <<"\n\n">>,
+          <<"请严格修复上述原因后重新输出；不要提问、不要改变要求的标题名。\n">>
+        ]),
+      iolist_to_binary([Base, Hint]);
+    _ ->
+      Base
+  end.
 
 infer_output_format(StepRaw) ->
   OutC = ensure_map(get_any(StepRaw, [<<"output_contract">>, output_contract], #{})),
@@ -663,3 +798,16 @@ to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
+
+to_bool_default(V0, Default) ->
+  case V0 of
+    true -> true;
+    false -> false;
+    <<"true">> -> true;
+    <<"false">> -> false;
+    <<"1">> -> true;
+    <<"0">> -> false;
+    1 -> true;
+    0 -> false;
+    _ -> Default
+  end.

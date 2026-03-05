@@ -29,8 +29,20 @@ events_schema_persisted_meta_test() ->
       Sid,
       openagentic_events:workflow_init(<<"wf1">>, <<"wfn">>, <<"workflows/x.json">>, <<"sha">>, #{})
     ),
+  {ok, Ev9} =
+    openagentic_session_store:append_event(
+      Root,
+      Sid,
+      openagentic_events:workflow_step_event(
+        <<"wf1">>,
+        <<"step1">>,
+        Sid,
+        #{type => <<"assistant.delta">>, delta => <<"hi">>},
+        #{step_seq => undefined, step_ts => undefined}
+      )
+    ),
 
-  lists:foreach(fun assert_has_meta/1, [Ev1, Ev2, Ev3, Ev4, Ev5, Ev6, Ev7, Ev8]),
+  lists:foreach(fun assert_has_meta/1, [Ev1, Ev2, Ev3, Ev4, Ev5, Ev6, Ev7, Ev8, Ev9]),
 
   ?assertEqual(<<"result">>, maps:get(type, Ev6)),
   ?assert(maps:is_key(final_text, Ev6)),
@@ -44,6 +56,10 @@ events_schema_persisted_meta_test() ->
   ?assertNot(maps:is_key(error_type, Ev4)),
   ?assertNot(maps:is_key(error_message, Ev4)),
   ?assertEqual(<<"workflow.init">>, maps:get(type, Ev8)),
+  %% workflow.step.event should never persist `undefined` optional fields
+  ?assertEqual(<<"workflow.step.event">>, maps:get(type, Ev9)),
+  ?assertNot(maps:is_key(step_seq, Ev9)),
+  ?assertNot(maps:is_key(step_ts, Ev9)),
   ok.
 
 events_schema_optional_fields_omitted_test() ->

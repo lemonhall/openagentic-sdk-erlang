@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenAgentic · 三省六部 Workflow</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">OpenAgentic</div>
+        <div class="subtitle">三省六部 · 本地硬流程（DSL）</div>
+        <div class="status" id="overallStatus">idle</div>
+      </header>
+
+      <main class="main">
+        <section class="left">
+          <div class="panelTitle">流程图</div>
+          <div class="diagram" id="diagram">
+            <div class="node" data-step="taizi_intake">
+              <div class="nodeTitle">太子</div>
+              <div class="nodeSub">分拣 / 立案</div>
+              <div class="badge" data-badge="taizi_intake">pending</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="node" data-step="zhongshu_plan">
+              <div class="nodeTitle">中书省</div>
+              <div class="nodeSub">规划 / 拆解</div>
+              <div class="badge" data-badge="zhongshu_plan">pending</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="node" data-step="menxia_review">
+              <div class="nodeTitle">门下省</div>
+              <div class="nodeSub">准奏 / 封驳</div>
+              <div class="badge" data-badge="menxia_review">pending</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="node" data-step="shangshu_dispatch">
+              <div class="nodeTitle">尚书省</div>
+              <div class="nodeSub">派发六部</div>
+              <div class="badge" data-badge="shangshu_dispatch">pending</div>
+            </div>
+
+            <div class="branches">
+              <div class="branchCol">
+                <div class="node small" data-step="hubu_data">
+                  <div class="nodeTitle">户部</div>
+                  <div class="nodeSub">数据</div>
+                  <div class="badge" data-badge="hubu_data">pending</div>
+                </div>
+                <div class="node small" data-step="libu_docs">
+                  <div class="nodeTitle">礼部</div>
+                  <div class="nodeSub">文档</div>
+                  <div class="badge" data-badge="libu_docs">pending</div>
+                </div>
+              </div>
+              <div class="branchCol">
+                <div class="node small" data-step="bingbu_engineering">
+                  <div class="nodeTitle">兵部</div>
+                  <div class="nodeSub">工程</div>
+                  <div class="badge" data-badge="bingbu_engineering">pending</div>
+                </div>
+                <div class="node small" data-step="xingbu_compliance">
+                  <div class="nodeTitle">刑部</div>
+                  <div class="nodeSub">合规</div>
+                  <div class="badge" data-badge="xingbu_compliance">pending</div>
+                </div>
+              </div>
+              <div class="branchCol">
+                <div class="node small" data-step="gongbu_infra">
+                  <div class="nodeTitle">工部</div>
+                  <div class="nodeSub">基建</div>
+                  <div class="badge" data-badge="gongbu_infra">pending</div>
+                </div>
+                <div class="node small" data-step="libu_hr_people">
+                  <div class="nodeTitle">吏部</div>
+                  <div class="nodeSub">人事</div>
+                  <div class="badge" data-badge="libu_hr_people">pending</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="node" data-step="shangshu_aggregate">
+              <div class="nodeTitle">尚书省</div>
+              <div class="nodeSub">汇总回奏</div>
+              <div class="badge" data-badge="shangshu_aggregate">pending</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="node" data-step="taizi_reply">
+              <div class="nodeTitle">太子</div>
+              <div class="nodeSub">回奏</div>
+              <div class="badge" data-badge="taizi_reply">pending</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="right">
+          <div class="panelTitle">对话</div>
+          <div class="chat" id="chat"></div>
+          <form class="composer" id="composer">
+            <input id="dslPath" class="dsl" value="workflows/three-provinces-six-ministries.v1.json" />
+            <input id="prompt" class="prompt" placeholder="下达圣旨（输入你的需求）..." />
+            <button type="submit">开跑</button>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
+

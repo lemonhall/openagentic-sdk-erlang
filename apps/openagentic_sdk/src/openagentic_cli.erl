@@ -33,6 +33,8 @@ main(Args0) ->
       chat_cmd(Rest);
     ["workflow" | Rest] ->
       workflow_cmd(Rest);
+    ["web" | Rest] ->
+      web_cmd(Rest);
     ["-h"] ->
       usage();
     ["--help"] ->
@@ -137,6 +139,25 @@ workflow_cmd(Args0) ->
       end
   end.
 
+web_cmd(Args0) ->
+  {Flags, _Pos} = parse_flags(Args0, #{}),
+  Opts0 = runtime_opts(Flags),
+  Bind0 = maps:get(web_bind, Flags, maps:get(webBind, Flags, undefined)),
+  Port0 = maps:get(web_port, Flags, maps:get(webPort, Flags, undefined)),
+  Opts =
+    Opts0#{
+      web_bind => to_bin(Bind0),
+      web_port => Port0
+    },
+  case openagentic_web:start(Opts) of
+    {ok, #{url := Url}} ->
+      io:format("~nWeb UI: ~ts~n", [to_text(Url)]),
+      ok;
+    {error, Reason} ->
+      io:format("~nERROR: ~p~n", [Reason]),
+      halt(1)
+  end.
+
 usage() ->
   io:format(
     "openagentic (Erlang)\\n\\n"
@@ -144,6 +165,7 @@ usage() ->
     "  openagentic run [flags] <prompt>\\n"
     "  openagentic chat [flags]\\n"
     "  openagentic workflow [flags] [--dsl <path>] <prompt>\\n\\n"
+    "  openagentic web [flags] [--web-bind <ip>] [--web-port <port>]\\n\\n"
     "Defaults:\\n"
     "  - Reads .env in project dir (if present)\\n"
     "  - Project dir defaults to current directory\\n"
@@ -172,6 +194,8 @@ usage() ->
     "  --reserved <n>\\n"
     "  --input-limit <n>\\n"
     "  --dsl <path> (workflow DSL; default: workflows/three-provinces-six-ministries.v1.json)\\n\\n"
+    "  --web-bind <ip> (web UI bind; default: 127.0.0.1)\\n"
+    "  --web-port <port> (web UI port; default: 8088)\\n\\n"
     "Env/.env keys:\\n"
     "  OPENAI_API_KEY (required)\\n"
     "  OPENAI_BASE_URL (optional)\\n"
@@ -516,6 +540,15 @@ parse_flags(["--dsl", V | Rest], Acc) ->
   parse_flags(Rest, Acc#{workflow_dsl => to_bin(V)});
 parse_flags(["--workflow", V | Rest], Acc) ->
   parse_flags(Rest, Acc#{workflow_dsl => to_bin(V)});
+parse_flags(["--web-bind", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{web_bind => to_bin(V)});
+parse_flags(["--web-port", V0 | Rest], Acc) ->
+  case parse_int(V0) of
+    I when is_integer(I), I > 0, I < 65536 ->
+      parse_flags(Rest, Acc#{web_port => I});
+    _ ->
+      parse_flags(Rest, Acc)
+  end;
 parse_flags(["-h" | _Rest], _Acc) ->
   usage(),
   halt(0);
