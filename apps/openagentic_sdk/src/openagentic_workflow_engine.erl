@@ -1,6 +1,6 @@
 -module(openagentic_workflow_engine).
 
--export([run/4, start/4]).
+-export([run/4, start/4, continue/4, continue_start/4]).
 
 -define(DEFAULT_MAX_STEPS, 50).
 
@@ -41,6 +41,45 @@ start(ProjectDir0, WorkflowRelPath0, ControllerInput0, Opts0) ->
         spawn_link(
           fun () ->
             _ = execute(Start, State0),
+            ok
+          end
+        ),
+      {ok, #{
+        pid => Pid,
+        workflow_id => wf_id(State0),
+        workflow_name => maps:get(workflow_name, State0, <<>>),
+        workflow_session_id => to_bin(maps:get(workflow_session_id, State0, <<>>))
+      }};
+    Err ->
+      Err
+  end.
+
+%% Continue an existing workflow session by re-running (sync) from the last relevant step.
+%% Keeps the same workflow_session_id and appends events to it.
+continue(SessionRoot0, WorkflowSessionId0, Message0, Opts0) ->
+  SessionRoot = ensure_list_str(SessionRoot0),
+  WorkflowSessionId = ensure_list_str(WorkflowSessionId0),
+  Message = to_bin(Message0),
+  Opts = ensure_map(Opts0),
+  case init_continue(SessionRoot, WorkflowSessionId, Message, Opts) of
+    {ok, StartStepId, State0} ->
+      execute(StartStepId, State0);
+    Err ->
+      Err
+  end.
+
+%% Continue an existing workflow session asynchronously.
+continue_start(SessionRoot0, WorkflowSessionId0, Message0, Opts0) ->
+  SessionRoot = ensure_list_str(SessionRoot0),
+  WorkflowSessionId = ensure_list_str(WorkflowSessionId0),
+  Message = to_bin(Message0),
+  Opts = ensure_map(Opts0),
+  case init_continue(SessionRoot, WorkflowSessionId, Message, Opts) of
+    {ok, StartStepId, State0} ->
+      Pid =
+        spawn_link(
+          fun () ->
+            _ = execute(StartStepId, State0),
             ok
           end
         ),
@@ -108,6 +147,194 @@ init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
     Err ->
       Err
   end.
+
+init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
+  %% Read existing workflow session to recover workflow.init context.
+  Events = openagentic_session_store:read_events(SessionRoot, WorkflowSessionId),
+  case find_workflow_init(Events) of
+    {error, _} = Err ->
+      Err;
+    {ok, Init} ->
+      WfId = maps:get(<<"workflow_id">>, Init, maps:get(workflow_id, Init, <<>>)),
+      WfName = maps:get(<<"workflow_name">>, Init, maps:get(workflow_name, Init, <<>>)),
+      DslPath = to_bin(maps:get(<<"dsl_path">>, Init, maps:get(dsl_path, Init, <<"workflows/three-provinces-six-ministries.v1.json">>))),
+      ProjectDir0 = maps:get(<<"project_dir">>, Init, maps:get(project_dir, Init, maps:get(<<"projectDir">>, Init, maps:get(projectDir, Init, <<".">>)))),
+      ProjectDir = ensure_list_str(ProjectDir0),
+
+      %% Collect original controller_input + any prior followups + this message.
+      BaseInput = to_bin(maps:get(<<"controller_input">>, Init, maps:get(controller_input, Init, <<>>))),
+      Followups = [to_bin(maps:get(<<"text">>, E, maps:get(text, E, <<>>))) || E <- Events, is_controller_message(E)],
+      ControllerInput =
+        iolist_to_binary([
+          BaseInput,
+          <<"\n\n---\n\n# Followup\n\n">>,
+          join_bins([X || X <- Followups, byte_size(string:trim(X)) > 0] ++ [Message], <<"\n\n">>),
+          <<"\n">>
+        ]),
+
+      %% Reconstruct last outputs/failures so resuming a failed step can bind inputs and show guard reasons.
+      StepOutputsAll = reconstruct_step_outputs(Events),
+      StepFailuresAll = reconstruct_step_failures(Events),
+      StepAttempts = #{},
+
+      Opts = ensure_web_answerer(Opts0, to_bin(WorkflowSessionId)),
+      case openagentic_workflow_dsl:load_and_validate(ProjectDir, ensure_list_str(DslPath), Opts) of
+        {ok, Wf} ->
+          Defaults = ensure_map(maps:get(<<"defaults">>, Wf, #{})),
+          StepsById = ensure_map(maps:get(<<"steps_by_id">>, Wf, #{})),
+          StartDefault = maps:get(<<"start_step_id">>, Wf, <<>>),
+          StartStepId = pick_continue_step(Events, to_bin(StartDefault)),
+          {PrevStatus, _PrevDoneIdx} = last_workflow_done(ensure_list_value(Events)),
+          StartingFresh = PrevStatus =:= <<"completed">>,
+          StepOutputs =
+            case StartingFresh of
+              true -> #{};
+              false -> StepOutputsAll
+            end,
+          StepFailures =
+            case StartingFresh of
+              true -> #{};
+              false -> StepFailuresAll
+            end,
+          State0 =
+            #{
+              project_dir => ProjectDir,
+              session_root => SessionRoot,
+              workflow_id => WfId,
+              workflow_name => WfName,
+              workflow_session_id => WorkflowSessionId,
+              workflow_rel_path => to_bin(DslPath),
+              defaults => Defaults,
+              steps_by_id => StepsById,
+              controller_input => ControllerInput,
+              step_outputs => StepOutputs,
+              step_attempts => StepAttempts,
+              step_failures => StepFailures,
+              opts => Opts
+            },
+          %% Observability for the UI.
+          ok = append_wf_event(State0, #{type => <<"workflow.controller.message">>, workflow_id => to_bin(WfId), text => Message}),
+          ok = append_wf_event(State0, #{type => <<"workflow.run.start">>, workflow_id => to_bin(WfId), start_step_id => StartStepId}),
+          {ok, StartStepId, State0};
+        Err ->
+          Err
+      end
+  end.
+
+find_workflow_init(Events0) ->
+  Events = ensure_list_value(Events0),
+  case [E || E <- Events, is_map(E) andalso to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))) =:= <<"workflow.init">>] of
+    [H | _] -> {ok, H};
+    [] -> {error, missing_workflow_init}
+  end.
+
+is_controller_message(E0) ->
+  E = ensure_map(E0),
+  to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))) =:= <<"workflow.controller.message">>.
+
+reconstruct_step_outputs(Events0) ->
+  Events = ensure_list_value(Events0),
+  lists:foldl(
+    fun (E0, Acc0) ->
+      E = ensure_map(E0),
+      T = to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))),
+      case T of
+        <<"workflow.step.output">> ->
+          StepId = to_bin(maps:get(<<"step_id">>, E, maps:get(step_id, E, <<>>))),
+          Out = to_bin(maps:get(<<"output">>, E, maps:get(output, E, <<>>))),
+          StepSid = to_bin(maps:get(<<"step_session_id">>, E, maps:get(step_session_id, E, <<>>))),
+          Acc0#{StepId => #{output => Out, parsed => #{}, step_session_id => StepSid}};
+        _ ->
+          Acc0
+      end
+    end,
+    #{},
+    Events
+  ).
+
+reconstruct_step_failures(Events0) ->
+  Events = ensure_list_value(Events0),
+  lists:foldl(
+    fun (E0, Acc0) ->
+      E = ensure_map(E0),
+      T = to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))),
+      case T of
+        <<"workflow.guard.fail">> ->
+          StepId = to_bin(maps:get(<<"step_id">>, E, maps:get(step_id, E, <<>>))),
+          Reasons0 = ensure_list_value(maps:get(<<"reasons">>, E, maps:get(reasons, E, []))),
+          Reasons = [to_bin(X) || X <- Reasons0],
+          Acc0#{StepId => Reasons};
+        _ ->
+          Acc0
+      end
+    end,
+    #{},
+    Events
+  ).
+
+pick_continue_step(Events0, DefaultStart0) ->
+  Events = ensure_list_value(Events0),
+  DefaultStart = to_bin(DefaultStart0),
+  %% Semantics:
+  %% - If the previous run completed: start from the workflow default start step (new input may change everything).
+  %% - If the previous run failed: resume from the last started step (to fix blocking input).
+  {Status, DoneIdx} = last_workflow_done(Events),
+  case Status of
+    <<"completed">> ->
+      DefaultStart;
+    <<"failed">> ->
+      case last_step_id_before(Events, DoneIdx, <<"workflow.step.start">>, <<"step_id">>) of
+        <<>> -> DefaultStart;
+        S -> S
+      end;
+    _ ->
+      DefaultStart
+  end.
+
+last_workflow_done(Events) ->
+  %% Returns {StatusBin, Index} (0-based), or {<<>>, -1} if not found.
+  last_workflow_done(Events, 0, {<<>>, -1}).
+
+last_workflow_done([], _Idx, Acc) ->
+  Acc;
+last_workflow_done([E0 | Rest], Idx, {BestStatus, BestIdx}) ->
+  E = ensure_map(E0),
+  T = to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))),
+  Acc =
+    case T of
+      <<"workflow.done">> ->
+        Status = to_bin(maps:get(<<"status">>, E, maps:get(status, E, <<>>))),
+        {Status, Idx};
+      _ ->
+        {BestStatus, BestIdx}
+    end,
+  last_workflow_done(Rest, Idx + 1, Acc).
+
+last_step_id_before(Events, DoneIdx, Type, Key) ->
+  case DoneIdx of
+    I when is_integer(I), I >= 0 ->
+      Prefix = lists:sublist(Events, I),
+      last_step_id_before_loop(Prefix, to_bin(Type), to_bin(Key), <<>>);
+    _ ->
+      last_step_id_before_loop(Events, to_bin(Type), to_bin(Key), <<>>)
+  end.
+
+last_step_id_before_loop([], _Type, _Key, Best) ->
+  Best;
+last_step_id_before_loop([E0 | Rest], Type, Key, Best0) ->
+  E = ensure_map(E0),
+  T = to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))),
+  Best =
+    case T =:= Type of
+      true ->
+        case Key of
+          <<"step_id">> -> to_bin(maps:get(<<"step_id">>, E, maps:get(step_id, E, <<>>)));
+          _ -> to_bin(maps:get(Key, E, <<>>))
+        end;
+      false ->
+        Best0
+    end,
+  last_step_id_before_loop(Rest, Type, Key, Best).
 
 execute(StartStepId, State0) ->
   try
@@ -183,7 +410,8 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
     {ok, PromptText} ->
       InputText = bind_input(State0, StepRaw),
       Failures = maps:get(StepId, maps:get(step_failures, State0, #{}), []),
-      UserPrompt = build_user_prompt(PromptText, InputText, Attempt, Failures),
+      ControllerText = maps:get(controller_input, State0, <<>>),
+      UserPrompt = build_user_prompt(PromptText, ControllerText, InputText, Attempt, Failures),
       ExecRes = run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw),
       case ExecRes of
         {ok, StepOut0} ->
@@ -453,20 +681,32 @@ merge_sources([Src0 | Rest], StepOutputs, Idx, AccRev) ->
   Header = iolist_to_binary([<<"\n\n--- source ">>, integer_to_binary(Idx + 1), <<" (">>, T, <<") ---\n\n">>]),
   merge_sources(Rest, StepOutputs, Idx + 1, [Chunk, Header | AccRev]).
 
-build_user_prompt(PromptText, InputText, Attempt0, Failures0) ->
-  Attempt = int_or_default(Attempt0, 1),
+build_user_prompt(PromptText, ControllerText0, InputText0, _Attempt0, Failures0) ->
   Failures = [to_bin(X) || X <- ensure_list_value(Failures0)],
-  Base = iolist_to_binary([PromptText, <<"\n\n---\n\n# 输入\n\n">>, InputText, <<"\n">>]),
-  case {Attempt > 1, Failures =/= []} of
-    {true, true} ->
+  ControllerText = to_bin(ControllerText0),
+  InputText = to_bin(InputText0),
+  %% IMPORTANT: Keep these separators ASCII-only so the assembled prompt is always valid UTF-8.
+  %% Otherwise, session persistence may sanitize it into a byte dump (<<...>>) and the model
+  %% won't see the real user intent.
+  Base =
+    iolist_to_binary([
+      PromptText,
+      <<"\n\n---\n\n# Controller\n\n">>,
+      ControllerText,
+      <<"\n\n---\n\n# Input\n\n">>,
+      InputText,
+      <<"\n">>
+    ]),
+  case Failures =/= [] of
+    true ->
       Hint =
         iolist_to_binary([
-          <<"\n\n---\n\n# 上一次失败原因（必须修复）\n\n">>,
+          <<"\n\n---\n\n# Previous failure reasons (must fix)\n\n">>,
           <<"- ">>, join_bins(Failures, <<"\n- ">>), <<"\n\n">>,
-          <<"请严格修复上述原因后重新输出；不要提问、不要改变要求的标题名。\n">>
+          <<"Fix the above reasons and re-output strictly; do NOT ask questions; do NOT change required headings.\n">>
         ]),
       iolist_to_binary([Base, Hint]);
-    _ ->
+    false ->
       Base
   end.
 

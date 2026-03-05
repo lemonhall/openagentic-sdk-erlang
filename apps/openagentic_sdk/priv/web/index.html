@@ -111,8 +111,10 @@
           <form class="composer" id="composer">
             <input id="dslPath" class="dsl" value="workflows/three-provinces-six-ministries.v1.json" />
             <input id="prompt" class="prompt" placeholder="下达圣旨（输入你的需求）..." />
-            <button type="submit">开跑</button>
+            <button type="submit" id="btnSend" class="btn primary">发送</button>
+            <button type="button" id="btnNewRun" class="btn">新开一局</button>
           </form>
+          <div class="hint" id="modeHint">提示：默认在同一局里继续；点“新开一局”才会清空上下文</div>
         </section>
       </main>
     </div>
@@ -120,4 +122,3 @@
     <script src="/assets/app.js"></script>
   </body>
 </html>
-

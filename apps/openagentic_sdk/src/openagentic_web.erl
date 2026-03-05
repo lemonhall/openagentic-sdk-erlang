@@ -44,6 +44,7 @@ start(Opts0) ->
         {"/", openagentic_web_static, State},
         {"/assets/[...]", openagentic_web_static, State},
         {"/api/workflows/start", openagentic_web_api_workflows_start, State},
+        {"/api/workflows/continue", openagentic_web_api_workflows_continue, State},
         {"/api/questions/answer", openagentic_web_api_questions_answer, State},
         {"/api/sessions/:sid/events", openagentic_web_api_sse, State},
         {"/api/health", openagentic_web_api_health, State}

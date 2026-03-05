@@ -53,6 +53,8 @@ workflow_engine_retry_includes_failure_reason_test() ->
       StepId = maps:get(step_id, Ctx),
       Attempt = maps:get(attempt, Ctx, 1),
       Prompt = maps:get(user_prompt, Ctx, <<>>),
+      %% Prompt must be valid UTF-8 so it can be persisted + sent to providers.
+      ?assert(is_list(unicode:characters_to_list(Prompt, utf8))),
       case {StepId, Attempt} of
         {<<"a">>, 1} ->
           %% Missing required section "A"
@@ -70,6 +72,74 @@ workflow_engine_retry_includes_failure_reason_test() ->
   Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
   {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_retry.json", <<"hello">>, Opts),
   ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  ok.
+
+workflow_engine_continue_after_completed_restarts_from_start_test() ->
+  Root = test_root(),
+  ok = write_workflow(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      Prompt = maps:get(user_prompt, Ctx, <<>>),
+      case StepId of
+        <<"a">> ->
+          %% Echo whether the followup made it into the assembled prompt.
+          Out =
+            case binary:match(Prompt, <<"second">>) of
+              nomatch -> <<"# A\n\nfirst\n">>;
+              _ -> <<"# A\n\nsecond\n">>
+            end,
+          {ok, Out};
+        <<"b">> ->
+          {ok, <<"{\"decision\":\"approve\",\"reasons\":[],\"required_changes\":[]}">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res1} = openagentic_workflow_engine:run(Root, "workflows/w.json", <<"first">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res1)),
+  WfSid = maps:get(workflow_session_id, Res1),
+
+  {ok, Res2} = openagentic_workflow_engine:continue(Root, WfSid, <<"second">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res2)),
+  ?assertEqual(WfSid, maps:get(workflow_session_id, Res2)),
+
+  Events = openagentic_session_store:read_events(Root, WfSid),
+  ?assertEqual(<<"a">>, last_run_start_step_id(Events)),
+  ?assert(binary:match(last_step_output(Events, <<"a">>), <<"second">>) =/= nomatch),
+  ok.
+
+workflow_engine_continue_after_failed_includes_guard_reasons_test() ->
+  Root = test_root(),
+  ok = write_workflow(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      Prompt = maps:get(user_prompt, Ctx, <<>>),
+      case StepId of
+        <<"a">> ->
+          case binary:match(Prompt, <<"missing sections: A">>) of
+            nomatch ->
+              %% First run: fail the contract.
+              {ok, <<"nope\n">>};
+            _ ->
+              %% Continue run: must carry the guard failure reason.
+              {ok, <<"# A\n\nok\n">>}
+          end;
+        <<"b">> ->
+          {ok, <<"{\"decision\":\"approve\",\"reasons\":[],\"required_changes\":[]}">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res1} = openagentic_workflow_engine:run(Root, "workflows/w.json", <<"hello">>, Opts),
+  ?assertEqual(<<"failed">>, maps:get(status, Res1)),
+  WfSid = maps:get(workflow_session_id, Res1),
+
+  {ok, Res2} = openagentic_workflow_engine:continue(Root, WfSid, <<"fix it">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res2)),
   ok.
 
 write_workflow(Root) ->
@@ -148,3 +218,53 @@ test_root() ->
 write_file(Path, Bin) ->
   ok = filelib:ensure_dir(filename:join([filename:dirname(Path), "x"])),
   file:write_file(Path, Bin).
+
+last_run_start_step_id(Events0) ->
+  Events = ensure_list_value(Events0),
+  lists:foldl(
+    fun (E0, Best0) ->
+      E = ensure_map(E0),
+      case maps:get(<<"type">>, E, <<>>) of
+        <<"workflow.run.start">> -> maps:get(<<"start_step_id">>, E, Best0);
+        _ -> Best0
+      end
+    end,
+    <<>>,
+    Events
+  ).
+
+last_step_output(Events0, StepId0) ->
+  Events = ensure_list_value(Events0),
+  StepId = to_bin(StepId0),
+  lists:foldl(
+    fun (E0, Best0) ->
+      E = ensure_map(E0),
+      case maps:get(<<"type">>, E, <<>>) of
+        <<"workflow.step.output">> ->
+          case maps:get(<<"step_id">>, E, <<>>) of
+            StepId -> maps:get(<<"output">>, E, Best0);
+            _ -> Best0
+          end;
+        _ ->
+          Best0
+      end
+    end,
+    <<>>,
+    Events
+  ).
+
+ensure_map(M) when is_map(M) -> M;
+ensure_map(L) when is_list(L) -> maps:from_list(L);
+ensure_map(_) -> #{}.
+
+ensure_list_value(L) when is_list(L) -> L;
+ensure_list_value(B) when is_binary(B) -> [B];
+ensure_list_value(undefined) -> [];
+ensure_list_value(null) -> [];
+ensure_list_value(Other) -> [Other].
+
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> iolist_to_binary(L);
+to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_bin(I) when is_integer(I) -> integer_to_binary(I);
+to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).

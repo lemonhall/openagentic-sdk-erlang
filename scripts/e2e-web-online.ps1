@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [switch]$EnableProxy,
   [int]$TimeoutSec = 360
 )
+
+$ErrorActionPreference = "Stop"
 
 Push-Location (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Pop-Location
@@ -22,4 +22,3 @@ Write-Host "Running online Web E2E (OPENAGENTIC_E2E=1)..." -ForegroundColor Cyan
 rebar3 eunit
 
 Write-Host "OK: online Web E2E passed." -ForegroundColor Green
-
