@@ -526,6 +526,15 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
       _ ->
         WebAnswerer
     end,
+  %% Ensure the permission gate uses the effective userAnswerer for this run.
+  %% In web mode, the CLI-provided user_answerer may be unsupported (io:get_line/1 -> {error,enotsup}).
+  Gate2 =
+    case UserAnswerer of
+      AnswererFun when is_function(AnswererFun, 1) ->
+        GateMap = ensure_map(Gate),
+        GateMap#{user_answerer => AnswererFun};
+      _ -> ensure_map(Gate)
+    end,
   RuntimeOpts =
     Opts0#{
       project_dir => maps:get(project_dir, State0),
@@ -535,7 +544,7 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
       resume_session_id => StepSessionId0,
       system_prompt => role_system_prompt(Role, StepId, Attempt),
       max_steps => MaxSteps,
-      permission_gate => Gate,
+      permission_gate => Gate2,
       allowed_tools => AllowedTools,
       user_answerer => UserAnswerer,
       event_sink => BridgeSink

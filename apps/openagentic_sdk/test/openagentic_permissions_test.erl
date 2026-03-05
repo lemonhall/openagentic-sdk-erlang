@@ -19,6 +19,12 @@ default_denies_safe_tools_bad_schema_test() ->
   ?assertEqual(false, maps:get(allowed, Res)),
   ?assert(is_binary(maps:get(deny_message, Res))).
 
+default_allows_workspace_write_test() ->
+  Gate = openagentic_permissions:default(undefined),
+  Ctx = #{tool_use_id => <<"t3">>},
+  Res = openagentic_permissions:approve(Gate, <<"Write">>, #{file_path => <<"workspace:deliverables/x.md">>, content => <<"hi">>}, Ctx),
+  ?assertEqual(true, maps:get(allowed, Res)).
+
 deny_mode_denies_test() ->
   Gate = openagentic_permissions:deny(),
   Res = openagentic_permissions:approve(Gate, <<"Write">>, #{}, #{}),

@@ -74,8 +74,8 @@ approve_mode(deny, _Gate, ToolName, _ToolInput, _Context) ->
   #{allowed => false, deny_message => <<"PermissionGate(mode=DENY) denied tool '", ToolName/binary, "'">>};
 approve_mode(default, Gate, ToolName, ToolInput, Context) ->
   Safe = safe_tools(),
-  case lists:member(ToolName, Safe) of
-    true ->
+  case {lists:member(ToolName, Safe), is_workspace_write_tool_allowed(ToolName, ToolInput)} of
+    {true, _} ->
       case safe_schema_ok(ToolName, ToolInput) of
         true -> #{allowed => true};
         false ->
@@ -84,7 +84,10 @@ approve_mode(default, Gate, ToolName, ToolInput, Context) ->
             deny_message => <<"PermissionGate(mode=DEFAULT) schema parse failed for tool '", ToolName/binary, "'">>
           }
       end;
-    false ->
+    {false, true} ->
+      %% Workspace-scoped writes are considered safe: the FS layer still enforces workspace-only writes.
+      #{allowed => true};
+    {false, false} ->
       %% fallthrough to prompt behavior
       approve_mode(prompt, Gate, ToolName, ToolInput, Context)
   end;
@@ -164,6 +167,55 @@ non_empty_string_any(Map, Keys) ->
     end,
     Keys
   ).
+
+is_workspace_write_tool_allowed(<<"Write">>, ToolInput0) ->
+  ToolInput = ensure_map(ToolInput0),
+  P0 =
+    first_non_blank([
+      maps:get(<<"file_path">>, ToolInput, undefined),
+      maps:get(file_path, ToolInput, undefined),
+      maps:get(<<"filePath">>, ToolInput, undefined),
+      maps:get(filePath, ToolInput, undefined)
+    ]),
+  is_workspace_scoped_path(P0);
+is_workspace_write_tool_allowed(<<"Edit">>, ToolInput0) ->
+  ToolInput = ensure_map(ToolInput0),
+  P0 =
+    first_non_blank([
+      maps:get(<<"file_path">>, ToolInput, undefined),
+      maps:get(file_path, ToolInput, undefined),
+      maps:get(<<"filePath">>, ToolInput, undefined),
+      maps:get(filePath, ToolInput, undefined)
+    ]),
+  is_workspace_scoped_path(P0);
+is_workspace_write_tool_allowed(_, _ToolInput) ->
+  false.
+
+is_workspace_scoped_path(undefined) -> false;
+is_workspace_scoped_path(null) -> false;
+is_workspace_scoped_path(false) -> false;
+is_workspace_scoped_path(P0) ->
+  P = string:trim(to_bin(P0)),
+  starts_with(P, <<"workspace:">>) orelse starts_with(P, <<"ws:">>).
+
+starts_with(Bin0, Prefix0) ->
+  Bin = to_bin(Bin0),
+  Prefix = to_bin(Prefix0),
+  Bs = byte_size(Bin),
+  Ps = byte_size(Prefix),
+  Bs >= Ps andalso binary:part(Bin, 0, Ps) =:= Prefix.
+
+first_non_blank([]) -> undefined;
+first_non_blank([false | Rest]) -> first_non_blank(Rest);
+first_non_blank([undefined | Rest]) -> first_non_blank(Rest);
+first_non_blank([null | Rest]) -> first_non_blank(Rest);
+first_non_blank([V0 | Rest]) ->
+  V = string:trim(to_bin(V0)),
+  case V of
+    <<>> -> first_non_blank(Rest);
+    <<"undefined">> -> first_non_blank(Rest);
+    _ -> V
+  end.
 
 mode_upper(bypass) -> <<"BYPASS">>;
 mode_upper(deny) -> <<"DENY">>;

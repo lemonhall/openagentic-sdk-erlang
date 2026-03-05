@@ -142,10 +142,12 @@ workflow_cmd(Args0) ->
 web_cmd(Args0) ->
   {Flags, _Pos} = parse_flags(Args0, #{}),
   Opts0 = runtime_opts(Flags),
+  %% Web UI uses its own HITL channel (/api/questions/answer). Avoid console prompts in server mode.
+  Opts1 = Opts0#{user_answerer => undefined, permission_gate => openagentic_permissions:default(undefined)},
   Bind0 = maps:get(web_bind, Flags, maps:get(webBind, Flags, undefined)),
   Port0 = maps:get(web_port, Flags, maps:get(webPort, Flags, undefined)),
   Opts =
-    Opts0#{
+    Opts1#{
       web_bind => to_bin(Bind0),
       web_port => Port0
     },
