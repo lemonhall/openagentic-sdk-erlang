@@ -64,9 +64,42 @@ function addMsg(who, text, meta = {}) {
   el.querySelector(".who").textContent = who;
   el.querySelector(".when").textContent = meta.when || when;
   el.querySelector(".body").textContent = text;
+  addWorkspaceDocLinks(el, text);
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
   return el;
+}
+
+function extractWorkspaceRefs(text) {
+  const s = typeof text === "string" ? text : String(text ?? "");
+  const refs = [];
+  const re = /workspace:[^\s`"'<>]+/g;
+  for (const m of s.matchAll(re)) {
+    let ref = m[0];
+    // Trim trailing punctuation commonly attached in prose.
+    ref = ref.replace(/[)\],.;:，。；：》」』】]+$/g, "");
+    if (!ref.startsWith("workspace:")) continue;
+    if (!refs.includes(ref)) refs.push(ref);
+  }
+  return refs;
+}
+
+function addWorkspaceDocLinks(msgEl, text) {
+  const sid = state.workflowSessionId;
+  if (!sid) return;
+  const refs = extractWorkspaceRefs(text);
+  if (!refs.length) return;
+
+  const actions = msgEl.querySelector(".actions");
+  for (const ref of refs) {
+    const a = document.createElement("a");
+    a.className = "btn";
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.href = `/view/workspace.html?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(ref)}`;
+    a.textContent = `打开文档：${ref}`;
+    actions.appendChild(a);
+  }
 }
 
 function prettyJson(str) {
@@ -404,7 +437,6 @@ async function cancelRun() {
     addMsg("system", `cancelling workflow_session_id=${sid} ...`);
     await postJson("/api/workflows/cancel", { workflow_session_id: sid });
     setOverall("canceled");
-    setModeHint("提示：已取消当前运行；你可以继续输入（同一局）或点“新开一局”。");
     // Keep SSE connection: it may still deliver buffered events; user can reconnect by sending again.
   } catch (err) {
     setOverall("error");

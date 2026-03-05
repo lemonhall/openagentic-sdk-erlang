@@ -98,7 +98,7 @@
       ],
       "on_pass": "menxia_review",
       "on_fail": "zhongshu_plan",
-      "max_attempts": 3,
+      "max_attempts": 20,
       "timeout_seconds": 900
     },
     {
@@ -121,7 +121,7 @@
       },
       "on_pass": "shangshu_dispatch",
       "on_fail": "zhongshu_plan",
-      "max_attempts": 3,
+      "max_attempts": 20,
       "timeout_seconds": 600
     },
     {
