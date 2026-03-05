@@ -486,7 +486,12 @@ run_one_tool_call_allowed(ToolUseId, ToolName, ToolInput1, HookCtx, State1) ->
       append_event(State1, openagentic_events:tool_result(ToolUseId, undefined, true, <<"ToolNotAllowed">>, Msg));
     true ->
       Gate = maps:get(permission_gate, State1),
-      Ctx = #{session_id => maps:get(session_id, State1), tool_use_id => ToolUseId},
+      Ctx =
+        #{
+          session_id => maps:get(session_id, State1),
+          tool_use_id => ToolUseId,
+          workspace_dir => maps:get(workspace_dir, State1, undefined)
+        },
       Approval = openagentic_permissions:approve(Gate, ToolName, ToolInput1, Ctx),
       State2 =
         case maps:get(question, Approval, undefined) of
@@ -494,6 +499,25 @@ run_one_tool_call_allowed(ToolUseId, ToolName, ToolInput1, HookCtx, State1) ->
           Q -> append_event(State1, Q)
         end,
       case maps:get(allowed, Approval, false) of
+        pending ->
+          %% Web HITL needs the question appended BEFORE blocking for an answer.
+          Question = maps:get(question, Approval, #{}),
+          Approval2 = await_permission_answer(Gate, ToolName, Question),
+          case maps:get(allowed, Approval2, false) of
+            false ->
+              Deny = maps:get(deny_message, Approval2, <<"tool use not approved">>),
+              append_event(State2, openagentic_events:tool_result(ToolUseId, undefined, true, <<"PermissionDenied">>, Deny));
+            true ->
+              ToolInput = maps:get(updated_input, Approval, maps:get(updatedInput, Approval, ToolInput1)),
+              case ToolName of
+                <<"AskUserQuestion">> ->
+                  handle_ask_user_question(ToolUseId, ToolName, ToolInput, HookCtx, State2);
+                <<"Task">> ->
+                  handle_task(ToolUseId, ToolName, ToolInput, HookCtx, State2);
+                _ ->
+                  run_tool(ToolUseId, ToolName, ToolInput, HookCtx, State2)
+              end
+          end;
         false ->
           Deny = maps:get(deny_message, Approval, <<"tool use not approved">>),
           append_event(State2, openagentic_events:tool_result(ToolUseId, undefined, true, <<"PermissionDenied">>, Deny));
@@ -510,6 +534,23 @@ run_one_tool_call_allowed(ToolUseId, ToolName, ToolInput1, HookCtx, State1) ->
       end
   end
   .
+
+await_permission_answer(Gate0, ToolName0, Question0) ->
+  Gate = ensure_map(Gate0),
+  ToolName = to_bin(ToolName0),
+  Question = ensure_map(Question0),
+  case maps:get(user_answerer, Gate, undefined) of
+    F when is_function(F, 1) ->
+      Answer = F(Question),
+      openagentic_permissions:finalize_prompt(ToolName, Question, Answer);
+    _ ->
+      %% Should be unreachable: prompt mode without userAnswerer is denied earlier.
+      #{
+        allowed => false,
+        deny_message => <<"PermissionGate(mode=PROMPT) requires userAnswerer">>,
+        question => Question
+      }
+  end.
 
 run_tool(ToolUseId, ToolName0, ToolInput0, HookCtx, State0) ->
   ToolName = to_bin(ToolName0),

@@ -18,10 +18,29 @@
         <section class="left">
           <div class="panelTitle">流程图</div>
           <div class="diagram" id="diagram">
-            <div class="node" data-step="taizi_intake">
+            <div class="node" data-step="taizi_route">
               <div class="nodeTitle">太子</div>
-              <div class="nodeSub">分拣 / 立案</div>
-              <div class="badge" data-badge="taizi_intake">pending</div>
+              <div class="nodeSub">路由裁决</div>
+              <div class="badge" data-badge="taizi_route">pending</div>
+            </div>
+
+            <div class="arrow">↓</div>
+
+            <div class="branches">
+              <div class="branchCol">
+                <div class="node small" data-step="taizi_solo">
+                  <div class="nodeTitle">太子</div>
+                  <div class="nodeSub">独办回信</div>
+                  <div class="badge" data-badge="taizi_solo">pending</div>
+                </div>
+              </div>
+              <div class="branchCol">
+                <div class="node small" data-step="taizi_intake">
+                  <div class="nodeTitle">太子</div>
+                  <div class="nodeSub">分拣 / 立案</div>
+                  <div class="badge" data-badge="taizi_intake">pending</div>
+                </div>
+              </div>
             </div>
 
             <div class="arrow">↓</div>
@@ -113,6 +132,7 @@
             <input id="prompt" class="prompt" placeholder="下达圣旨（输入你的需求）..." />
             <button type="submit" id="btnSend" class="btn primary">发送</button>
             <button type="button" id="btnNewRun" class="btn">新开一局</button>
+            <button type="button" id="btnCancel" class="btn danger">取消本局</button>
           </form>
           <div class="hint" id="modeHint">提示：默认在同一局里继续；点“新开一局”才会清空上下文</div>
         </section>

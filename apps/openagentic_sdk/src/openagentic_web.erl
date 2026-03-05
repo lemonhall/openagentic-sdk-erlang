@@ -15,6 +15,7 @@ start(Opts0) ->
   Opts = ensure_map(Opts0),
   ok = ensure_cowboy_started(),
   ok = ensure_q_started(),
+  ok = ensure_mgr_started(),
 
   Bind0 = ensure_list(maps:get(web_bind, Opts, maps:get(bind, Opts, ?DEFAULT_BIND))),
   Bind1 = string:trim(Bind0),
@@ -45,6 +46,7 @@ start(Opts0) ->
         {"/assets/[...]", openagentic_web_static, State},
         {"/api/workflows/start", openagentic_web_api_workflows_start, State},
         {"/api/workflows/continue", openagentic_web_api_workflows_continue, State},
+        {"/api/workflows/cancel", openagentic_web_api_workflows_cancel, State},
         {"/api/questions/answer", openagentic_web_api_questions_answer, State},
         {"/api/sessions/:sid/events", openagentic_web_api_sse, State},
         {"/api/health", openagentic_web_api_health, State}
@@ -81,6 +83,18 @@ ensure_q_started() ->
         {ok, _Pid} -> ok;
         {error, {already_started, _}} -> ok;
         Other -> erlang:error({question_broker_start_failed, Other})
+      end;
+    _ ->
+      ok
+  end.
+
+ensure_mgr_started() ->
+  case whereis(openagentic_workflow_mgr) of
+    undefined ->
+      case openagentic_workflow_mgr:start_link() of
+        {ok, _Pid} -> ok;
+        {error, {already_started, _}} -> ok;
+        Other -> erlang:error({workflow_mgr_start_failed, Other})
       end;
     _ ->
       ok

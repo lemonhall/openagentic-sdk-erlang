@@ -34,8 +34,9 @@ init(Req0, State0) ->
               web_hil => true,
               strict_unknown_fields => true
             },
-          case openagentic_workflow_engine:start(ProjectDir, ensure_list(Dsl), Prompt, EngineOpts0) of
-            {ok, Res} ->
+          case openagentic_workflow_mgr:start_workflow(ProjectDir, ensure_list(Dsl), Prompt, EngineOpts0) of
+            {ok, Res0} ->
+              Res = ensure_map(Res0),
               WfId = maps:get(workflow_id, Res, <<>>),
               WfSid = maps:get(workflow_session_id, Res, <<>>),
               WfDir = openagentic_session_store:session_dir(SessionRoot, ensure_list(WfSid)),

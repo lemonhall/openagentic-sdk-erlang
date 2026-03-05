@@ -6,7 +6,8 @@
   prompt/0,
   prompt/1,
   default/1,
-  approve/4
+  approve/4,
+  finalize_prompt/3
 ]).
 
 -type permission_mode() :: bypass | deny | prompt | default.
@@ -74,7 +75,7 @@ approve_mode(deny, _Gate, ToolName, _ToolInput, _Context) ->
   #{allowed => false, deny_message => <<"PermissionGate(mode=DENY) denied tool '", ToolName/binary, "'">>};
 approve_mode(default, Gate, ToolName, ToolInput, Context) ->
   Safe = safe_tools(),
-  case {lists:member(ToolName, Safe), is_workspace_write_tool_allowed(ToolName, ToolInput)} of
+  case {lists:member(ToolName, Safe), is_workspace_write_tool_allowed(ToolName, ToolInput, Context)} of
     {true, _} ->
       case safe_schema_ok(ToolName, ToolInput) of
         true -> #{allowed => true};
@@ -101,22 +102,9 @@ approve_mode(prompt, Gate, ToolName, _ToolInput, Context) ->
   },
   case maps:get(user_answerer, Gate, undefined) of
     F when is_function(F, 1) ->
-      Answer = F(Question),
-      AnswerTxt = truncate_bin(string:trim(to_bin(Answer)), 240),
-      Allowed = parse_allowed(Answer),
       #{
-        allowed => Allowed,
-        question => Question,
-        deny_message =>
-          case Allowed of
-            true ->
-              undefined;
-            false ->
-              case byte_size(AnswerTxt) > 0 of
-                true -> <<"PermissionGate: user answered '", AnswerTxt/binary, "'; denied tool '", ToolName/binary, "'">>;
-                false -> <<"PermissionGate: user denied tool '", ToolName/binary, "'">>
-              end
-          end
+        allowed => pending,
+        question => Question
       };
     _ ->
       ModeUpper = mode_upper(maps:get(mode, Gate, prompt)),
@@ -126,6 +114,33 @@ approve_mode(prompt, Gate, ToolName, _ToolInput, Context) ->
           <<"PermissionGate(mode=", ModeUpper/binary, ") requires userAnswerer, but none is configured for tool '", ToolName/binary, "'">>
       }
   end.
+
+%% Finalize a pending prompt after an answer is obtained.
+%%
+%% Returns Kotlin-aligned shape:
+%% - allowed: boolean()
+%% - deny_message: binary() | undefined
+%% - question: map()
+-spec finalize_prompt(any(), map(), any()) -> map().
+finalize_prompt(ToolName0, Question0, Answer0) ->
+  ToolName = to_bin(ToolName0),
+  Question = ensure_map(Question0),
+  AnswerTxt = truncate_bin(string:trim(to_bin(Answer0)), 240),
+  Allowed = parse_allowed(Answer0),
+  #{
+    allowed => Allowed,
+    question => Question,
+    deny_message =>
+      case Allowed of
+        true ->
+          undefined;
+        false ->
+          case byte_size(AnswerTxt) > 0 of
+            true -> <<"PermissionGate: user answered '", AnswerTxt/binary, "'; denied tool '", ToolName/binary, "'">>;
+            false -> <<"PermissionGate: user denied tool '", ToolName/binary, "'">>
+          end
+      end
+  }.
 
 safe_tools() ->
   [
@@ -168,8 +183,9 @@ non_empty_string_any(Map, Keys) ->
     Keys
   ).
 
-is_workspace_write_tool_allowed(<<"Write">>, ToolInput0) ->
+is_workspace_write_tool_allowed(<<"Write">>, ToolInput0, Context0) ->
   ToolInput = ensure_map(ToolInput0),
+  Context = ensure_map(Context0),
   P0 =
     first_non_blank([
       maps:get(<<"file_path">>, ToolInput, undefined),
@@ -177,9 +193,10 @@ is_workspace_write_tool_allowed(<<"Write">>, ToolInput0) ->
       maps:get(<<"filePath">>, ToolInput, undefined),
       maps:get(filePath, ToolInput, undefined)
     ]),
-  is_workspace_scoped_path(P0);
-is_workspace_write_tool_allowed(<<"Edit">>, ToolInput0) ->
+  is_workspace_scoped_path(P0) orelse is_workspace_scoped_path_by_resolution(P0, Context);
+is_workspace_write_tool_allowed(<<"Edit">>, ToolInput0, Context0) ->
   ToolInput = ensure_map(ToolInput0),
+  Context = ensure_map(Context0),
   P0 =
     first_non_blank([
       maps:get(<<"file_path">>, ToolInput, undefined),
@@ -187,8 +204,8 @@ is_workspace_write_tool_allowed(<<"Edit">>, ToolInput0) ->
       maps:get(<<"filePath">>, ToolInput, undefined),
       maps:get(filePath, ToolInput, undefined)
     ]),
-  is_workspace_scoped_path(P0);
-is_workspace_write_tool_allowed(_, _ToolInput) ->
+  is_workspace_scoped_path(P0) orelse is_workspace_scoped_path_by_resolution(P0, Context);
+is_workspace_write_tool_allowed(_, _ToolInput, _Context) ->
   false.
 
 is_workspace_scoped_path(undefined) -> false;
@@ -197,6 +214,35 @@ is_workspace_scoped_path(false) -> false;
 is_workspace_scoped_path(P0) ->
   P = string:trim(to_bin(P0)),
   starts_with(P, <<"workspace:">>) orelse starts_with(P, <<"ws:">>).
+
+is_workspace_scoped_path_by_resolution(undefined, _Context) -> false;
+is_workspace_scoped_path_by_resolution(null, _Context) -> false;
+is_workspace_scoped_path_by_resolution(false, _Context) -> false;
+is_workspace_scoped_path_by_resolution(P0, Context0) ->
+  Context = ensure_map(Context0),
+  WorkspaceDir =
+    first_non_blank([
+      maps:get(workspace_dir, Context, undefined),
+      maps:get(workspaceDir, Context, undefined),
+      maps:get(<<"workspace_dir">>, Context, undefined),
+      maps:get(<<"workspaceDir">>, Context, undefined)
+    ]),
+  case WorkspaceDir of
+    undefined ->
+      false;
+    _ ->
+      P = string:trim(to_bin(P0)),
+      case byte_size(P) of
+        0 ->
+          false;
+        _ ->
+          %% Resolve like the actual Write/Edit tools: relative paths go under workspace.
+          case openagentic_fs:resolve_write_path(WorkspaceDir, P) of
+            {ok, _Abs} -> true;
+            _ -> false
+          end
+      end
+  end.
 
 starts_with(Bin0, Prefix0) ->
   Bin = to_bin(Bin0),

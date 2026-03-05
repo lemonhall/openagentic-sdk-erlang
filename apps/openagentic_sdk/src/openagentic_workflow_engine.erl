@@ -418,7 +418,7 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
       Failures = maps:get(StepId, maps:get(step_failures, State0, #{}), []),
       ControllerText = maps:get(controller_input, State0, <<>>),
       UserPrompt = build_user_prompt(PromptText, ControllerText, InputText, Attempt, Failures),
-      ExecRes = run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw),
+      ExecRes = run_step_executor_with_timeout(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw),
       case ExecRes of
         {ok, StepOut0} ->
           StepOut = to_bin(StepOut0),
@@ -452,7 +452,14 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
           end;
         {error, Reason} ->
           ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"executor">>, [to_bin(Reason)])),
-          finalize(State0, <<"failed">>, to_bin(Reason))
+          NextFail = step_ref(StepRaw, [<<"on_fail">>, on_fail]),
+          ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"executor_failed">>)),
+          case NextFail of
+            null -> finalize(State0, <<"failed">>, to_bin(Reason));
+            _ ->
+              StateFail = put_in(State0, [step_failures, StepId], [to_bin(Reason)]),
+              run_loop(NextFail, StateFail)
+          end
       end;
     {error, Reason} ->
       ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"prompt">>, [to_bin(Reason)])),
@@ -460,6 +467,34 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
   end.
 
 %% ---- executor ----
+
+run_step_executor_with_timeout(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw) ->
+  TimeoutMs = step_timeout_ms(StepRaw, State0),
+  Parent = self(),
+  Ref = make_ref(),
+  {Pid, MRef} =
+    spawn_monitor(
+      fun () ->
+        Res = run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw),
+        Parent ! {step_exec_result, Ref, Res}
+      end
+    ),
+  receive
+    {step_exec_result, Ref, Res0} ->
+      _ = erlang:demonitor(MRef, [flush]),
+      Res0;
+    {'DOWN', MRef, process, Pid, Reason} ->
+      %% Result and DOWN may race; allow a small grace window to pick up the result if it was sent.
+      receive
+        {step_exec_result, Ref, Res1} -> Res1
+      after 50 ->
+        {error, {executor_crashed, Reason}}
+      end
+  after TimeoutMs ->
+    _ = catch exit(Pid, kill),
+    _ = erlang:demonitor(MRef, [flush]),
+    {error, {step_timeout, TimeoutMs}}
+  end.
 
 run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw) ->
   Opts = maps:get(opts, State0, #{}),
@@ -489,12 +524,13 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
   MaxSteps = step_max_steps(StepRaw, State0, maps:get(max_steps, Opts0, ?DEFAULT_MAX_STEPS)),
   {Gate, AllowedTools} = tool_policy_for_step(StepRaw, State0),
   WfId = wf_id(State0),
+  WfSid = to_bin(maps:get(workflow_session_id, State0, <<>>)),
   StepSessionIdBin = to_bin(StepSessionId0),
   %% Bridge step events (tool.use/tool.result/user.question/assistant.* etc.) into the workflow session,
   %% so the web UI can observe and answer HITL prompts.
    BridgeSink =
-     fun (Ev0) ->
-       Ev = ensure_map(Ev0),
+      fun (Ev0) ->
+        Ev = ensure_map(Ev0),
        StepSeq = maps:get(seq, Ev, maps:get(<<"seq">>, Ev, undefined)),
        StepTs = maps:get(ts, Ev, maps:get(<<"ts">>, Ev, undefined)),
       %% NOTE: jsone:encode/1 crashes on `undefined`. Step events like assistant.delta
@@ -511,8 +547,9 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
           _ -> Extra1#{step_ts => StepTs}
         end,
        _ = append_wf_event(State0, openagentic_events:workflow_step_event(WfId, StepId, StepSessionIdBin, Ev, Extra)),
-       ok
-     end,
+       _ = (catch openagentic_workflow_mgr:note_progress(WfSid, Ev)),
+        ok
+      end,
   WebAnswerer0 = maps:get(web_user_answerer, Opts0, undefined),
   WebAnswerer =
     case WebAnswerer0 of
@@ -998,6 +1035,14 @@ step_max_steps(StepRaw, State0, Fallback) ->
   DefMax = get_any(Defaults, [<<"max_steps">>, max_steps], undefined),
   int_or_default(StepMax, int_or_default(DefMax, int_or_default(Fallback, ?DEFAULT_MAX_STEPS))).
 
+step_timeout_ms(StepRaw, State0) ->
+  StepSec = get_any(StepRaw, [<<"timeout_seconds">>, timeout_seconds], undefined),
+  Defaults = ensure_map(maps:get(defaults, State0, #{})),
+  DefSec = get_any(Defaults, [<<"timeout_seconds">>, timeout_seconds], undefined),
+  Sec0 = int_or_default(StepSec, int_or_default(DefSec, 600)),
+  Sec = clamp_int(Sec0, 1, 3600),
+  Sec * 1000.
+
 %% ---- file/hash helpers ----
 
 read_workflow_source(ProjectDir0, RelPath0) ->
@@ -1076,6 +1121,11 @@ int_or_default(V, Default) ->
       end;
     _ -> Default
   end.
+
+clamp_int(I, Min, Max) when is_integer(I) ->
+  erlang:min(Max, erlang:max(Min, I));
+clamp_int(_Other, Min, _Max) ->
+  Min.
 
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);

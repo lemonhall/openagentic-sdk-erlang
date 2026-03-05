@@ -7,8 +7,9 @@
 - `title`（一句话）
 - `owner_role`（建议：`implement` 或 `verify`，必要时也可 `draft/dispatch`）
 - `definition_of_done`（string[]，可验证）
-- `allowed_tools`（string[]，例如 `Read/Grep/Write/Edit/Bash`）
 - `needs_user_confirm`（boolean；任何可能破坏性/敏感操作应为 true）
 
-只输出 JSON。
+规则：
+- 不要在任务里写“允许/禁止使用哪些工具”：工具权限由运行时 PermissionGate 统一控制；任务只需要写清楚产物与 DoD
 
+只输出 JSON。

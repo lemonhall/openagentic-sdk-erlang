@@ -1,7 +1,7 @@
 {
   "workflow_version": "1.0",
   "name": "three-provinces-six-ministries.v1",
-  "description": "Local-first hard workflow aligned with 三省六部: 太子 → 中书省 → 门下省 → 尚书省 → 六部 → 尚书省汇总 → 太子回奏",
+  "description": "Local-first workflow aligned with 三省六部 (with routing): 太子路由(独办/全朝会) → (全朝会)太子 → 中书省 → 门下省 → 尚书省 → 六部 → 尚书省汇总 → 太子回奏",
   "defaults": {
     "max_attempts": 3,
     "timeout_seconds": 900,
@@ -24,6 +24,43 @@
     "libu_hr": { "purpose": "吏部：人事/协作/流程纪律与职责分派（偏制度）" }
   },
   "steps": [
+    {
+      "id": "taizi_route",
+      "role": "taizi",
+      "input": { "type": "controller_input" },
+      "prompt": { "type": "file", "path": "workflows/prompts/taizi_route.md" },
+      "output_contract": {
+        "type": "decision",
+        "allowed": ["taizi_only", "full_court"],
+        "format": "json",
+        "fields": ["decision", "reason"]
+      },
+      "on_decision": {
+        "taizi_only": "taizi_solo",
+        "full_court": "taizi_intake"
+      },
+      "on_pass": "taizi_intake",
+      "on_fail": "taizi_route",
+      "max_attempts": 2,
+      "timeout_seconds": 300
+    },
+    {
+      "id": "taizi_solo",
+      "role": "taizi",
+      "input": { "type": "controller_input" },
+      "prompt": { "type": "file", "path": "workflows/prompts/taizi_solo.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["对皇上的回信"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 800 }
+      ],
+      "on_pass": null,
+      "on_fail": "taizi_solo",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
     {
       "id": "taizi_intake",
       "role": "taizi",
@@ -100,7 +137,7 @@
       "prompt": { "type": "file", "path": "workflows/prompts/shangshu_dispatch.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
         "deny": ["Bash", "Task"]
       },
       "output_contract": {
@@ -112,7 +149,6 @@
               "title": "short",
               "ministry": "hubu|libu|bingbu|xingbu|gongbu|libu_hr",
               "definition_of_done": ["..."],
-              "allowed_tools": ["Read", "Grep"],
               "needs_user_confirm": false
             }
           ]
@@ -150,7 +186,7 @@
       "prompt": { "type": "file", "path": "workflows/prompts/libu_docs.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
         "deny": ["Bash", "Task"]
       },
       "output_contract": {
@@ -172,7 +208,7 @@
       "prompt": { "type": "file", "path": "workflows/prompts/bingbu_engineering.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
         "deny": ["Task"]
       },
       "output_contract": {
@@ -211,7 +247,7 @@
       "prompt": { "type": "file", "path": "workflows/prompts/gongbu_infra.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
         "deny": ["Bash", "Task"]
       },
       "output_contract": {
@@ -261,7 +297,7 @@
       "prompt": { "type": "file", "path": "workflows/prompts/shangshu_aggregate.md" },
       "output_contract": {
         "type": "markdown_sections",
-        "required": ["汇总", "未决事项", "给太子的回奏要点"]
+        "required": ["汇总结论", "行动建议", "需要皇上裁决", "给太子的内部指令"]
       },
       "guards": [
         { "type": "max_words", "value": 700 }
@@ -278,10 +314,10 @@
       "prompt": { "type": "file", "path": "workflows/prompts/taizi_reply.md" },
       "output_contract": {
         "type": "markdown_sections",
-        "required": ["对皇上的回信", "执行摘要", "如何验证", "后续建议"]
+        "required": ["对皇上的回信"]
       },
       "guards": [
-        { "type": "max_words", "value": 600 }
+        { "type": "max_words", "value": 700 }
       ],
       "on_pass": null,
       "on_fail": "taizi_reply",

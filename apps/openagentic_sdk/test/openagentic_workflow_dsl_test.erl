@@ -7,7 +7,7 @@ loads_repo_fixture_test() ->
   {ok, Wf} = openagentic_workflow_dsl:load_and_validate(Root, "workflows/three-provinces-six-ministries.v1.json", #{}),
   ?assertEqual(<<"1.0">>, maps:get(<<"workflow_version">>, Wf)),
   ?assert(maps:is_key(<<"steps_by_id">>, Wf)),
-  ?assertEqual(<<"taizi_intake">>, maps:get(<<"start_step_id">>, Wf)).
+  ?assertEqual(<<"taizi_route">>, maps:get(<<"start_step_id">>, Wf)).
 
 missing_prompt_file_is_error_test() ->
   Root = test_root(),
@@ -105,4 +105,3 @@ test_root() ->
 write_file(Path, Bin) ->
   ok = filelib:ensure_dir(filename:join([filename:dirname(Path), "x"])),
   file:write_file(Path, Bin).
-
