@@ -23,8 +23,14 @@ events_schema_persisted_meta_test() ->
       Sid,
       openagentic_events:runtime_error(<<"provider">>, <<"ProviderError">>, <<"oops">>, <<"prov">>, <<"tid">>)
     ),
+  {ok, Ev8} =
+    openagentic_session_store:append_event(
+      Root,
+      Sid,
+      openagentic_events:workflow_init(<<"wf1">>, <<"wfn">>, <<"workflows/x.json">>, <<"sha">>, #{})
+    ),
 
-  lists:foreach(fun assert_has_meta/1, [Ev1, Ev2, Ev3, Ev4, Ev5, Ev6, Ev7]),
+  lists:foreach(fun assert_has_meta/1, [Ev1, Ev2, Ev3, Ev4, Ev5, Ev6, Ev7, Ev8]),
 
   ?assertEqual(<<"result">>, maps:get(type, Ev6)),
   ?assert(maps:is_key(final_text, Ev6)),
@@ -37,6 +43,7 @@ events_schema_persisted_meta_test() ->
   %% tool.result success should not carry error fields.
   ?assertNot(maps:is_key(error_type, Ev4)),
   ?assertNot(maps:is_key(error_message, Ev4)),
+  ?assertEqual(<<"workflow.init">>, maps:get(type, Ev8)),
   ok.
 
 events_schema_optional_fields_omitted_test() ->
@@ -61,4 +68,3 @@ assert_has_meta(E) ->
 test_root() ->
   {ok, Cwd} = file:get_cwd(),
   filename:join([Cwd, ".tmp", "eunit", "openagentic_events_schema_test"]).
-

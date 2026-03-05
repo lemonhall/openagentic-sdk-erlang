@@ -1,5 +1,11 @@
 # OpenAgentic 远程 Agent Host 协议（HTTP + SSE）
 
+> 状态：**未来实现 / 留档规范**（当前仓库未实现，v1 不依赖）。
+>
+> 本地优先（控制面 + 硬流程 DSL）见：
+> - `docs/spec/workflow-engine.md`
+> - `docs/spec/workflow-engine.zh_ch.md`
+
 > 中文说明版。英文规范版见 `docs/spec/agent-host-protocol.md`（建议以英文版为“规范文本”，中文用于解释与取舍记录）。
 
 ## 0. 我们到底在解决什么问题？

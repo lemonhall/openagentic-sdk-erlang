@@ -31,6 +31,8 @@ main(Args0) ->
       run_cmd(Rest);
     ["chat" | Rest] ->
       chat_cmd(Rest);
+    ["workflow" | Rest] ->
+      workflow_cmd(Rest);
     ["-h"] ->
       usage();
     ["--help"] ->
@@ -103,12 +105,45 @@ chat_loop(SessionId0, Opts0) ->
       end
   end.
 
+workflow_cmd(Args0) ->
+  {Flags, Pos} = parse_flags(Args0, #{}),
+  Prompt0 = string:trim(iolist_to_binary(lists:join(" ", Pos))),
+  case byte_size(Prompt0) > 0 of
+    false ->
+      io:format("Missing prompt.~n~n", []),
+      usage(),
+      halt(2);
+    true ->
+      Dsl0 = maps:get(workflow_dsl, Flags, maps:get(workflowDsl, Flags, undefined)),
+      Dsl1 = string:trim(to_bin(Dsl0)),
+      Dsl =
+        case Dsl1 of
+          <<>> -> <<"workflows/three-provinces-six-ministries.v1.json">>;
+          <<"undefined">> -> <<"workflows/three-provinces-six-ministries.v1.json">>;
+          _ -> Dsl1
+        end,
+      Opts = runtime_opts(Flags),
+      ProjectDir = ensure_list(maps:get(project_dir, Opts, ".")),
+      EngineOpts = Opts#{strict_unknown_fields => true},
+      case openagentic_workflow_engine:run(ProjectDir, to_list(Dsl), Prompt0, EngineOpts) of
+        {ok, Res} ->
+          WfId = to_bin(maps:get(workflow_id, Res, <<>>)),
+          Sid = to_bin(maps:get(workflow_session_id, Res, <<>>)),
+          io:format("~nworkflow_id=~s~nworkflow_session_id=~s~n", [to_list(WfId), to_list(Sid)]),
+          ok;
+        {error, Reason} ->
+          io:format("~nERROR: ~p~n", [Reason]),
+          halt(1)
+      end
+  end.
+
 usage() ->
   io:format(
     "openagentic (Erlang)\\n\\n"
     "Usage:\\n"
     "  openagentic run [flags] <prompt>\\n"
-    "  openagentic chat [flags]\\n\\n"
+    "  openagentic chat [flags]\\n"
+    "  openagentic workflow [flags] [--dsl <path>] <prompt>\\n\\n"
     "Defaults:\\n"
     "  - Reads .env in project dir (if present)\\n"
     "  - Project dir defaults to current directory\\n"
@@ -135,7 +170,8 @@ usage() ->
     "  --max-steps <1..200>\\n"
     "  --context-limit <n>\\n"
     "  --reserved <n>\\n"
-    "  --input-limit <n>\\n\\n"
+    "  --input-limit <n>\\n"
+    "  --dsl <path> (workflow DSL; default: workflows/three-provinces-six-ministries.v1.json)\\n\\n"
     "Env/.env keys:\\n"
     "  OPENAI_API_KEY (required)\\n"
     "  OPENAI_BASE_URL (optional)\\n"
@@ -476,6 +512,10 @@ parse_flags(["--input-limit", V0 | Rest], Acc) ->
     _ ->
       parse_flags(Rest, Acc)
   end;
+parse_flags(["--dsl", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{workflow_dsl => to_bin(V)});
+parse_flags(["--workflow", V | Rest], Acc) ->
+  parse_flags(Rest, Acc#{workflow_dsl => to_bin(V)});
 parse_flags(["-h" | _Rest], _Acc) ->
   usage(),
   halt(0);

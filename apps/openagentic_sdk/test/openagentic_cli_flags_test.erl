@@ -64,6 +64,16 @@ compaction_flags_flow_into_runtime_opts_test() ->
     end
   ).
 
+workflow_dsl_flag_parses_test() ->
+  with_cli_env(
+    fun (Tmp) ->
+      {Flags, Pos} = openagentic_cli:parse_flags_for_test(["--project-dir", Tmp, "--dsl", "workflows/w.json", "hello"]),
+      ?assertEqual(["hello"], Pos),
+      ?assertEqual(<<"workflows/w.json">>, maps:get(workflow_dsl, Flags)),
+      ok
+    end
+  ).
+
 with_cli_env(Fun) when is_function(Fun, 1) ->
   OldKey = os:getenv("OPENAI_API_KEY"),
   OldModel = os:getenv("OPENAI_MODEL"),

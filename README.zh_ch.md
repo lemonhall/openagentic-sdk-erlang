@@ -21,6 +21,8 @@ English README: [`README.md`](README.md)
 
 ## 规范与协议
 
+- 本地控制面 + 硬流程 DSL（三省六部）：`docs/spec/workflow-engine.md`
+- 中文说明：`docs/spec/workflow-engine.zh_ch.md`
 - 远程 subagent（HTTP + SSE）：`docs/spec/agent-host-protocol.md`
 - 中文说明：`docs/spec/agent-host-protocol.zh_ch.md`
 
@@ -64,6 +66,8 @@ rebar3 shell
 openagentic_cli:main(["chat"]).
 %% 或：
 openagentic_cli:main(["run", "你好，Erlang!"]).
+%% Workflow（硬流程，DSL 驱动）：
+openagentic_cli:main(["workflow", "--dsl", "workflows/three-provinces-six-ministries.v1.json", "请按三省六部流程完成：..."]).
 ```
 
 ## 配置（.env）

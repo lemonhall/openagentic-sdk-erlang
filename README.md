@@ -22,6 +22,8 @@ This project is under active development. Expect some rough edges, but the repo 
 
 ## Specs
 
+- Local control plane + workflow DSL (三省六部): `docs/spec/workflow-engine.md`
+- 中文说明：`docs/spec/workflow-engine.zh_ch.md`
 - Remote subagents (HTTP + SSE): `docs/spec/agent-host-protocol.md`
 - 中文说明：`docs/spec/agent-host-protocol.zh_ch.md`
 
@@ -65,6 +67,8 @@ Then in the Erlang shell:
 openagentic_cli:main(["chat"]).
 %% Or:
 openagentic_cli:main(["run", "Hello from Erlang!"]).
+%% Workflow (hard flow, DSL-driven):
+openagentic_cli:main(["workflow", "--dsl", "workflows/three-provinces-six-ministries.v1.json", "Plan and implement X"]).
 ```
 
 ## Configuration (.env)

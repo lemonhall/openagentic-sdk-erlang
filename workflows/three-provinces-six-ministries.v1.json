@@ -1,0 +1,282 @@
+{
+  "workflow_version": "1.0",
+  "name": "three-provinces-six-ministries.v1",
+  "description": "Local-first hard workflow aligned with 三省六部: 太子 → 中书省 → 门下省 → 尚书省 → 六部 → 尚书省汇总 → 太子回奏",
+  "defaults": {
+    "max_attempts": 3,
+    "timeout_seconds": 900,
+    "tool_policy": {
+      "mode": "default",
+      "allow": ["List", "Read", "Glob", "Grep", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
+      "deny": ["Write", "Edit", "Bash", "Task"]
+    }
+  },
+  "roles": {
+    "taizi": { "purpose": "太子：分拣旨意，转交中书省；最终回奏" },
+    "zhongshu": { "purpose": "中书省：接旨→规划→拆解子任务（不可跳步）" },
+    "menxia": { "purpose": "门下省：审议方案→准奏/封驳（硬门槛）" },
+    "shangshu": { "purpose": "尚书省：派发任务→协调六部→汇总回奏" },
+    "hubu": { "purpose": "户部：数据/事实/账目/清单与统计" },
+    "libu": { "purpose": "礼部：文档/说明/对外表达与格式" },
+    "bingbu": { "purpose": "兵部：工程实现/落地执行（代码与系统）" },
+    "xingbu": { "purpose": "刑部：合规/安全/权限/风险审计" },
+    "gongbu": { "purpose": "工部：基建/工程化/脚手架/运维与工具链" },
+    "libu_hr": { "purpose": "吏部：人事/协作/流程纪律与职责分派（偏制度）" }
+  },
+  "steps": [
+    {
+      "id": "taizi_intake",
+      "role": "taizi",
+      "input": { "type": "controller_input" },
+      "prompt": { "type": "file", "path": "workflows/prompts/taizi_intake.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["圣旨摘要", "任务目标", "约束与禁令", "交接给中书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 900 }
+      ],
+      "on_pass": "zhongshu_plan",
+      "on_fail": "taizi_intake",
+      "max_attempts": 3,
+      "timeout_seconds": 900
+    },
+    {
+      "id": "zhongshu_plan",
+      "role": "zhongshu",
+      "input": { "type": "step_output", "step_id": "taizi_intake" },
+      "prompt": { "type": "file", "path": "workflows/prompts/zhongshu_plan.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["总体方案", "子任务拆解", "DoD", "风险与假设"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 1100 }
+      ],
+      "on_pass": "menxia_review",
+      "on_fail": "zhongshu_plan",
+      "max_attempts": 3,
+      "timeout_seconds": 900
+    },
+    {
+      "id": "menxia_review",
+      "role": "menxia",
+      "input": { "type": "step_output", "step_id": "zhongshu_plan" },
+      "prompt": { "type": "file", "path": "workflows/prompts/menxia_review.md" },
+      "output_contract": {
+        "type": "decision",
+        "allowed": ["approve", "reject"],
+        "format": "json",
+        "fields": ["decision", "reasons", "required_changes"]
+      },
+      "guards": [
+        { "type": "decision_requires_reasons", "when": "reject" }
+      ],
+      "on_pass": "shangshu_dispatch",
+      "on_fail": "zhongshu_plan",
+      "max_attempts": 3,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "shangshu_dispatch",
+      "role": "shangshu",
+      "input": {
+        "type": "merge",
+        "sources": [
+          { "type": "step_output", "step_id": "zhongshu_plan" },
+          { "type": "step_output", "step_id": "menxia_review" }
+        ]
+      },
+      "prompt": { "type": "file", "path": "workflows/prompts/shangshu_dispatch.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "deny": ["Bash", "Task"]
+      },
+      "output_contract": {
+        "type": "json_object",
+        "schema_hint": {
+          "tasks": [
+            {
+              "id": "t1",
+              "title": "short",
+              "ministry": "hubu|libu|bingbu|xingbu|gongbu|libu_hr",
+              "definition_of_done": ["..."],
+              "allowed_tools": ["Read", "Grep"],
+              "needs_user_confirm": false
+            }
+          ]
+        }
+      },
+      "guards": [
+        { "type": "regex_must_match", "pattern": "\"tasks\"\\s*:" }
+      ],
+      "on_pass": "hubu_data",
+      "on_fail": "shangshu_dispatch",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "hubu_data",
+      "role": "hubu",
+      "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
+      "prompt": { "type": "file", "path": "workflows/prompts/hubu_data.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["处理结果", "产物/引用", "交接给尚书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 700 }
+      ],
+      "on_pass": "libu_docs",
+      "on_fail": "hubu_data",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "libu_docs",
+      "role": "libu",
+      "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
+      "prompt": { "type": "file", "path": "workflows/prompts/libu_docs.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "deny": ["Bash", "Task"]
+      },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["处理结果", "产物/引用", "交接给尚书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 700 }
+      ],
+      "on_pass": "bingbu_engineering",
+      "on_fail": "libu_docs",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "bingbu_engineering",
+      "role": "bingbu",
+      "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
+      "prompt": { "type": "file", "path": "workflows/prompts/bingbu_engineering.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "deny": ["Task"]
+      },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["处理结果", "涉及文件", "待核验清单", "交接给尚书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 800 }
+      ],
+      "on_pass": "xingbu_compliance",
+      "on_fail": "bingbu_engineering",
+      "max_attempts": 2,
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "xingbu_compliance",
+      "role": "xingbu",
+      "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
+      "prompt": { "type": "file", "path": "workflows/prompts/xingbu_compliance.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["处理结果", "风险清单", "建议的硬门槛", "交接给尚书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 800 }
+      ],
+      "on_pass": "gongbu_infra",
+      "on_fail": "xingbu_compliance",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "gongbu_infra",
+      "role": "gongbu",
+      "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
+      "prompt": { "type": "file", "path": "workflows/prompts/gongbu_infra.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit"],
+        "deny": ["Bash", "Task"]
+      },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["处理结果", "产物/引用", "运行与运维说明", "交接给尚书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 800 }
+      ],
+      "on_pass": "libu_hr_people",
+      "on_fail": "gongbu_infra",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "libu_hr_people",
+      "role": "libu_hr",
+      "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
+      "prompt": { "type": "file", "path": "workflows/prompts/libu_hr_people.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["处理结果", "职责与协作约定", "交接给尚书省"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 700 }
+      ],
+      "on_pass": "shangshu_aggregate",
+      "on_fail": "libu_hr_people",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "shangshu_aggregate",
+      "role": "shangshu",
+      "input": {
+        "type": "merge",
+        "sources": [
+          { "type": "step_output", "step_id": "shangshu_dispatch" },
+          { "type": "step_output", "step_id": "hubu_data" },
+          { "type": "step_output", "step_id": "libu_docs" },
+          { "type": "step_output", "step_id": "bingbu_engineering" },
+          { "type": "step_output", "step_id": "xingbu_compliance" },
+          { "type": "step_output", "step_id": "gongbu_infra" },
+          { "type": "step_output", "step_id": "libu_hr_people" }
+        ]
+      },
+      "prompt": { "type": "file", "path": "workflows/prompts/shangshu_aggregate.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["汇总", "未决事项", "给太子的回奏要点"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 700 }
+      ],
+      "on_pass": "taizi_reply",
+      "on_fail": "shangshu_aggregate",
+      "max_attempts": 2,
+      "timeout_seconds": 600
+    },
+    {
+      "id": "taizi_reply",
+      "role": "taizi",
+      "input": { "type": "step_output", "step_id": "shangshu_aggregate" },
+      "prompt": { "type": "file", "path": "workflows/prompts/taizi_reply.md" },
+      "output_contract": {
+        "type": "markdown_sections",
+        "required": ["对皇上的回信", "执行摘要", "如何验证", "后续建议"]
+      },
+      "guards": [
+        { "type": "max_words", "value": 600 }
+      ],
+      "on_pass": null,
+      "on_fail": "taizi_reply",
+      "max_attempts": 1,
+      "timeout_seconds": 600
+    }
+  ]
+}

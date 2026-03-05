@@ -1,5 +1,11 @@
 # OpenAgentic Agent Host Protocol (HTTP + SSE)
 
+> Status: **Future / archived spec** (not implemented in this repository yet).
+>
+> For the v1 local-first plan (control plane + workflow DSL), see:
+> - `docs/spec/workflow-engine.md`
+> - `docs/spec/workflow-engine.zh_ch.md`
+
 > Canonical spec (English). For a Chinese version, see `docs/spec/agent-host-protocol.zh_ch.md`.
 
 ## 1. Motivation
