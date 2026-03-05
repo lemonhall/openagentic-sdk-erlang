@@ -142,6 +142,32 @@ workflow_engine_continue_after_failed_includes_guard_reasons_test() ->
   ?assertEqual(<<"completed">>, maps:get(status, Res2)),
   ok.
 
+workflow_engine_decision_on_decision_routes_reject_test() ->
+  Root = test_root(),
+  ok = write_workflow_decision_route(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      case StepId of
+        <<"a">> ->
+          {ok, <<"# A\n\nok\n">>};
+        <<"b">> ->
+          {ok, <<"{\"decision\":\"reject\",\"reasons\":[\"r1\"],\"required_changes\":[\"c1\"]}">>};
+        <<"c">> ->
+          {ok, <<"# C\n\nshould not run\n">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_decision.json", <<"hello">>, Opts),
+  %% reject should route back to "a" and never reach "c"; max_attempts=1 makes it fail.
+  ?assertEqual(<<"failed">>, maps:get(status, Res)),
+  WfSid = maps:get(workflow_session_id, Res),
+  Events = openagentic_session_store:read_events(Root, WfSid),
+  ?assert(not lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.start">> andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"c">> end, Events)),
+  ok.
+
 write_workflow(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
   ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
@@ -206,6 +232,51 @@ write_workflow_retry(Root) ->
       "}",
       "]}">>,
   write_file(filename:join([Root, "workflows", "w_retry.json"]), Json).
+
+write_workflow_decision_route(Root) ->
+  ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "c.md"]), <<"# prompt c\n">>),
+  Json =
+    <<
+      "{",
+      "\"workflow_version\":\"1.0\",",
+      "\"name\":\"t\",",
+      "\"steps\":[",
+      "{",
+      "\"id\":\"a\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"controller_input\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/a.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"A\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":\"b\",",
+      "\"on_fail\":null",
+      "},",
+      "{",
+      "\"id\":\"b\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"a\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/b.md\"},",
+      "\"output_contract\":{\"type\":\"decision\",\"allowed\":[\"approve\",\"reject\"],\"format\":\"json\",\"fields\":[\"decision\",\"reasons\",\"required_changes\"]},",
+      "\"guards\":[{\"type\":\"decision_requires_reasons\",\"when\":\"reject\"}],",
+      "\"on_decision\":{\"approve\":\"c\",\"reject\":\"a\"},",
+      "\"on_pass\":\"c\",",
+      "\"on_fail\":null,",
+      "\"max_attempts\":1",
+      "},",
+      "{",
+      "\"id\":\"c\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"b\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/c.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"C\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":null,",
+      "\"on_fail\":null",
+      "}",
+      "]}">>,
+  write_file(filename:join([Root, "workflows", "w_decision.json"]), Json).
 
 test_root() ->
   {ok, Cwd} = file:get_cwd(),

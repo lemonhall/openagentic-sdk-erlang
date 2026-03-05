@@ -148,7 +148,7 @@ safe_schema_ok(<<"Grep">>, Input) ->
 safe_schema_ok(<<"WebFetch">>, Input) ->
   non_empty_string_any(Input, [<<"url">>, url]);
 safe_schema_ok(<<"WebSearch">>, Input) ->
-  non_empty_string_any(Input, [<<"query">>, query]);
+  non_empty_string_any(Input, [<<"query">>, query, <<"q">>, q]);
 safe_schema_ok(_, _Input) ->
   true.
 

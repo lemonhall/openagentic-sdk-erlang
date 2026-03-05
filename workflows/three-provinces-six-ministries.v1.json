@@ -7,8 +7,8 @@
     "timeout_seconds": 900,
     "tool_policy": {
       "mode": "default",
-      "allow": ["List", "Read", "Glob", "Grep", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
-      "deny": ["Write", "Edit", "Bash", "Task"]
+      "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
+      "deny": ["Bash", "Task"]
     }
   },
   "roles": {
@@ -44,7 +44,13 @@
     {
       "id": "zhongshu_plan",
       "role": "zhongshu",
-      "input": { "type": "step_output", "step_id": "taizi_intake" },
+      "input": {
+        "type": "merge",
+        "sources": [
+          { "type": "step_output", "step_id": "taizi_intake" },
+          { "type": "step_output", "step_id": "menxia_review" }
+        ]
+      },
       "prompt": { "type": "file", "path": "workflows/prompts/zhongshu_plan.md" },
       "output_contract": {
         "type": "markdown_sections",
@@ -72,6 +78,10 @@
       "guards": [
         { "type": "decision_requires_reasons", "when": "reject" }
       ],
+      "on_decision": {
+        "approve": "shangshu_dispatch",
+        "reject": "zhongshu_plan"
+      },
       "on_pass": "shangshu_dispatch",
       "on_fail": "zhongshu_plan",
       "max_attempts": 3,

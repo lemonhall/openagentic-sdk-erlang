@@ -645,7 +645,14 @@ ensure_list(_) -> [].
 to_bin(undefined) -> <<>>;
 to_bin(null) -> <<>>;
 to_bin(B) when is_binary(B) -> B;
-to_bin(L) when is_list(L) -> unicode:characters_to_binary(L, utf8);
+to_bin(L) when is_list(L) ->
+  %% Some callers provide UTF-8 bytes as a list of integers (iolist); others provide Unicode codepoints.
+  %% Prefer treating lists as raw bytes when possible to avoid double-encoding ("è¿..." mojibake).
+  try
+    iolist_to_binary(L)
+  catch
+    _:_ -> unicode:characters_to_binary(L, utf8)
+  end;
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other]), utf8).
 
@@ -688,7 +695,17 @@ maybe_forget_tool_name(ToolUseId0) ->
 
 tool_use_summary(<<"WebSearch">>, Input0) ->
   Input = ensure_map(Input0),
-  Q = string:trim(to_bin(maps:get(<<"query">>, Input, maps:get(query, Input, <<>>)))),
+  Q =
+    string:trim(
+      to_bin(
+        first_non_blank([
+          maps:get(<<"query">>, Input, undefined),
+          maps:get(query, Input, undefined),
+          maps:get(<<"q">>, Input, undefined),
+          maps:get(q, Input, undefined)
+        ])
+      )
+    ),
   MR = maps:get(<<"max_results">>, Input, maps:get(max_results, Input, undefined)),
   Q2 = truncate_bin(Q, 120),
   case {byte_size(Q2) > 0, MR} of
@@ -712,7 +729,19 @@ tool_use_summary(<<"WebFetch">>, Input0) ->
   end;
 tool_use_summary(<<"Read">>, Input0) ->
   Input = ensure_map(Input0),
-  P = string:trim(to_bin(maps:get(<<"file_path">>, Input, maps:get(file_path, Input, <<>>)))),
+  P =
+    string:trim(
+      to_bin(
+        first_non_blank([
+          maps:get(<<"file_path">>, Input, undefined),
+          maps:get(file_path, Input, undefined),
+          maps:get(<<"filePath">>, Input, undefined),
+          maps:get(filePath, Input, undefined),
+          maps:get(<<"path">>, Input, undefined),
+          maps:get(path, Input, undefined)
+        ])
+      )
+    ),
   case byte_size(P) > 0 of true -> iolist_to_binary([<<" file_path=">>, truncate_bin(P, 140)]); false -> <<>> end;
 tool_use_summary(<<"List">>, Input0) ->
   Input = ensure_map(Input0),

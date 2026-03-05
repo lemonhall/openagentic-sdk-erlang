@@ -113,6 +113,7 @@ validate_steps(ProjectDir, [S0 | Rest], StrictUnknown, Idx, Seen0, AccInfosRev, 
     <<"guards">>,
     <<"on_pass">>,
     <<"on_fail">>,
+    <<"on_decision">>,
     <<"max_attempts">>,
     <<"timeout_seconds">>,
     <<"tool_policy">>,
@@ -160,24 +161,27 @@ validate_steps(ProjectDir, [S0 | Rest], StrictUnknown, Idx, Seen0, AccInfosRev, 
 
   OnPass = get_nullable_step_ref(S, [<<"on_pass">>, on_pass]),
   OnFail = get_nullable_step_ref(S, [<<"on_fail">>, on_fail]),
+  OnDecision0 = get_any(S, [<<"on_decision">>, on_decision], undefined),
+  {OnDecision, Errors13b} = validate_on_decision(iolist_to_binary([Path0, <<".on_decision">>]), OnDecision0, Errors13),
 
   Exec = get_bin(S, [<<"executor">>, executor], <<>>),
   Errors14 =
     case Exec of
-      <<>> -> Errors13;
-      <<"local_otp">> -> Errors13;
-      <<"http_sse_remote">> -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unsupported_executor">>, <<"http_sse_remote is reserved for future">>) | Errors13];
-      _ -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unknown_executor">>, <<"unknown executor">>) | Errors13]
+      <<>> -> Errors13b;
+      <<"local_otp">> -> Errors13b;
+      <<"http_sse_remote">> -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unsupported_executor">>, <<"http_sse_remote is reserved for future">>) | Errors13b];
+      _ -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unknown_executor">>, <<"unknown executor">>) | Errors13b]
     end,
 
-  Info = #{id => Id, role => Role, on_pass => OnPass, on_fail => OnFail, raw => S},
+  Info = #{id => Id, role => Role, on_pass => OnPass, on_fail => OnFail, on_decision => OnDecision, raw => S},
   validate_steps(ProjectDir, Rest, StrictUnknown, Idx + 1, Seen, [Info | AccInfosRev], Errors14).
 
 validate_transitions(StepInfos, StepIdSet, Errors0) ->
   lists:foldl(
-    fun (#{id := Id, on_pass := OnPass, on_fail := OnFail, raw := _Raw}, Acc) ->
+    fun (#{id := Id, on_pass := OnPass, on_fail := OnFail, on_decision := OnDecision, raw := _Raw}, Acc) ->
       Acc1 = validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".on_pass">>]), OnPass, StepIdSet, Acc),
-      validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".on_fail">>]), OnFail, StepIdSet, Acc1)
+      Acc2 = validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".on_fail">>]), OnFail, StepIdSet, Acc1),
+      validate_on_decision_refs(iolist_to_binary([<<"steps.">>, Id, <<".on_decision">>]), OnDecision, StepIdSet, Acc2)
     end,
     Errors0,
     StepInfos
@@ -214,11 +218,20 @@ reachable_steps(StartId, StepInfos, StepIdSet, Visited0) ->
       case Step of
         undefined ->
           Visited1;
-        #{on_pass := OnPass, on_fail := OnFail} ->
+        #{on_pass := OnPass, on_fail := OnFail, on_decision := OnDecision} ->
           Visited2 = follow_ref(OnPass, StepInfos, StepIdSet, Visited1),
-          follow_ref(OnFail, StepInfos, StepIdSet, Visited2)
+          Visited3 = follow_ref(OnFail, StepInfos, StepIdSet, Visited2),
+          follow_refs_in_map(OnDecision, StepInfos, StepIdSet, Visited3)
       end
   end.
+
+follow_refs_in_map(Map0, StepInfos, StepIdSet, Visited0) ->
+  Map = ensure_map(Map0),
+  lists:foldl(
+    fun ({_K, V}, Acc) -> follow_ref(V, StepInfos, StepIdSet, Acc) end,
+    Visited0,
+    maps:to_list(Map)
+  ).
 
 follow_ref(null, _StepInfos, _StepIdSet, Visited) -> Visited;
 follow_ref(undefined, _StepInfos, _StepIdSet, Visited) -> Visited;
@@ -360,6 +373,62 @@ validate_guards(Path0, [G0 | Rest], Idx, Errors0) ->
         [err(iolist_to_binary([Path, <<".type">>]), <<"unknown_guard_type">>, iolist_to_binary([<<"unknown guard type: ">>, T])) | Errors0]
     end,
   validate_guards(Path0, Rest, Idx + 1, Errors1).
+
+validate_on_decision(_Path, undefined, Errors) ->
+  {#{}, Errors};
+validate_on_decision(_Path, null, Errors) ->
+  {#{}, Errors};
+validate_on_decision(Path, M0, Errors0) when is_map(M0) ->
+  {M0, validate_on_decision_entries(Path, maps:to_list(M0), Errors0)};
+validate_on_decision(Path, L0, Errors0) when is_list(L0) ->
+  try
+    M = maps:from_list(L0),
+    {M, validate_on_decision_entries(Path, maps:to_list(M), Errors0)}
+  catch
+    _:_ ->
+      {#{}, [err(Path, <<"not_object">>, <<"on_decision must be an object">>) | Errors0]}
+  end;
+validate_on_decision(Path, _Other, Errors0) ->
+  {#{}, [err(Path, <<"not_object">>, <<"on_decision must be an object">>) | Errors0]}.
+
+validate_on_decision_entries(_Path, [], Errors) ->
+  Errors;
+validate_on_decision_entries(Path, [{K0, V0} | Rest], Errors0) ->
+  K = to_bin(K0),
+  V = V0,
+  Errors1 =
+    case byte_size(string:trim(K)) > 0 of
+      true -> Errors0;
+      false -> [err(iolist_to_binary([Path, <<".<key>">>]), <<"missing">>, <<"on_decision keys must be non-empty strings">>) | Errors0]
+    end,
+  Errors2 =
+    case V of
+      null -> Errors1;
+      undefined -> [err(iolist_to_binary([Path, <<".">>, K]), <<"missing">>, <<"on_decision values must be a step id or null">>) | Errors1];
+      B when is_binary(B) -> require_nonempty_bin(iolist_to_binary([Path, <<".">>, K]), B, <<"step id is required">>, Errors1);
+      _ -> [err(iolist_to_binary([Path, <<".">>, K]), <<"invalid_type">>, <<"on_decision values must be a string or null">>) | Errors1]
+    end,
+  validate_on_decision_entries(Path, Rest, Errors2).
+
+validate_on_decision_refs(_Path, Map0, _StepIdSet, Errors) when Map0 =:= undefined; Map0 =:= null ->
+  Errors;
+validate_on_decision_refs(Path, Map0, StepIdSet, Errors0) ->
+  Map = ensure_map(Map0),
+  lists:foldl(
+    fun ({K0, V0}, Acc0) ->
+      K = to_bin(K0),
+      case V0 of
+        null -> Acc0;
+        undefined -> [err(iolist_to_binary([Path, <<".">>, K]), <<"missing">>, <<"step ref is required (or null)">>) | Acc0];
+        Ref when is_binary(Ref) ->
+          validate_step_ref(iolist_to_binary([Path, <<".">>, K]), Ref, StepIdSet, Acc0);
+        _ ->
+          [err(iolist_to_binary([Path, <<".">>, K]), <<"invalid_type">>, <<"step ref must be a string or null">>) | Acc0]
+      end
+    end,
+    Errors0,
+    maps:to_list(Map)
+  ).
 
 %% ---- normalization ----
 

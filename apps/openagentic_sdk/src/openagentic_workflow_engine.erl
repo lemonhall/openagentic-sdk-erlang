@@ -431,9 +431,9 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
           case eval_step_output(StepRaw, StepOut) of
             {ok, Parsed} ->
               State1 = put_in(State0, [step_outputs, StepId], #{output => StepOut, parsed => Parsed, step_session_id => StepSessionId}),
-              Next = step_ref(StepRaw, [<<"on_pass">>, on_pass]),
+              {Next, TransitionReason} = step_next(StepRaw, Parsed),
               ok = append_wf_event(State1, openagentic_events:workflow_step_pass(wf_id(State1), StepId, Attempt, Next)),
-              ok = append_wf_event(State1, openagentic_events:workflow_transition(wf_id(State1), StepId, <<"pass">>, Next, <<>>)),
+              ok = append_wf_event(State1, openagentic_events:workflow_transition(wf_id(State1), StepId, <<"pass">>, Next, TransitionReason)),
               case Next of
                 null -> finalize(State1, <<"completed">>, StepOut);
                 _ -> run_loop(Next, State1)
@@ -685,8 +685,13 @@ merge_sources([Src0 | Rest], StepOutputs, Idx, AccRev) ->
       _ ->
         <<>>
     end,
-  Header = iolist_to_binary([<<"\n\n--- source ">>, integer_to_binary(Idx + 1), <<" (">>, T, <<") ---\n\n">>]),
-  merge_sources(Rest, StepOutputs, Idx + 1, [Chunk, Header | AccRev]).
+  case byte_size(string:trim(Chunk)) > 0 of
+    false ->
+      merge_sources(Rest, StepOutputs, Idx, AccRev);
+    true ->
+      Header = iolist_to_binary([<<"\n\n--- source ">>, integer_to_binary(Idx + 1), <<" (">>, T, <<") ---\n\n">>]),
+      merge_sources(Rest, StepOutputs, Idx + 1, [Chunk, Header | AccRev])
+  end.
 
 build_user_prompt(PromptText, ControllerText0, InputText0, _Attempt0, Failures0) ->
   Failures = [to_bin(X) || X <- ensure_list_value(Failures0)],
@@ -821,6 +826,37 @@ eval_guards([G0 | Rest], Output, Parsed) ->
   case Res of
     ok -> eval_guards(Rest, Output, Parsed);
     {error, Reasons} -> {error, Reasons}
+  end.
+
+step_next(StepRaw0, Parsed0) ->
+  StepRaw = ensure_map(StepRaw0),
+  Parsed = ensure_map(Parsed0),
+  OnDecision0 = get_any(StepRaw, [<<"on_decision">>, on_decision], undefined),
+  OnDecision =
+    case OnDecision0 of
+      M when is_map(M) -> M;
+      L when is_list(L) -> maps:from_list(L);
+      _ -> #{}
+    end,
+  case maps:size(OnDecision) > 0 of
+    false ->
+      {step_ref(StepRaw, [<<"on_pass">>, on_pass]), <<>>};
+    true ->
+      Decision0 = to_bin(get_any(Parsed, [<<"decision">>, decision], <<>>)),
+      Decision = string:trim(Decision0),
+      case byte_size(Decision) > 0 of
+        false ->
+          {step_ref(StepRaw, [<<"on_pass">>, on_pass]), <<>>};
+        true ->
+          Key = string:lowercase(Decision),
+          Next0 = maps:get(Key, OnDecision, maps:get(Decision, OnDecision, undefined)),
+          Next =
+            case Next0 of
+              undefined -> step_ref(StepRaw, [<<"on_pass">>, on_pass]);
+              V -> V
+            end,
+          {Next, iolist_to_binary([<<"decision=">>, Decision])}
+      end
   end.
 
 missing_sections(Req0, Output0) ->

@@ -1,6 +1,6 @@
 -module(openagentic_e2e_online).
 
--export([suite/0]).
+-export([suite/0, run/0]).
 
 %% Online E2E suite (real provider).
 %%
@@ -9,60 +9,81 @@
 %% - Uses a temporary project dir under `.tmp/` so file tools cannot access repo `.env`
 %% - Requires explicit opt-in via OPENAGENTIC_E2E=1
 
+%% `run/0` is test-friendly: does not call erlang:halt/1.
+run() ->
+  case e2e_enabled() of
+    false ->
+      {skip, disabled};
+    true ->
+      try
+        RepoRoot = repo_root(),
+        DotEnv = openagentic_dotenv:load(filename:join([RepoRoot, ".env"])),
+        Cfg = load_cfg(DotEnv),
+        ok = ensure_required_cfg(Cfg),
+
+        SessionRoot = ensure_list(maps:get(session_root, Cfg)),
+        ok = ensure_dir(filename:join([SessionRoot, "x"])),
+
+        %% Prepare safe temp project dir (so Read/List/Grep/Glob cannot reach repo secrets).
+        TmpProject = make_tmp_project(RepoRoot),
+        ok = write_tmp_project_files(TmpProject),
+
+        %% Prepare global skill + slash command templates outside repo.
+        ok = prepare_global_skill(SessionRoot),
+        ok = prepare_global_slash_command(SessionRoot),
+
+        %% Run cases.
+        Results = [
+          case_basic_pong(Cfg, TmpProject),
+          case_streaming_deltas(Cfg, TmpProject),
+          case_session_resume(Cfg, TmpProject),
+          case_tools_responses_best_effort(Cfg, TmpProject),
+          case_tools_list_read_grep_glob(Cfg, TmpProject),
+          case_skill_responses_best_effort(Cfg, TmpProject),
+          case_skill_tool(Cfg, TmpProject),
+          case_slash_command_responses_tool(Cfg, TmpProject),
+          case_slash_command_tool(Cfg, TmpProject),
+          case_webfetch_responses_tool(Cfg, TmpProject),
+          case_webfetch_tool(Cfg, TmpProject)
+        ],
+        Errors = [R || R <- Results, is_tuple(R), element(1, R) =:= error],
+        Warns = [R || R <- Results, is_tuple(R), element(1, R) =:= warn],
+        AllowedWarns = [W || W <- Warns, is_allowed_warn(W) =:= true],
+        BadWarns = [W || W <- Warns, is_allowed_warn(W) =:= false],
+        case {Errors, BadWarns, AllowedWarns} of
+          {[], [], []} -> ok;
+          {[], [], Ws} -> {warn, Ws};
+          {Es, Ws, Aws} -> {error, #{errors => Es, warnings => Ws, allowed_warnings => Aws}}
+        end
+      catch
+        _:Reason -> {error, Reason}
+      end
+  end.
+
+%% `suite/0` is CLI-friendly: prints status and exits with stable codes.
 suite() ->
-  case os:getenv("OPENAGENTIC_E2E") of
-    "1" -> ok;
-    "true" -> ok;
-    "yes" -> ok;
-    _ ->
-      io:format("E2E disabled. Set OPENAGENTIC_E2E=1 to run online tests.~n", []),
-      erlang:halt(2)
-  end,
-
-  RepoRoot = repo_root(),
-  DotEnv = openagentic_dotenv:load(filename:join([RepoRoot, ".env"])),
-  Cfg = load_cfg(DotEnv),
-  ok = ensure_required_cfg(Cfg),
-
-  SessionRoot = ensure_list(maps:get(session_root, Cfg)),
-  ok = ensure_dir(filename:join([SessionRoot, "x"])),
-
-  %% Prepare safe temp project dir (so Read/List/Grep/Glob cannot reach repo secrets).
-  TmpProject = make_tmp_project(RepoRoot),
-  ok = write_tmp_project_files(TmpProject),
-
-  %% Prepare global skill + slash command templates outside repo.
-  ok = prepare_global_skill(SessionRoot),
-  ok = prepare_global_slash_command(SessionRoot),
-
-  %% Run cases.
-  Results = [
-    case_basic_pong(Cfg, TmpProject),
-    case_streaming_deltas(Cfg, TmpProject),
-    case_session_resume(Cfg, TmpProject),
-    case_tools_responses_best_effort(Cfg, TmpProject),
-    case_tools_list_read_grep_glob(Cfg, TmpProject),
-    case_skill_responses_best_effort(Cfg, TmpProject),
-    case_skill_tool(Cfg, TmpProject),
-    case_slash_command_responses_tool(Cfg, TmpProject),
-    case_slash_command_tool(Cfg, TmpProject),
-    case_webfetch_responses_tool(Cfg, TmpProject),
-    case_webfetch_tool(Cfg, TmpProject)
-  ],
-  Errors = [R || R <- Results, is_tuple(R), element(1, R) =:= error],
-  Warns = [R || R <- Results, is_tuple(R), element(1, R) =:= warn],
-  AllowedWarns = [W || W <- Warns, is_allowed_warn(W) =:= true],
-  BadWarns = [W || W <- Warns, is_allowed_warn(W) =:= false],
-  case {Errors, BadWarns, AllowedWarns} of
-    {[], [], []} ->
-      io:format("E2E suite OK (~p cases).~n", [length(Results)]),
+  Res = run(),
+  case Res of
+    ok ->
+      io:format("E2E suite OK.~n", []),
       ok;
-    {[], [], Ws} ->
+    {warn, Ws} ->
       io:format("E2E suite OK with allowed warnings: ~p~n", [Ws]),
       ok;
-    {Es, Ws, Aws} ->
-      io:format("E2E suite FAILED: errors=~p warnings=~p allowed_warnings=~p~n", [Es, Ws, Aws]),
+    {skip, _} ->
+      io:format("E2E disabled. Set OPENAGENTIC_E2E=1 to run online tests.~n", []),
+      erlang:halt(2);
+    {error, Err} ->
+      io:format("E2E suite FAILED: ~p~n", [Err]),
       erlang:halt(1)
+  end.
+
+e2e_enabled() ->
+  case os:getenv("OPENAGENTIC_E2E") of
+    "1" -> true;
+    "true" -> true;
+    "yes" -> true;
+    _ -> false
   end.
 
 %% ---- cases ----
