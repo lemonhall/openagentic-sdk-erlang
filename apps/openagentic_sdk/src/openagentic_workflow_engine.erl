@@ -108,13 +108,15 @@ init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
               dsl_path => to_bin(WorkflowRelPath),
               dsl_sha256 => DslHash
             }),
-          WfSessionId = to_bin(WfSessionId0),
-          Opts2 = ensure_web_answerer(Opts, WfSessionId),
-          ok = append_wf_event(SessionRoot, WfSessionId0, openagentic_events:system_init(WfSessionId, ProjectDir, #{})),
-          ok =
-            append_wf_event(
-              SessionRoot,
-              WfSessionId0,
+           WfSessionId = to_bin(WfSessionId0),
+           Opts2 = ensure_web_answerer(Opts, WfSessionId),
+           WfWorkspaceDir = workflow_workspace_dir(SessionRoot, WfSessionId0),
+           ok = filelib:ensure_dir(filename:join([WfWorkspaceDir, "x"])),
+           ok = append_wf_event(SessionRoot, WfSessionId0, openagentic_events:system_init(WfSessionId, ProjectDir, #{})),
+           ok =
+             append_wf_event(
+               SessionRoot,
+               WfSessionId0,
               openagentic_events:workflow_init(
                 WorkflowId,
                 WfName,
@@ -127,13 +129,14 @@ init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
             #{
               project_dir => ProjectDir,
               session_root => SessionRoot,
-              workflow_id => WorkflowId,
-              workflow_name => WfName,
-              workflow_session_id => WfSessionId0,
-              workflow_rel_path => to_bin(WorkflowRelPath),
-              defaults => ensure_map(maps:get(<<"defaults">>, Wf, #{})),
-              steps_by_id => ensure_map(maps:get(<<"steps_by_id">>, Wf, #{})),
-              controller_input => ControllerInput,
+               workflow_id => WorkflowId,
+               workflow_name => WfName,
+               workflow_session_id => WfSessionId0,
+               workspace_dir => WfWorkspaceDir,
+               workflow_rel_path => to_bin(WorkflowRelPath),
+               defaults => ensure_map(maps:get(<<"defaults">>, Wf, #{})),
+               steps_by_id => ensure_map(maps:get(<<"steps_by_id">>, Wf, #{})),
+               controller_input => ControllerInput,
               step_outputs => #{},
               step_attempts => #{},
               step_failures => #{},
@@ -178,6 +181,8 @@ init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
       StepAttempts = #{},
 
       Opts = ensure_web_answerer(Opts0, to_bin(WorkflowSessionId)),
+      WfWorkspaceDir = workflow_workspace_dir(SessionRoot, WorkflowSessionId),
+      ok = filelib:ensure_dir(filename:join([WfWorkspaceDir, "x"])),
       case openagentic_workflow_dsl:load_and_validate(ProjectDir, ensure_list_str(DslPath), Opts) of
         {ok, Wf} ->
           Defaults = ensure_map(maps:get(<<"defaults">>, Wf, #{})),
@@ -203,6 +208,7 @@ init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
               workflow_id => WfId,
               workflow_name => WfName,
               workflow_session_id => WorkflowSessionId,
+              workspace_dir => WfWorkspaceDir,
               workflow_rel_path => to_bin(DslPath),
               defaults => Defaults,
               steps_by_id => StepsById,
@@ -523,6 +529,7 @@ default_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt,
   RuntimeOpts =
     Opts0#{
       project_dir => maps:get(project_dir, State0),
+      workspace_dir => maps:get(workspace_dir, State0, undefined),
       cwd => maps:get(project_dir, State0),
       session_root => maps:get(session_root, State0),
       resume_session_id => StepSessionId0,
@@ -883,6 +890,12 @@ strip_code_fences(Bin0) ->
   end.
 
 %% ---- sessions & workflow events ----
+
+workflow_workspace_dir(SessionRoot0, WorkflowSessionId0) ->
+  SessionRoot = ensure_list_str(SessionRoot0),
+  WorkflowSessionId = ensure_list_str(WorkflowSessionId0),
+  Dir = openagentic_session_store:session_dir(SessionRoot, WorkflowSessionId),
+  filename:join([Dir, "workspace"]).
 
 create_step_session(State0, StepId, Role, Attempt) ->
   Root = maps:get(session_root, State0),

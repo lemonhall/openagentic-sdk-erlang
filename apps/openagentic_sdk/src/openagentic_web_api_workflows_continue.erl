@@ -34,10 +34,13 @@ init(Req0, State0) ->
             {ok, Res} ->
               Sid = maps:get(workflow_session_id, Res, WfSid),
               WfId = maps:get(workflow_id, Res, <<>>),
+              WfDir = openagentic_session_store:session_dir(SessionRoot, ensure_list(Sid)),
+              WorkspaceDir = filename:join([WfDir, "workspace"]),
               Resp =
                 #{
                   workflow_id => WfId,
                   workflow_session_id => Sid,
+                  workspace_dir => openagentic_fs:norm_abs_bin(WorkspaceDir),
                   events_url => iolist_to_binary([<<"/api/sessions/">>, to_bin(Sid), <<"/events">>])
                 },
               reply_json(202, Resp, Req1, State);
@@ -83,4 +86,3 @@ to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
-

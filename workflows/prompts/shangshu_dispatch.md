@@ -13,6 +13,6 @@
 规则：
 - 不要把验证步骤漏掉（例如工程任务最终要能被核验）
 - 不要泄露密钥（`.env` 相关不可输出）
+- 任何需要 `Write/Edit` 生成的文书/文件，一律写入 workflow workspace（用 `workspace:` 前缀，例如 `workspace:deliverables/...`），不得修改仓库源码文件
 
 只输出 JSON。
-

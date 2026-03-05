@@ -246,17 +246,20 @@ $("composer").addEventListener("submit", async (e) => {
     try {
       setOverall("starting");
       setModeHint("提示：继续本局…");
-      const res = await postJson("/api/workflows/continue", {
-        workflow_session_id: state.workflowSessionId,
-        message: prompt,
-      });
-      state.workflowId = res.workflow_id || state.workflowId;
-      state.workflowSessionId = res.workflow_session_id || state.workflowSessionId;
-      connectSse(res.events_url);
-    } catch (err) {
-      setOverall("error");
-      addMsg("error", err.message || String(err));
+    const res = await postJson("/api/workflows/continue", {
+      workflow_session_id: state.workflowSessionId,
+      message: prompt,
+    });
+    state.workflowId = res.workflow_id || state.workflowId;
+    state.workflowSessionId = res.workflow_session_id || state.workflowSessionId;
+    if (res.workspace_dir) {
+      addMsg("system", `workspace_dir=${res.workspace_dir}`);
     }
+    connectSse(res.events_url);
+  } catch (err) {
+    setOverall("error");
+    addMsg("error", err.message || String(err));
+  }
     return;
   }
 
@@ -270,7 +273,12 @@ $("composer").addEventListener("submit", async (e) => {
     const res = await postJson("/api/workflows/start", { prompt, dsl });
     state.workflowId = res.workflow_id;
     state.workflowSessionId = res.workflow_session_id;
-    addMsg("system", `workflow_id=${state.workflowId}\nworkflow_session_id=${state.workflowSessionId}`);
+    addMsg(
+      "system",
+      `workflow_id=${state.workflowId}\nworkflow_session_id=${state.workflowSessionId}${
+        res.workspace_dir ? `\nworkspace_dir=${res.workspace_dir}` : ""
+      }`
+    );
     connectSse(res.events_url);
   } catch (err) {
     setOverall("error");

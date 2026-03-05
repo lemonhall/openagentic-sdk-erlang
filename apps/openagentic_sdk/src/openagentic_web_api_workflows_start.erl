@@ -38,10 +38,13 @@ init(Req0, State0) ->
             {ok, Res} ->
               WfId = maps:get(workflow_id, Res, <<>>),
               WfSid = maps:get(workflow_session_id, Res, <<>>),
+              WfDir = openagentic_session_store:session_dir(SessionRoot, ensure_list(WfSid)),
+              WorkspaceDir = filename:join([WfDir, "workspace"]),
               Resp =
                 #{
                   workflow_id => WfId,
                   workflow_session_id => WfSid,
+                  workspace_dir => openagentic_fs:norm_abs_bin(WorkspaceDir),
                   events_url => iolist_to_binary([<<"/api/sessions/">>, to_bin(WfSid), <<"/events">>])
                 },
               reply_json(201, Resp, Req1, State);

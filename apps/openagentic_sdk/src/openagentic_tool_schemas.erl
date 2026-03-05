@@ -81,6 +81,14 @@ render_available_skills(Infos0) ->
 prompt_vars(Ctx0) ->
   Ctx = ensure_map(Ctx0),
   ProjectDir = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  WorkspaceDir0 = maps:get(workspace_dir, Ctx, maps:get(workspaceDir, Ctx, undefined)),
+  WorkspaceDir1 = string:trim(to_bin(WorkspaceDir0)),
+  WorkspaceDir =
+    case WorkspaceDir1 of
+      <<>> -> <<"  (none)">>;
+      <<"undefined">> -> <<"  (none)">>;
+      _ -> WorkspaceDir1
+    end,
   Directory = maps:get(directory, Ctx, maps:get(cwd, Ctx, ProjectDir)),
   Agents0 = maps:get(agents, Ctx, maps:get(<<"agents">>, Ctx, undefined)),
   Agents1 = string:trim(to_bin(Agents0)),
@@ -88,6 +96,11 @@ prompt_vars(Ctx0) ->
   #{
     directory => norm_bin(Directory),
     project_dir => norm_bin(ProjectDir),
+    workspace_dir =>
+      case WorkspaceDir of
+        <<"  (none)">> -> WorkspaceDir;
+        _ -> norm_bin(WorkspaceDir)
+      end,
     maxBytes => 1048576,
     maxLines => 2000,
     agents => Agents

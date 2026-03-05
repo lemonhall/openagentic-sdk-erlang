@@ -17,6 +17,7 @@ run(Input0, Ctx0) ->
   Input = ensure_map(Input0),
   Ctx = ensure_map(Ctx0),
   ProjectDir0 = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  WorkspaceDir0 = maps:get(workspace_dir, Ctx, maps:get(workspaceDir, Ctx, [])),
 
   Query0 = maps:get(<<"query">>, Input, maps:get(query, Input, undefined)),
   case Query0 of
@@ -35,8 +36,8 @@ run(Input0, Ctx0) ->
           RootRaw = case RootRaw0 of undefined -> <<>>; _ -> string:trim(to_bin(RootRaw0)) end,
           RootRes =
             case byte_size(RootRaw) > 0 of
-              true -> openagentic_fs:resolve_tool_path(ProjectDir0, RootRaw);
-              false -> openagentic_fs:resolve_tool_path(ProjectDir0, ".")
+              true -> openagentic_fs:resolve_read_path(ProjectDir0, WorkspaceDir0, RootRaw);
+              false -> openagentic_fs:resolve_read_path(ProjectDir0, WorkspaceDir0, ".")
             end,
           case RootRes of
             {error, Reason} ->
@@ -129,6 +130,9 @@ grep_files_with_matches(QueryRe, FileGlobRe, RootDir, IncludeHidden) ->
         case is_hidden_rel(Rel) andalso not IncludeHidden of
           true -> {skip, none};
           false ->
+            case is_sensitive_rel(Rel) of
+              true -> {skip, none};
+              false ->
             case file_matches_glob(Rel, FileGlobRe) of
               false -> {skip, none};
               true ->
@@ -140,6 +144,7 @@ grep_files_with_matches(QueryRe, FileGlobRe, RootDir, IncludeHidden) ->
                       false -> {skip, none}
                     end
                 end
+            end
             end
         end
       end,
@@ -162,6 +167,9 @@ grep_matches(QueryRe, FileGlobRe, RootDir, IncludeHidden, BeforeN, AfterN) ->
           case is_hidden_rel(Rel) andalso not IncludeHidden of
             true -> {skip, none};
             false ->
+              case is_sensitive_rel(Rel) of
+                true -> {skip, none};
+                false ->
               case file_matches_glob(Rel, FileGlobRe) of
                 false -> {skip, none};
                 true ->
@@ -169,6 +177,7 @@ grep_matches(QueryRe, FileGlobRe, RootDir, IncludeHidden, BeforeN, AfterN) ->
                     false -> {skip, none};
                     true -> {scan, Path}
                   end
+              end
               end
           end
         end,
@@ -284,6 +293,30 @@ is_hidden_rel(Rel0) ->
     end,
     Segs
   ).
+
+is_sensitive_rel(Rel0) ->
+  Rel1 = ensure_list(Rel0),
+  Rel = lists:flatten(string:replace(Rel1, "\\", "/", all)),
+  Segs = [S || S <- string:split(Rel, "/", all), S =/= ""],
+  Base0 =
+    case Segs of
+      [] -> "";
+      _ -> lists:last(Segs)
+    end,
+  Base = string:lowercase(Base0),
+  case Base of
+    ".env" -> true;
+    "id_rsa" -> true;
+    "id_ed25519" -> true;
+    _ ->
+      case lists:prefix(".env.", Base) of
+        true ->
+          Base =/= ".env.example";
+        false ->
+          Ext = string:lowercase(filename:extension(Base)),
+          lists:member(Ext, [".pem", ".key", ".p12", ".pfx"])
+      end
+  end.
 
 trim_cr(Bin) when is_binary(Bin) ->
   Sz = byte_size(Bin),

@@ -16,6 +16,7 @@ run(Input0, Ctx0) ->
   Input = ensure_map(Input0),
   Ctx = ensure_map(Ctx0),
   ProjectDir = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  WorkspaceDir = maps:get(workspace_dir, Ctx, maps:get(workspaceDir, Ctx, [])),
   Raw =
     first_non_empty(Input, [
       <<"path">>, path,
@@ -26,7 +27,7 @@ run(Input0, Ctx0) ->
     undefined ->
       {error, {kotlin_error, <<"IllegalArgumentException">>, <<"List: 'path' must be a non-empty string">>}};
     _ ->
-      case openagentic_fs:resolve_tool_path(ProjectDir, Raw) of
+      case openagentic_fs:resolve_read_path(ProjectDir, WorkspaceDir, Raw) of
         {error, Reason} ->
           {error, Reason};
         {ok, BaseDir0} ->

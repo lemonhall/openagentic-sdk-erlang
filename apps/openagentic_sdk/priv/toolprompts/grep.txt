@@ -1,10 +1,15 @@
-Searches file contents using a regular expression within the project workspace.
+Searches file contents using a regular expression within the project repo or the workflow/session workspace.
 
 Project root:
 - {{project_dir}}
+
+Workspace root:
+- {{workspace_dir}}
 
 Usage:
 - Provide `query` (regex) and optional `file_glob` (defaults to `**/*`).
 - Optional: restrict the search base with `root` (or `path`). Relative paths are resolved against the project root.
 - Any path outside the project root will be rejected.
+- To search under the workspace, set `root` to a `workspace:` path (e.g. `workspace:.`).
+- Sensitive files (e.g. `.env`, private keys) are skipped.
 - Use `mode="files_with_matches"` to list only matched files, or omit to include per-line matches.

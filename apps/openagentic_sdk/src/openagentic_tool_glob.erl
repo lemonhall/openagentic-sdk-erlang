@@ -17,6 +17,7 @@ run(Input0, Ctx0) ->
   Input = ensure_map(Input0),
   Ctx = ensure_map(Ctx0),
   ProjectDir0 = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  WorkspaceDir0 = maps:get(workspace_dir, Ctx, maps:get(workspaceDir, Ctx, [])),
   Pattern0 = maps:get(<<"pattern">>, Input, maps:get(pattern, Input, undefined)),
   case Pattern0 of
     undefined ->
@@ -35,8 +36,8 @@ run(Input0, Ctx0) ->
             end,
           BaseRes =
             case byte_size(RootRaw) > 0 of
-              true -> openagentic_fs:resolve_tool_path(ProjectDir0, RootRaw);
-              false -> openagentic_fs:resolve_tool_path(ProjectDir0, ".")
+              true -> openagentic_fs:resolve_read_path(ProjectDir0, WorkspaceDir0, RootRaw);
+              false -> openagentic_fs:resolve_read_path(ProjectDir0, WorkspaceDir0, ".")
             end,
           case BaseRes of
             {error, Reason} ->
@@ -48,44 +49,12 @@ run(Input0, Ctx0) ->
                   EarlyExit = should_early_exit_after_first_match(Pattern),
                   MaxMatches = ?DEFAULT_MAX_MATCHES,
                   MaxScanned = ?DEFAULT_MAX_SCANNED_PATHS,
-                  WorkspaceFirst =
-                    EarlyExit andalso
-                      (byte_size(RootRaw) =:= 0) andalso
-                      filelib:is_dir(filename:join([BaseDir, "workspace"])),
                   Re = openagentic_glob:to_re(Pattern),
-                  ScanRoots =
-                    case WorkspaceFirst of
-                      true ->
-                        [filename:join([BaseDir, "workspace"])];
-                      false ->
-                        resolve_scan_roots(BaseDir, Pattern)
-                    end,
+                  ScanRoots = resolve_scan_roots(BaseDir, Pattern),
                   BaseNorm = openagentic_fs:norm_abs_bin(BaseDir),
-                  case scan_roots(ScanRoots, BaseDir, Re, MaxMatches, MaxScanned, EarlyExit, WorkspaceFirst) of
+                  case scan_roots(ScanRoots, BaseDir, Re, MaxMatches, MaxScanned, EarlyExit, false) of
                     {stop, Matches2, Stop} ->
                       render_stop(BaseDir, Pattern, Matches2, Stop);
-                    {ok, Matches0} when WorkspaceFirst, Matches0 =:= [] ->
-                      Roots2 = resolve_scan_roots(BaseDir, Pattern),
-                      case scan_roots(Roots2, BaseDir, Re, MaxMatches, MaxScanned, EarlyExit, false) of
-                        {stop, Matches2, {max_scanned_paths, _}} ->
-                          render_stop(BaseDir, Pattern, Matches2, {max_scanned_paths_fallback, BaseDir});
-                        {stop, Matches2, {max_matches, _}} ->
-                          render_stop(BaseDir, Pattern, Matches2, {max_matches_fallback, BaseDir});
-                        {stop, Matches2, {first_match, _}} ->
-                          render_stop(BaseDir, Pattern, Matches2, {first_match_fallback, BaseDir});
-                        {stop, Matches2, Stop2} ->
-                          render_stop(BaseDir, Pattern, Matches2, Stop2);
-                        {ok, Matches3} ->
-                          Matches = lists:sort(Matches3),
-                          {ok, #{
-                            root => BaseNorm,
-                            matches => Matches,
-                            search_path => BaseNorm,
-                            pattern => to_bin(Pattern),
-                            count => length(Matches),
-                            truncated => false
-                          }}
-                      end;
                     {ok, Matches0} ->
                       Matches = lists:sort(Matches0),
                       {ok, #{
@@ -139,42 +108,6 @@ render_stop(BaseDir, Pattern, Matches0, Stop) ->
           truncated => true,
           stopped_early => true,
           early_exit_reason => <<"first_match">>
-        }};
-    {first_match_workspace, SearchPath0} ->
-      SearchPath = openagentic_fs:norm_abs_bin(SearchPath0),
-      {ok,
-        Out0#{
-          search_path => SearchPath,
-          truncated => true,
-          stopped_early => true,
-          early_exit_reason => <<"first_match_workspace">>
-        }};
-    {first_match_fallback, SearchPath0} ->
-      SearchPath = openagentic_fs:norm_abs_bin(SearchPath0),
-      {ok,
-        Out0#{
-          search_path => SearchPath,
-          truncated => true,
-          stopped_early => true,
-          early_exit_reason => <<"first_match_fallback">>
-        }};
-    {max_scanned_paths_fallback, SearchPath0} ->
-      SearchPath = openagentic_fs:norm_abs_bin(SearchPath0),
-      {ok,
-        Out0#{
-          search_path => SearchPath,
-          truncated => true,
-          stopped_early => true,
-          early_exit_reason => <<"max_scanned_paths_fallback">>
-        }};
-    {max_matches_fallback, SearchPath0} ->
-      SearchPath = openagentic_fs:norm_abs_bin(SearchPath0),
-      {ok,
-        Out0#{
-          search_path => SearchPath,
-          truncated => true,
-          stopped_early => true,
-          early_exit_reason => <<"max_matches_fallback">>
         }};
     {max_matches, SearchPath0} ->
       SearchPath = openagentic_fs:norm_abs_bin(SearchPath0),

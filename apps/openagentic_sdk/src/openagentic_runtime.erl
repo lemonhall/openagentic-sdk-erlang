@@ -95,8 +95,12 @@ query(Prompt0, Opts0) ->
   AgentsVar = openagentic_task_agents:render_agents_for_prompt(TaskAgents),
 
   ToolMods = maps:get(tools, Opts, default_tools()),
+  WorkspaceDirOpt0 = pick_opt(Opts, [workspace_dir, workspaceDir, <<"workspace_dir">>, <<"workspaceDir">>]),
   ToolSchemas =
-    openagentic_tool_schemas:responses_tools(ToolMods, #{project_dir => ProjectDir, directory => Cwd, cwd => Cwd, agents => AgentsVar}),
+    openagentic_tool_schemas:responses_tools(
+      ToolMods,
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDirOpt0, directory => Cwd, cwd => Cwd, agents => AgentsVar}
+    ),
   Registry = openagentic_tool_registry:new(ToolMods),
 
   UserAnswerer = maps:get(user_answerer, Opts, undefined),
@@ -141,12 +145,15 @@ query(Prompt0, Opts0) ->
     {error, Reason} ->
       {error, Reason};
     {ok, {SessionId, PastEvents, PrevRespId}} ->
+      WorkspaceDir0 = ensure_workspace_dir(RootDir, SessionId, WorkspaceDirOpt0),
+      ok = filelib:ensure_dir(filename:join([WorkspaceDir0, "x"])),
       State0 = #{
         root => RootDir,
         session_id => SessionId,
         events => PastEvents,
         event_sink => EventSink,
         project_dir => ProjectDir,
+        workspace_dir => WorkspaceDir0,
         api_key => ApiKey,
         model => Model,
         base_url => BaseUrl,
@@ -516,7 +523,8 @@ run_tool(ToolUseId, ToolName0, ToolInput0, HookCtx, State0) ->
       task_runner => maps:get(task_runner, State0, undefined)
     },
   ProjectDir = maps:get(project_dir, State0, maps:get(projectDir, State0, ".")),
-  ToolCtx2 = ToolCtx#{project_dir => ProjectDir},
+  WorkspaceDir = maps:get(workspace_dir, State0, undefined),
+  ToolCtx2 = ToolCtx#{project_dir => ProjectDir, workspace_dir => WorkspaceDir},
 
   case openagentic_tool_registry:get(Registry, ToolName) of
     {ok, Mod} ->
@@ -888,6 +896,30 @@ pick_opt(Map, [K | Rest]) ->
     undefined -> pick_opt(Map, Rest);
     V -> V
   end.
+
+ensure_workspace_dir(RootDir0, SessionId0, WorkspaceDirOpt0) ->
+  RootDir = ensure_list(RootDir0),
+  SessionId = SessionId0,
+  case WorkspaceDirOpt0 of
+    undefined ->
+      default_workspace_dir(RootDir, SessionId);
+    null ->
+      default_workspace_dir(RootDir, SessionId);
+    <<>> ->
+      default_workspace_dir(RootDir, SessionId);
+    "" ->
+      default_workspace_dir(RootDir, SessionId);
+    <<"undefined">> ->
+      default_workspace_dir(RootDir, SessionId);
+    "undefined" ->
+      default_workspace_dir(RootDir, SessionId);
+    V ->
+      ensure_list(V)
+  end.
+
+default_workspace_dir(RootDir, SessionId) ->
+  Dir = openagentic_session_store:session_dir(RootDir, SessionId),
+  filename:join([Dir, "workspace"]).
 
 to_bool_default(undefined, Default) -> Default;
 to_bool_default(null, Default) -> Default;

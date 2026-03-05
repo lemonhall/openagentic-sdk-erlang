@@ -1,10 +1,13 @@
-Creates or overwrites a file within the project workspace.
+Creates or overwrites a file within the workflow/session workspace (NOT the project repo).
 
-Project root:
+Workspace root (write allowed):
+- {{workspace_dir}}
+
+Project root (read-only via other tools):
 - {{project_dir}}
 
 Usage:
 - Provide `file_path` (or `filePath`) and `content`.
-- Paths may be absolute or project-root-relative; any path outside the project root will be rejected.
+- Paths are resolved under the workspace root; any path outside the workspace root will be rejected.
 - If overwriting an existing file is intended, set `overwrite=true`.
 - Prefer `Edit` when making small, precise changes to an existing file.

@@ -5,20 +5,22 @@
 read_respects_offset_limit_and_blocks_traversal_test() ->
   Root = test_root(),
   ProjectDir = Root,
+  WorkspaceDir = filename:join([Root, "ws"]),
+  ok = filelib:ensure_dir(filename:join([WorkspaceDir, "x"])),
   ok = file:write_file(filename:join([ProjectDir, "a.txt"]), <<"l1\nl2\nl3\n">>),
 
-  {ok, Out1} = openagentic_tool_read:run(#{file_path => <<"a.txt">>, offset => 2, limit => 1}, #{project_dir => ProjectDir}),
+  {ok, Out1} = openagentic_tool_read:run(#{file_path => <<"a.txt">>, offset => 2, limit => 1}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
   ?assertEqual(<<"2: l2">>, maps:get(content, Out1)),
   ?assertEqual(3, maps:get(total_lines, Out1)),
   ?assertEqual(1, maps:get(lines_returned, Out1)),
 
   {ok, AbsNative} = openagentic_fs:resolve_tool_path(ProjectDir, "a.txt"),
   Abs = iolist_to_binary(AbsNative),
-  {ok, OutAbs} = openagentic_tool_read:run(#{file_path => Abs, offset => 1, limit => 1}, #{project_dir => ProjectDir}),
+  {ok, OutAbs} = openagentic_tool_read:run(#{file_path => Abs, offset => 1, limit => 1}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
   ?assertEqual(<<"1: l1">>, maps:get(content, OutAbs)),
 
   {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}} =
-    openagentic_tool_read:run(#{file_path => <<"../x.txt">>}, #{project_dir => ProjectDir}),
+    openagentic_tool_read:run(#{file_path => <<"../x.txt">>}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
   ?assert(binary:match(Msg, <<"Tool path must be under project root:">>) =/= nomatch).
 
 resolve_tool_path_blocks_symlink_escape_test() ->
@@ -298,17 +300,19 @@ list_truncates_when_limit_exceeded_test() ->
 write_requires_overwrite_when_file_exists_test() ->
   Root = test_root(),
   ProjectDir = Root,
-  Path = filename:join([ProjectDir, "w.txt"]),
+  WorkspaceDir = filename:join([Root, "ws"]),
+  ok = filelib:ensure_dir(filename:join([WorkspaceDir, "x"])),
+  Path = filename:join([WorkspaceDir, "w.txt"]),
   ok = file:write_file(Path, <<"old">>),
 
   {error, {kotlin_error, <<"IllegalStateException">>, Msg}} =
-    openagentic_tool_write:run(#{file_path => <<"w.txt">>, content => <<"new">>}, #{project_dir => ProjectDir}),
+    openagentic_tool_write:run(#{file_path => <<"w.txt">>, content => <<"new">>}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
   ?assert(binary:match(Msg, <<"Write: file exists:">>) =/= nomatch),
 
   {ok, Out} =
     openagentic_tool_write:run(
       #{file_path => <<"w.txt">>, content => <<"new">>, overwrite => true},
-      #{project_dir => ProjectDir}
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}
     ),
   ?assertEqual(3, maps:get(bytes_written, Out)),
   ok.
@@ -316,13 +320,15 @@ write_requires_overwrite_when_file_exists_test() ->
 edit_applies_replace_and_reports_missing_old_test() ->
   Root = test_root(),
   ProjectDir = Root,
-  Path = filename:join([ProjectDir, "e.txt"]),
+  WorkspaceDir = filename:join([Root, "ws"]),
+  ok = filelib:ensure_dir(filename:join([WorkspaceDir, "x"])),
+  Path = filename:join([WorkspaceDir, "e.txt"]),
   ok = file:write_file(Path, <<"hello\n">>),
 
   {ok, Out1} =
     openagentic_tool_edit:run(
       #{file_path => <<"e.txt">>, old => <<"hello">>, new => <<"hi">>},
-      #{project_dir => ProjectDir}
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}
     ),
   ?assertEqual(<<"Edit applied">>, maps:get(message, Out1)),
   ?assertEqual(1, maps:get(replacements, Out1)),
@@ -330,16 +336,62 @@ edit_applies_replace_and_reports_missing_old_test() ->
   {error, {kotlin_error, <<"IllegalArgumentException">>, <<"Edit: 'old' text not found in file">>}} =
     openagentic_tool_edit:run(
       #{file_path => <<"e.txt">>, old => <<"does-not-exist">>, new => <<"x">>},
-      #{project_dir => ProjectDir}
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}
     ),
   ok.
 
 edit_missing_file_is_file_not_found_exception_test() ->
   Root = test_root(),
   ProjectDir = Root,
+  WorkspaceDir = filename:join([Root, "ws"]),
+  ok = filelib:ensure_dir(filename:join([WorkspaceDir, "x"])),
   {error, {kotlin_error, <<"FileNotFoundException">>, Msg}} =
-    openagentic_tool_edit:run(#{file_path => <<"missing.txt">>, old => <<"a">>, new => <<"b">>}, #{project_dir => ProjectDir}),
+    openagentic_tool_edit:run(#{file_path => <<"missing.txt">>, old => <<"a">>, new => <<"b">>}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
   ?assert(binary:match(Msg, <<"Edit: not found:">>) =/= nomatch),
+  ok.
+
+write_and_read_support_workspace_prefix_and_block_project_write_test() ->
+  Root = test_root(),
+  ProjectDir = Root,
+  WorkspaceDir = filename:join([Root, "ws"]),
+  ok = filelib:ensure_dir(filename:join([WorkspaceDir, "x"])),
+
+  {ok, _} =
+    openagentic_tool_write:run(
+      #{file_path => <<"deliverables/out.txt">>, content => <<"hello">>, overwrite => true},
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}
+    ),
+
+  {ok, Out} =
+    openagentic_tool_read:run(
+      #{file_path => <<"workspace:deliverables/out.txt">>},
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}
+    ),
+  ?assert(binary:match(maps:get(content, Out), <<"hello">>) =/= nomatch),
+
+  {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}} =
+    openagentic_tool_write:run(
+      #{file_path => <<"project:should_not_write.txt">>, content => <<"x">>, overwrite => true},
+      #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}
+    ),
+  ?assert(binary:match(Msg, <<"workspace root">>) =/= nomatch),
+  ok.
+
+read_blocks_dotenv_test() ->
+  Root = test_root(),
+  ProjectDir = Root,
+  WorkspaceDir = filename:join([Root, "ws"]),
+  ok = filelib:ensure_dir(filename:join([WorkspaceDir, "x"])),
+  ok = file:write_file(filename:join([ProjectDir, ".env"]), <<"SECRET=1\n">>),
+  ok = file:write_file(filename:join([WorkspaceDir, ".env"]), <<"SECRET=2\n">>),
+
+  {error, {kotlin_error, <<"RuntimeException">>, Msg1}} =
+    openagentic_tool_read:run(#{file_path => <<".env">>}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
+  ?assert(binary:match(Msg1, <<"access denied">>) =/= nomatch),
+
+  {error, {kotlin_error, <<"RuntimeException">>, Msg2}} =
+    openagentic_tool_read:run(#{file_path => <<"workspace:.env">>}, #{project_dir => ProjectDir, workspace_dir => WorkspaceDir}),
+  ?assert(binary:match(Msg2, <<"access denied">>) =/= nomatch),
   ok.
 
 list_not_found_is_illegal_argument_test() ->

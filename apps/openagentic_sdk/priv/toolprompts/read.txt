@@ -1,10 +1,15 @@
-Reads a file (text or common image types) from the project workspace.
+Reads a file (text or common image types) from either the project repo (read-only) or the workflow/session workspace.
 
 Project root:
 - {{project_dir}}
 
+Workspace root:
+- {{workspace_dir}}
+
 Usage:
 - Provide `file_path` (or `filePath`) as an absolute path or a project-root-relative path.
 - Any path that is outside the project root will be rejected.
+- To read from the workspace, prefix paths with `workspace:` (e.g. `workspace:deliverables/out.md`).
+- Sensitive files (e.g. `.env`, private keys) are blocked.
 - Optional: `offset` (1-based) and `limit` can be used to read a slice of the file with line numbers.
 - Large files are truncated (up to {{maxBytes}} bytes).

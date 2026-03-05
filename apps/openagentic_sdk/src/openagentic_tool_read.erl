@@ -17,16 +17,21 @@ run(Input0, Ctx0) ->
   Input = ensure_map(Input0),
   Ctx = ensure_map(Ctx0),
   ProjectDir = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  WorkspaceDir = maps:get(workspace_dir, Ctx, maps:get(workspaceDir, Ctx, [])),
   case string_field(Input, [<<"file_path">>, file_path, <<"filePath">>, filePath]) of
     {error, Msg} ->
       {error, {kotlin_error, <<"IllegalArgumentException">>, Msg}};
     undefined ->
       {error, {kotlin_error, <<"IllegalArgumentException">>, <<"Read: 'file_path' must be a non-empty string">>}};
     {ok, Path0} ->
-      case openagentic_fs:resolve_tool_path(ProjectDir, Path0) of
+      case openagentic_fs:resolve_read_path(ProjectDir, WorkspaceDir, Path0) of
         {error, Reason} ->
           {error, Reason};
         {ok, FullPath} ->
+          case is_sensitive_basename(FullPath) of
+            true ->
+              {error, {kotlin_error, <<"RuntimeException">>, iolist_to_binary([<<"Read: access denied: ">>, openagentic_fs:norm_abs_bin(FullPath)])}};
+            false ->
           case {optional_int_field(Input, [<<"offset">>, offset], <<"offset">>), optional_int_field(Input, [<<"limit">>, limit], <<"limit">>)} of
             {{error, Msg1}, _} ->
               {error, {kotlin_error, <<"IllegalArgumentException">>, Msg1}};
@@ -45,6 +50,7 @@ run(Input0, Ctx0) ->
                       read_file(FullPath, Offset, Limit0)
                   end
               end
+          end
           end
       end
   end.
@@ -355,6 +361,24 @@ image_mime(Path0) ->
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);
 ensure_map(_) -> #{}.
+
+is_sensitive_basename(Path0) ->
+  Path = to_bin(Path0),
+  Base = string:lowercase(to_bin(filename:basename(binary_to_list(Path)))),
+  case Base of
+    <<".env">> -> true;
+    <<"id_rsa">> -> true;
+    <<"id_ed25519">> -> true;
+    _ ->
+      case Base of
+        <<".env.", _/binary>> ->
+          Base =/= <<".env.example">>;
+        _ ->
+          Ext0 = filename:extension(binary_to_list(Base)),
+          Ext = string:lowercase(Ext0),
+          lists:member(Ext, [".pem", ".key", ".p12", ".pfx"])
+      end
+  end.
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> iolist_to_binary(L);

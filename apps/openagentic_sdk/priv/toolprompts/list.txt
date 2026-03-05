@@ -1,11 +1,14 @@
-Lists files under a directory within the project root.
+Lists files under a directory within the project repo or the workflow/session workspace.
 
 Project root:
 - {{project_dir}}
+
+Workspace root:
+- {{workspace_dir}}
 
 Usage:
 - Provide a directory path via `path` (or `dir` / `directory`).
 - Paths may be absolute or relative; relative paths are resolved against the project root.
 - Any path that is outside the project root will be rejected.
+- To list under the workspace, prefix paths with `workspace:` (e.g. `workspace:deliverables`).
 - Use this to quickly discover available files before calling `Read` / `Edit` / `Write`.
-

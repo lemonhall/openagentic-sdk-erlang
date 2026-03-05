@@ -11,7 +11,8 @@ description() -> <<"Apply a precise edit (string replace) to a file.">>.
 run(Input0, Ctx0) ->
   Input = ensure_map(Input0),
   Ctx = ensure_map(Ctx0),
-  ProjectDir = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  _ProjectDir = maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, ".")),
+  WorkspaceDir = maps:get(workspace_dir, Ctx, maps:get(workspaceDir, Ctx, undefined)),
 
   FilePath0 = first_value(Input, [<<"file_path">>, file_path, <<"filePath">>, filePath]),
   Old0 = first_value(Input, [<<"old">>, old, <<"old_string">>, old_string, <<"oldString">>, oldString]),
@@ -50,12 +51,22 @@ run(Input0, Ctx0) ->
                 false ->
                   {error, {kotlin_error, <<"IllegalArgumentException">>, <<"Edit: 'count' must be a non-negative integer">>}};
                 true ->
-                  case openagentic_fs:resolve_tool_path(ProjectDir, FilePath) of
-                    {error, Reason} ->
-                      {error, Reason};
-                    {ok, FullPath0} ->
-                      FullPath = ensure_list(FullPath0),
-                      edit_file(FullPath, Old, New, Count, Before, After)
+                  case WorkspaceDir of
+                    undefined ->
+                      {error, {kotlin_error, <<"IllegalArgumentException">>, <<"Edit: missing workspace_dir in tool context">>}};
+                    _ ->
+                      case openagentic_fs:resolve_write_path(WorkspaceDir, FilePath) of
+                        {error, Reason} ->
+                          {error, Reason};
+                        {ok, FullPath0} ->
+                          FullPath = ensure_list(FullPath0),
+                          case is_sensitive_basename(FullPath) of
+                            true ->
+                              {error, {kotlin_error, <<"IllegalArgumentException">>, <<"Edit: sensitive file name is not allowed">>}};
+                            false ->
+                              edit_file(FullPath, Old, New, Count, Before, After)
+                          end
+                      end
                   end
               end
           end
@@ -222,6 +233,23 @@ to_bin(L) when is_list(L) -> unicode:characters_to_binary(L, utf8);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> iolist_to_binary(integer_to_list(I));
 to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other]), utf8).
+
+is_sensitive_basename(Path0) ->
+  Path = ensure_list(Path0),
+  Base = string:lowercase(filename:basename(string:trim(Path))),
+  case Base of
+    ".env" -> true;
+    "id_rsa" -> true;
+    "id_ed25519" -> true;
+    _ ->
+      case lists:prefix(".env.", Base) of
+        true ->
+          Base =/= ".env.example";
+        false ->
+          Ext = string:lowercase(filename:extension(Base)),
+          lists:member(Ext, [".pem", ".key", ".p12", ".pfx"])
+      end
+  end.
 
 bool_true(true) -> true;
 bool_true(false) -> false;
