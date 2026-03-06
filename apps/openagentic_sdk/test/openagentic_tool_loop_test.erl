@@ -77,6 +77,27 @@ tool_loop_externalizes_large_tool_output_test() ->
   ?assert(filelib:is_file(binary_to_list(Path))),
   ?assertEqual(<<"OK">>, maps:get(final_text, Res)).
 
+tool_loop_auto_wires_research_task_subagent_test() ->
+  Root = test_root(),
+  _ = erlang:erase(openagentic_test_task_step),
+  Opts = #{
+    session_root => Root,
+    provider_mod => openagentic_testing_provider_task,
+    api_key => <<"dummy">>,
+    model => <<"dummy">>,
+    permission_gate => openagentic_permissions:bypass(),
+    tools => [openagentic_tool_task],
+    task_agents => [openagentic_built_in_subagents:research_agent()],
+    max_steps => 5
+  },
+  {ok, Res} = openagentic_runtime:query(<<"hi">>, Opts),
+  Sid = maps:get(session_id, Res),
+  Events = openagentic_session_store:read_events(Root, Sid),
+  ?assert(has_type(Events, <<"tool.use">>)),
+  ?assert(has_type(Events, <<"tool.result">>)),
+  ?assert(has_ok_tool_result(Events)),
+  ?assertEqual(<<"OK">>, maps:get(final_text, Res)).
+
 has_type(Events, TypeBin) ->
   lists:any(
     fun (E0) ->
@@ -96,6 +117,16 @@ has_error_type(Events, TypeBin) ->
         _ ->
           false
       end
+    end,
+    Events
+  ).
+
+has_ok_tool_result(Events) ->
+  lists:any(
+    fun (E0) ->
+      E = ensure_map(E0),
+      maps:get(<<"type">>, E, maps:get(type, E, <<>>)) =:= <<"tool.result">> andalso
+        maps:get(<<"is_error">>, E, maps:get(is_error, E, true)) =:= false
     end,
     Events
   ).

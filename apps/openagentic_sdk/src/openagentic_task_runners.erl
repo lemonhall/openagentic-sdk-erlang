@@ -2,7 +2,8 @@
 
 -export([
   compose/1,
-  built_in_explore/1
+  built_in_explore/1,
+  built_in_research/1
 ]).
 
 %% Compose multiple task runners.
@@ -71,7 +72,7 @@ built_in_explore(BaseOpts0) ->
           system_prompt => SystemPrompt
         }
       ),
-    SubOpts = SubOpts0#{event_sink => sub_event_sink(Emit)},
+    SubOpts = SubOpts0#{event_sink => sub_event_sink(<<"explore">>, Emit)},
     case openagentic_runtime:query(Prompt, SubOpts) of
       {ok, #{session_id := SubSessionId0, final_text := FinalText0}} ->
         SubSessionId = to_bin(SubSessionId0),
@@ -90,28 +91,82 @@ built_in_explore(BaseOpts0) ->
     end
   end.
 
-sub_event_sink(Emit) ->
+built_in_research(BaseOpts0) ->
+  BaseOpts = ensure_map(BaseOpts0),
+  AllowedTools = [<<"WebSearch">>, <<"WebFetch">>],
+  ToolMods = [openagentic_tool_websearch, openagentic_tool_webfetch],
+  SystemPrompt = openagentic_built_in_subagents:research_system_prompt(),
+  MaxSteps = maps:get(subagent_max_steps, BaseOpts, maps:get(subagentMaxSteps, BaseOpts, 25)),
+  fun (Agent0, Prompt0, TaskCtx0) ->
+    Agent = string:lowercase(string:trim(to_bin(Agent0))),
+    case Agent of
+      <<"research">> -> ok;
+      _ -> erlang:error({unhandled_agent, Agent})
+    end,
+    Prompt = string:trim(to_bin(Prompt0)),
+    TaskCtx = ensure_map(TaskCtx0),
+    ParentSessionId = to_bin(maps:get(session_id, TaskCtx, <<>>)),
+    ParentToolUseId = to_bin(maps:get(tool_use_id, TaskCtx, <<>>)),
+    Emit = maps:get(emit_progress, TaskCtx, undefined),
+    _ = maybe_emit(Emit, <<"子任务(research)：启动">>),
+    SubOpts0 =
+      maps:merge(
+        BaseOpts,
+        #{
+          tools => ToolMods,
+          allowed_tools => AllowedTools,
+          permission_gate => openagentic_permissions:bypass(),
+          task_runner => undefined,
+          task_agents => [],
+          resume_session_id => undefined,
+          resumeSessionId => undefined,
+          include_partial_messages => false,
+          max_steps => MaxSteps,
+          system_prompt => SystemPrompt
+        }
+      ),
+    SubOpts = SubOpts0#{event_sink => sub_event_sink(<<"research">>, Emit)},
+    case openagentic_runtime:query(Prompt, SubOpts) of
+      {ok, #{session_id := SubSessionId0, final_text := FinalText0}} ->
+        SubSessionId = to_bin(SubSessionId0),
+        Answer = string:trim(to_bin(FinalText0)),
+        #{
+          <<"ok">> => true,
+          <<"agent">> => Agent,
+          <<"parent_session_id">> => ParentSessionId,
+          <<"parent_tool_use_id">> => ParentToolUseId,
+          <<"sub_session_id">> => SubSessionId,
+          <<"answer">> => Answer
+        };
+      {error, Reason} ->
+        _ = maybe_emit(Emit, <<"子任务(research)：运行错误">>),
+        erlang:error({research_task_failed, Reason})
+    end
+  end.
+
+sub_event_sink(Label0, Emit) ->
   fun (Event0) ->
     case Emit of
       F when is_function(F, 1) ->
         Event = ensure_map(Event0),
+        Label = to_bin(Label0),
         Type = to_bin(maps:get(type, Event, maps:get(<<"type">>, Event, <<>>))),
         case Type of
           <<"tool.use">> ->
             Name = to_bin(maps:get(name, Event, maps:get(<<"name">>, Event, <<>>))),
             Input = ensure_map(maps:get(input, Event, maps:get(<<"input">>, Event, #{}))),
-            F(iolist_to_binary([<<"子任务(explore)：">>, humanize_tool_use(Name, Input)]));
+            F(iolist_to_binary([<<"子任务(">>, Label, <<")：">>, humanize_tool_use(Name, Input)]));
           <<"tool.result">> ->
             IsError = maps:get(is_error, Event, maps:get(<<"is_error">>, Event, false)),
             case IsError of
               true ->
                 Et = to_bin(maps:get(error_type, Event, maps:get(<<"error_type">>, Event, <<"error">>))),
-                F(iolist_to_binary([<<"子任务(explore)：工具失败 ">>, Et]));
+                F(iolist_to_binary([<<"子任务(">>, Label, <<")：工具失败 ">>, Et]));
               false -> ok
             end;
           <<"runtime.error">> ->
             Et = to_bin(maps:get(error_type, Event, maps:get(<<"error_type">>, Event, <<"RuntimeError">>))),
-            F(iolist_to_binary([<<"子任务(explore)：运行错误 ">>, Et]));
+            F(iolist_to_binary([<<"子任务(">>, Label, <<")：运行错误 ">>, Et]));
           _ ->
             ok
         end;
@@ -136,6 +191,14 @@ humanize_tool_use(<<"Grep">>, Input) ->
   P0 = first_non_empty(Input, [<<"pattern">>, pattern, <<"query">>, query]),
   P = head(P0, 40),
   case byte_size(P) > 0 of true -> iolist_to_binary([<<"搜索文本：">>, P]); false -> <<"搜索文本">> end;
+humanize_tool_use(<<"WebSearch">>, Input) ->
+  P0 = first_non_empty(Input, [<<"query">>, query]),
+  P = head(P0, 40),
+  case byte_size(P) > 0 of true -> iolist_to_binary([<<"网页搜索：">>, P]); false -> <<"网页搜索">> end;
+humanize_tool_use(<<"WebFetch">>, Input) ->
+  P0 = first_non_empty(Input, [<<"url">>, url]),
+  P = head(P0, 60),
+  case byte_size(P) > 0 of true -> iolist_to_binary([<<"抓取网页：">>, P]); false -> <<"抓取网页">> end;
 humanize_tool_use(Name0, _Input) ->
   Name = string:trim(to_bin(Name0)),
   case byte_size(Name) > 0 of true -> Name; false -> <<"工具调用">> end.
@@ -193,4 +256,3 @@ to_bin(L) when is_list(L) -> unicode:characters_to_binary(L, utf8);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> iolist_to_binary(integer_to_list(I));
 to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other]), utf8).
-

@@ -181,6 +181,11 @@
       "role": "hubu",
       "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
       "prompt": { "type": "file", "path": "workflows/prompts/hubu_data.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand", "Task"],
+        "deny": ["Bash"]
+      },
       "output_contract": {
         "type": "markdown_sections",
         "required": ["处理结果", "产物/引用", "交接给尚书省"]
@@ -200,8 +205,8 @@
       "prompt": { "type": "file", "path": "workflows/prompts/libu_docs.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
-        "deny": ["Bash", "Task"]
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand", "Task"],
+        "deny": ["Bash"]
       },
       "output_contract": {
         "type": "markdown_sections",
@@ -222,8 +227,8 @@
       "prompt": { "type": "file", "path": "workflows/prompts/bingbu_engineering.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
-        "deny": ["Task"]
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand", "Task"],
+        "deny": ["Bash"]
       },
       "output_contract": {
         "type": "markdown_sections",
@@ -242,6 +247,11 @@
       "role": "xingbu",
       "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
       "prompt": { "type": "file", "path": "workflows/prompts/xingbu_compliance.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand", "Task"],
+        "deny": ["Bash"]
+      },
       "output_contract": {
         "type": "markdown_sections",
         "required": ["处理结果", "风险清单", "建议的硬门槛", "交接给尚书省"]
@@ -261,8 +271,8 @@
       "prompt": { "type": "file", "path": "workflows/prompts/gongbu_infra.md" },
       "tool_policy": {
         "mode": "default",
-        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand"],
-        "deny": ["Bash", "Task"]
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand", "Task"],
+        "deny": ["Bash"]
       },
       "output_contract": {
         "type": "markdown_sections",
@@ -281,6 +291,11 @@
       "role": "libu_hr",
       "input": { "type": "step_output", "step_id": "shangshu_dispatch" },
       "prompt": { "type": "file", "path": "workflows/prompts/libu_hr_people.md" },
+      "tool_policy": {
+        "mode": "default",
+        "allow": ["List", "Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch", "Skill", "SlashCommand", "Task"],
+        "deny": ["Bash"]
+      },
       "output_contract": {
         "type": "markdown_sections",
         "required": ["处理结果", "职责与协作约定", "交接给尚书省"]

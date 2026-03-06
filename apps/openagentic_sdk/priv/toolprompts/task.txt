@@ -8,6 +8,7 @@ When using the Task tool, you must specify an agent parameter to select which ag
 When to use the Task tool:
 - When you need to delegate a complex, multi-step task to a specialized subagent.
 - When you are instructed to execute custom slash commands. Use the Task tool with the slash command invocation as the entire prompt. The slash command can take arguments. For example: Task(agent="explore", prompt="/check-file path/to/file.py")
+- When one specific claim needs public-web evidence, use `Task(agent="research", prompt="Collect 1-3 public facts/timelines/numbers + Sources for this claim; do not rewrite the whole answer.")`
 
 When NOT to use the Task tool:
 - If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly

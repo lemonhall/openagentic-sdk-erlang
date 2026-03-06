@@ -115,8 +115,8 @@ query(Prompt0, Opts0) ->
   ResumeMaxEvents = maps:get(resume_max_events, Opts, maps:get(resumeMaxEvents, Opts, 1000)),
   ResumeMaxBytes = maps:get(resume_max_bytes, Opts, maps:get(resumeMaxBytes, Opts, 2000000)),
   TaskRunner =
-    case {TaskRunner0, openagentic_task_agents:has_agent(<<"explore">>, TaskAgents)} of
-      {undefined, true} -> openagentic_task_runners:built_in_explore(Opts);
+    case TaskRunner0 of
+      undefined -> auto_task_runner(TaskAgents, Opts);
       _ -> TaskRunner0
     end,
 
@@ -928,6 +928,26 @@ build_provider_opts(State, InputItems, ToolSchemas) ->
     <<>> -> Opts1;
     "" -> Opts1;
     VHdr -> Opts1#{api_key_header => VHdr}
+  end.
+
+auto_task_runner(TaskAgents0, Opts) ->
+  TaskAgents = openagentic_task_agents:normalize(TaskAgents0),
+  Runners0 =
+    [
+      maybe_add_built_in_runner(<<"explore">>, fun openagentic_task_runners:built_in_explore/1, TaskAgents, Opts),
+      maybe_add_built_in_runner(<<"research">>, fun openagentic_task_runners:built_in_research/1, TaskAgents, Opts)
+    ],
+  Runners = [R || R <- Runners0, R =/= undefined],
+  case Runners of
+    [] -> undefined;
+    [Runner] -> Runner;
+    _ -> openagentic_task_runners:compose(Runners)
+  end.
+
+maybe_add_built_in_runner(Name, Builder, TaskAgents, Opts) ->
+  case openagentic_task_agents:has_agent(Name, TaskAgents) of
+    true -> Builder(Opts);
+    false -> undefined
   end.
 
 pick_opt(_Map, []) ->

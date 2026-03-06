@@ -316,7 +316,8 @@ runtime_opts(Flags0) ->
     end,
 
   Explore = openagentic_built_in_subagents:explore_agent(),
-  TaskAgents = [Explore],
+  Research = openagentic_built_in_subagents:research_agent(),
+  TaskAgents = [Explore, Research],
 
   case {ApiKey, Model} of
     {undefined, _} ->

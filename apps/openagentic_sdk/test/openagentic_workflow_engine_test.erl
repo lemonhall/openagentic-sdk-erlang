@@ -454,6 +454,57 @@ three_provinces_dispatch_prompt_treats_assertive_public_events_as_working_facts_
   ?assert(binary:match(Bin, <<"workspace:staging/libu/poem.md">>) =/= nomatch),
   ok.
 
+three_provinces_dispatch_prompt_enables_argument_level_evidence_augmentation_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_dispatch.md"])),
+  ?assert(binary:match(Bin, <<"ARGUMENT_EVIDENCE_AUGMENTATION">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"Task(agent=\"research\"">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"不要把整篇改写成 research 报告"/utf8>>) =/= nomatch),
+  ok.
+
+three_provinces_ministry_steps_allow_task_research_subagent_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "three-provinces-six-ministries.v1.json"])),
+  Wf = ensure_map(openagentic_json:decode(Bin)),
+  Steps = ensure_list_value(maps:get(<<"steps">>, Wf, [])),
+  lists:foreach(
+    fun (StepId) ->
+      Step = find_step_by_id(StepId, Steps),
+      Policy = ensure_map(maps:get(<<"tool_policy">>, Step, #{})),
+      Allow = [to_bin(X) || X <- ensure_list_value(maps:get(<<"allow">>, Policy, []))],
+      Deny = [to_bin(X) || X <- ensure_list_value(maps:get(<<"deny">>, Policy, []))],
+      ?assert(lists:member(<<"Task">>, Allow)),
+      ?assertEqual(false, lists:member(<<"Task">>, Deny))
+    end,
+    [
+      <<"hubu_data">>,
+      <<"libu_docs">>,
+      <<"bingbu_engineering">>,
+      <<"xingbu_compliance">>,
+      <<"gongbu_infra">>,
+      <<"libu_hr_people">>
+    ]
+  ),
+  ok.
+
+three_provinces_ministry_prompts_embed_argument_level_evidence_rules_test() ->
+  lists:foreach(
+    fun (Path) ->
+      {ok, Bin} = file:read_file(Path),
+      ?assert(binary:match(Bin, <<"ARGUMENT_EVIDENCE_AUGMENTATION">>) =/= nomatch),
+      ?assert(binary:match(Bin, <<"Task(agent=\"research\"">>) =/= nomatch),
+      ?assert(binary:match(Bin, <<"不要把整篇改写成 research 报告"/utf8>>) =/= nomatch)
+    end,
+    [
+      filename:join(["workflows", "prompts", "hubu_data.md"]),
+      filename:join(["workflows", "prompts", "libu_docs.md"]),
+      filename:join(["workflows", "prompts", "bingbu_engineering.md"]),
+      filename:join(["workflows", "prompts", "xingbu_compliance.md"]),
+      filename:join(["workflows", "prompts", "gongbu_infra.md"]),
+      filename:join(["workflows", "prompts", "libu_hr_people.md"]),
+      filename:join(["workflows", "prompts", "zhongshu_plan.md"])
+    ]
+  ),
+  ok.
+
 three_provinces_aggregate_prompt_requires_substantive_synthesis_test() ->
   {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_aggregate.md"])),
   ?assert(binary:match(Bin, <<"AGGREGATE_SUBSTANTIVE_SYNTHESIS">>) =/= nomatch),

@@ -196,3 +196,12 @@ curl --request POST \
 ## 一句话交接
 
 > 保留六部当前高质量论证方式，不要整篇 research 化；只在关键论据需要事实、数字、时间线时，给该论据挂一个 subagent / deep-research 式取证动作；`WebFetch` 的反爬兜底只走 Tavily Extract，不走 reader。
+
+## 2026-03-06 实施回写
+
+- 已新增内置 `research` 子代理，并让 runtime 自动按 `task_agents` 装配 built-in runners。
+- 已将 `three-provinces-six-ministries.v1` 的六部 step `tool_policy` 放开 `Task`，可直接发起 `Task(agent="research", ...)`。
+- 已把 `shangshu_dispatch`、`zhongshu_plan`、六部 prompts 改成“论据级证据增强”语义：保留原有论证骨架，不整篇 research 化，只对关键论据补 1~3 条公开证据。
+- 已在 `WebFetch` 接入 Tavily Extract fallback：命中 JS 壳 / Cloudflare / 401/403/429 / 空正文时，优先尝试 Tavily Extract，并在输出中保留 `fetch_via=tavily_extract` 与 `origin_status`。
+- 已补齐 eunit 覆盖：`Task/research` 子代理自动装配、workflow prompt/tool-policy、以及 `WebFetch -> Tavily Extract` 回退。
+- 验证结果：`rebar3 eunit` 全量通过（`165 tests, 0 failures`）。

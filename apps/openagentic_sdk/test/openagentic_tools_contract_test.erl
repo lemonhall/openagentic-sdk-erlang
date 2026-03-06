@@ -130,6 +130,48 @@ webfetch_clean_html_returns_allowlisted_html_test() ->
     ),
   ?assertEqual(<<"<h1>Title</h1>\n<p>Hello <a href=\"https://example.com/rel\">Link</a></p>">>, maps:get(text, Out)).
 
+webfetch_markdown_falls_back_to_tavily_extract_on_js_shell_test() ->
+  Html = <<"<html><head><title>Just a moment...</title></head><body>Just a moment...</body></html>">>,
+  Transport =
+    fun (_Url, _Headers) ->
+      {ok, {403, #{<<"content-type">> => <<"text/html">>}, Html}}
+    end,
+  HttpTransport =
+    fun (post, Url, Headers, Body) ->
+      ?assertEqual(<<"https://api.tavily.com/extract">>, iolist_to_binary(Url)),
+      ?assertEqual(true, lists:keymember("authorization", 1, Headers)),
+      Payload = openagentic_json:decode(iolist_to_binary(Body)),
+      ?assertEqual(<<"https://example.com/x">>, maps:get(<<"urls">>, Payload)),
+      ?assertEqual(<<"markdown">>, maps:get(<<"format">>, Payload)),
+      Resp =
+        openagentic_json:encode(
+          #{
+            results => [
+              #{
+                url => <<"https://example.com/x">>,
+                title => <<"Recovered">>,
+                raw_content => <<"# Recovered\n\nBody from Tavily.\n\n- Fact A">>
+              }
+            ]
+          }
+        ),
+      {ok, {200, [], Resp}}
+    end,
+  {ok, Out} =
+    openagentic_tool_webfetch:run(
+      #{url => <<"https://example.com/x">>, mode => <<"markdown">>},
+      #{
+        webfetch_transport => Transport,
+        webfetch_http_transport => HttpTransport,
+        tavily_api_key => <<"test-tavily-key">>
+      }
+    ),
+  ?assertEqual(<<"tavily_extract">>, maps:get(fetch_via, Out)),
+  ?assertEqual(403, maps:get(origin_status, Out)),
+  ?assertEqual(200, maps:get(status, Out)),
+  ?assertEqual(<<"Recovered">>, maps:get(title, Out)),
+  ?assert(binary:match(maps:get(text, Out), <<"Body from Tavily.">>) =/= nomatch).
+
 websearch_requires_query_test() ->
   {error, {kotlin_error, <<"IllegalArgumentException">>, <<"WebSearch: 'query' must be a non-empty string">>}} =
     openagentic_tool_websearch:run(#{query => <<"">>}, #{}).

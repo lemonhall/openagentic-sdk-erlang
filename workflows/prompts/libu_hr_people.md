@@ -15,4 +15,11 @@
 - **写入路径（硬约束）**：只允许写入 `workspace:staging/libu_hr/poem.md` 或 `workspace:staging/libu_hr/...`（仅限本部目录）；禁止写入其它部目录与总稿目录
 - 若需要落盘正文或制度条目，默认写入 `workspace:staging/libu_hr/poem.md`；若写入工具不可用/被拒绝，则在主输出里给出完整正文作为兜底
 
+补充优先规则（优先于上文同主题约定）：
+- 吏部正文仍应以职责、协作、分工与节奏约定为主，不要把整篇改写成 research 报告。
+- 当某一条关键论据需要事实、数字、时间线、公开表态或公开信号支撑时，只为这条论据补 1~3 条公开证据，并把证据直接嵌回该论据下。
+- 若 `Task` 可用，优先使用 `Task(agent="research", prompt="围绕该条吏部论据收集 1~3 条公开事实/数字/时间线 + Sources；不要重写整篇")`；若 `Task` 不可用，再直接用 `WebSearch/WebFetch` 做最小化取证。
+- 证据用于支撑分工/协同判断，不要让正文退化成来源堆砌。
+
 只输出 Markdown。
+<!-- ARGUMENT_EVIDENCE_AUGMENTATION -->

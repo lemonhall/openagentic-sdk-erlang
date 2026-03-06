@@ -38,7 +38,6 @@ run(Input0, Ctx0) ->
         Transport = maps:get(webfetch_transport, Ctx, undefined),
         {FinalUrl, Status, RespHeaders, Body, Chain} = fetch_follow_redirects(RequestedUrl, Headers, ?MAX_REDIRECTS, Transport),
         Body2 = if byte_size(Body) > ?MAX_BYTES -> binary:part(Body, 0, ?MAX_BYTES); true -> Body end,
-        ContentType = maps:get(<<"content-type">>, RespHeaders, undefined),
         RawText = to_bin_safe_utf8(Body2),
         Text0 =
           case Mode of
@@ -48,22 +47,9 @@ run(Input0, Ctx0) ->
             <<"markdown">> -> sanitize_to_markdown(RawText, FinalUrl);
             _ -> sanitize_to_clean_html(RawText, FinalUrl)
           end,
-        Truncated = byte_size(Text0) > MaxChars,
-        Limited = if Truncated -> binary:part(Text0, 0, MaxChars); true -> Text0 end,
-        Title = extract_title(RawText),
-        Out0 = #{
-          requested_url => RequestedUrl,
-          url => FinalUrl,
-          final_url => FinalUrl,
-          redirect_chain => Chain,
-          status => Status,
-          title => Title,
-          mode => Mode,
-          max_chars => MaxChars,
-          truncated => Truncated,
-          text => Limited
-        },
-        Out = case ContentType of undefined -> Out0; _ -> Out0#{content_type => ContentType} end,
+        Title0 = extract_title(RawText),
+        Extra = maybe_tavily_extract(RequestedUrl, FinalUrl, Status, RespHeaders, RawText, Text0, Mode, Ctx),
+        Out = build_output(RequestedUrl, FinalUrl, Chain, Status, Title0, Mode, MaxChars, Text0, RespHeaders, Extra),
         {ok, Out}
       catch
         throw:Reason -> {error, Reason};
@@ -73,6 +59,311 @@ run(Input0, Ctx0) ->
 
 lower_headers(M) ->
   maps:from_list([{string:lowercase(to_bin(K)), to_bin(V)} || {K, V} <- maps:to_list(M)]).
+
+build_output(RequestedUrl, FinalUrl, Chain, Status0, Title0, Mode, MaxChars, Text0, RespHeaders0, Extra0) ->
+  RespHeaders = ensure_map(RespHeaders0),
+  Extra = ensure_map(Extra0),
+  Status = maps:get(status, Extra, Status0),
+  Title = maps:get(title, Extra, Title0),
+  Text = maps:get(text, Extra, Text0),
+  Url = maps:get(url, Extra, FinalUrl),
+  FinalUrl2 = maps:get(final_url, Extra, FinalUrl),
+  Truncated = byte_size(Text) > MaxChars,
+  Limited = if Truncated -> binary:part(Text, 0, MaxChars); true -> Text end,
+  Out0 = #{
+    requested_url => RequestedUrl,
+    url => Url,
+    final_url => FinalUrl2,
+    redirect_chain => Chain,
+    status => Status,
+    title => Title,
+    mode => Mode,
+    max_chars => MaxChars,
+    truncated => Truncated,
+    text => Limited
+  },
+  ContentType = maps:get(content_type, Extra, maps:get(<<"content-type">>, RespHeaders, undefined)),
+  Out1 = case ContentType of undefined -> Out0; _ -> Out0#{content_type => ContentType} end,
+  maps:merge(Out1, maps:without([status, title, text, url, final_url, content_type], Extra)).
+
+maybe_tavily_extract(RequestedUrl, FinalUrl, Status, RespHeaders, RawText, Text0, Mode, Ctx0) ->
+  Ctx = ensure_map(Ctx0),
+  case should_use_tavily_extract(Status, RespHeaders, RawText, Text0) of
+    false -> #{};
+    true ->
+      DotEnv = tool_dotenv(Ctx),
+      TavilyKey =
+        first_non_blank([
+          maps:get(tavily_api_key, Ctx, maps:get(tavilyApiKey, Ctx, undefined)),
+          os:getenv("TAVILY_API_KEY"),
+          openagentic_dotenv:get(<<"TAVILY_API_KEY">>, DotEnv)
+        ]),
+      case byte_size(to_bin(TavilyKey)) > 0 of
+        false -> #{};
+        true ->
+          Endpoint0 =
+            first_non_blank([
+              maps:get(tavily_extract_url, Ctx, maps:get(tavilyExtractUrl, Ctx, undefined)),
+              os:getenv("TAVILY_EXTRACT_URL"),
+              openagentic_dotenv:get(<<"TAVILY_EXTRACT_URL">>, DotEnv),
+              os:getenv("TAVILY_URL"),
+              openagentic_dotenv:get(<<"TAVILY_URL">>, DotEnv)
+            ]),
+          Endpoint = tavily_extract_endpoint(Endpoint0),
+          case tavily_extract(FinalUrl, Mode, TavilyKey, Endpoint, Ctx) of
+            {ok, Out} ->
+              Out#{
+                fetch_via => <<"tavily_extract">>,
+                origin_status => Status,
+                requested_url => RequestedUrl,
+                final_url => FinalUrl,
+                tavily_url => Endpoint
+              };
+            {error, _} ->
+              #{}
+          end
+      end
+  end.
+
+should_use_tavily_extract(Status, RespHeaders0, RawText0, Text0) ->
+  RespHeaders = ensure_map(RespHeaders0),
+  ContentType = string:lowercase(to_bin(maps:get(<<"content-type">>, RespHeaders, <<>>))),
+  RawText = string:lowercase(to_bin_safe_utf8(RawText0)),
+  Text = string:lowercase(to_bin_safe_utf8(Text0)),
+  BlockedStatus = lists:member(Status, [401, 403, 429]),
+  Htmlish =
+    (byte_size(ContentType) =:= 0) orelse
+      (binary:match(ContentType, <<"text/html">>) =/= nomatch) orelse
+      (binary:match(RawText, <<"<html">>) =/= nomatch),
+  Placeholder = lists:any(
+    fun (Pat) ->
+      (binary:match(RawText, Pat) =/= nomatch) orelse (binary:match(Text, Pat) =/= nomatch)
+    end,
+    [
+      <<"please enable javascript">>,
+      <<"please enable js">>,
+      <<"just a moment">>,
+      <<"cloudflare">>,
+      <<"attention required">>,
+      <<"checking your browser">>,
+      <<"verify you are human">>,
+      <<"enable cookies">>
+    ]
+  ),
+  Empty = Htmlish andalso byte_size(string:trim(Text)) =:= 0,
+  BlockedStatus orelse (Htmlish andalso (Placeholder orelse Empty)).
+
+tavily_extract(Url0, Mode0, TavilyKey, Endpoint0, Ctx) ->
+  Url = to_bin(Url0),
+  Mode = string:lowercase(string:trim(to_bin(Mode0))),
+  Endpoint = to_bin(Endpoint0),
+  Payload = #{
+    urls => Url,
+    query => <<"Extract the main readable content, especially facts, numbers, dates, timelines, and public signals from this page.">>,
+    chunks_per_source => 3,
+    extract_depth => <<"basic">>,
+    include_images => false,
+    include_favicon => false,
+    format => <<"markdown">>,
+    timeout => <<"None">>,
+    include_usage => false
+  },
+  Body = openagentic_json:encode(Payload),
+  Headers = [{"authorization", binary_to_list(<<"Bearer ", (to_bin(TavilyKey))/binary>>)}, {"content-type", "application/json"}],
+  case http_request(post, Endpoint, Headers, Body, Ctx) of
+    {ok, {Status, _RespHeaders, RespBody}} when Status >= 200, Status < 300 ->
+      Obj = ensure_map(openagentic_json:decode(to_bin_safe_utf8(RespBody))),
+      case first_tavily_result(Obj) of
+        {ok, #{url := ResultUrl, title := Title, markdown := Md}} ->
+          Text = tavily_text_for_mode(Md, Mode),
+          {ok, #{status => 200, url => ResultUrl, title => Title, text => Text, content_type => tavily_content_type(Mode)}};
+        {error, Reason} ->
+          {error, Reason}
+      end;
+    {ok, {Status, _RespHeaders, RespBody}} ->
+      {error, {tavily_extract_http_error, Status, trim_bin(to_bin_safe_utf8(RespBody))}};
+    {error, Reason} ->
+      {error, Reason}
+  end.
+
+first_tavily_result(Obj0) ->
+  Obj = ensure_map(Obj0),
+  Results =
+    case maps:get(<<"results">>, Obj, []) of
+      L when is_list(L) -> L;
+      _ -> []
+    end,
+  first_tavily_result_loop(Results).
+
+first_tavily_result_loop([]) -> {error, no_tavily_extract_result};
+first_tavily_result_loop([El0 | Rest]) ->
+  El = ensure_map(El0),
+  Url = string:trim(to_bin(maps:get(<<"url">>, El, <<>>))),
+  Title = string:trim(to_bin(maps:get(<<"title">>, El, <<>>))),
+  Md =
+    first_non_blank([
+      maps:get(<<"raw_content">>, El, undefined),
+      maps:get(<<"content">>, El, undefined),
+      maps:get(<<"text">>, El, undefined)
+    ]),
+  case byte_size(to_bin(Md)) > 0 of
+    true -> {ok, #{url => Url, title => Title, markdown => normalize_markdown(to_bin(Md))}};
+    false -> first_tavily_result_loop(Rest)
+  end.
+
+tavily_text_for_mode(Md0, Mode0) ->
+  Md = normalize_markdown(to_bin(Md0)),
+  Mode = string:lowercase(string:trim(to_bin(Mode0))),
+  case Mode of
+    <<"text">> -> markdown_to_text(Md);
+    <<"clean_html">> -> markdown_to_clean_html(Md);
+    _ -> Md
+  end.
+
+tavily_content_type(Mode0) ->
+  Mode = string:lowercase(string:trim(to_bin(Mode0))),
+  case Mode of
+    <<"clean_html">> -> <<"text/html">>;
+    <<"text">> -> <<"text/plain">>;
+    _ -> <<"text/markdown">>
+  end.
+
+markdown_to_text(Md0) ->
+  Md = normalize_markdown(Md0),
+  Lines = [markdown_to_text_line(L) || L <- binary:split(Md, <<"\n">>, [global])],
+  string:trim(iolist_to_binary(lists:join(<<"\n">>, Lines))).
+
+markdown_to_text_line(Line0) ->
+  Line1 = string:trim(to_bin(Line0)),
+  Line2 = strip_heading_prefix(Line1),
+  Line3 =
+    case Line2 of
+      <<"- ", Rest/binary>> -> Rest;
+      <<"* ", Rest/binary>> -> Rest;
+      _ -> Line2
+    end,
+  re:replace(Line3, <<"\[([^\]]+)\]\(([^\)]+)\)">>, <<"\1 (\2)">>, [global, {return, binary}]).
+
+strip_heading_prefix(<<"# ", Rest/binary>>) -> Rest;
+strip_heading_prefix(<<"## ", Rest/binary>>) -> Rest;
+strip_heading_prefix(<<"### ", Rest/binary>>) -> Rest;
+strip_heading_prefix(<<"#### ", Rest/binary>>) -> Rest;
+strip_heading_prefix(<<"##### ", Rest/binary>>) -> Rest;
+strip_heading_prefix(<<"###### ", Rest/binary>>) -> Rest;
+strip_heading_prefix(Line) -> Line.
+
+markdown_to_clean_html(Md0) ->
+  Md = normalize_markdown(Md0),
+  Blocks = [string:trim(B) || B <- binary:split(Md, <<"\n\n">>, [global]), byte_size(string:trim(B)) > 0],
+  HtmlBlocks = [markdown_block_to_html(B) || B <- Blocks],
+  iolist_to_binary(lists:join(<<"\n">>, HtmlBlocks)).
+
+markdown_block_to_html(<<"# ", Rest/binary>>) -> heading_html(1, Rest);
+markdown_block_to_html(<<"## ", Rest/binary>>) -> heading_html(2, Rest);
+markdown_block_to_html(<<"### ", Rest/binary>>) -> heading_html(3, Rest);
+markdown_block_to_html(<<"#### ", Rest/binary>>) -> heading_html(4, Rest);
+markdown_block_to_html(<<"##### ", Rest/binary>>) -> heading_html(5, Rest);
+markdown_block_to_html(<<"###### ", Rest/binary>>) -> heading_html(6, Rest);
+markdown_block_to_html(Block0) ->
+  Block = html_escape(Block0),
+  Inner = binary:replace(Block, <<"\n">>, <<"<br>">>, [global]),
+  <<"<p>", Inner/binary, "</p>">>.
+
+heading_html(Level, Text0) ->
+  Text = html_escape(Text0),
+  Tag = integer_to_binary(Level),
+  <<"<h", Tag/binary, ">", Text/binary, "</h", Tag/binary, ">">>.
+
+html_escape(B0) ->
+  B1 = binary:replace(to_bin(B0), <<"&">>, <<"&amp;">>, [global]),
+  B2 = binary:replace(B1, <<"<">>, <<"&lt;">>, [global]),
+  B3 = binary:replace(B2, <<">">>, <<"&gt;">>, [global]),
+  B4 = binary:replace(B3, <<"\"">>, <<"&quot;">>, [global]),
+  binary:replace(B4, <<"'">>, <<"&#39;">>, [global]).
+
+tool_dotenv(Ctx0) ->
+  Ctx = ensure_map(Ctx0),
+  case maps:get(project_dir, Ctx, maps:get(projectDir, Ctx, undefined)) of
+    undefined -> #{};
+    null -> #{};
+    false -> #{};
+    <<>> -> #{};
+    "" -> #{};
+    ProjectDir0 ->
+      ProjectDir = string:trim(to_bin(ProjectDir0)),
+      case byte_size(ProjectDir) > 0 of
+        false -> #{};
+        true -> openagentic_dotenv:load(filename:join([to_list(ProjectDir), ".env"]))
+      end
+  end.
+
+tavily_extract_endpoint(undefined) -> <<"https://api.tavily.com/extract">>;
+tavily_extract_endpoint(null) -> <<"https://api.tavily.com/extract">>;
+tavily_extract_endpoint(false) -> <<"https://api.tavily.com/extract">>;
+tavily_extract_endpoint(<<>>) -> <<"https://api.tavily.com/extract">>;
+tavily_extract_endpoint("") -> <<"https://api.tavily.com/extract">>;
+tavily_extract_endpoint(Url0) ->
+  Url1 = string:trim(to_bin(Url0)),
+  Url = trim_trailing_slash(Url1),
+  case ends_with(Url, <<"/extract">>) of
+    true -> Url;
+    false ->
+      case ends_with(Url, <<"/search">>) of
+        true -> <<(binary:part(Url, 0, byte_size(Url) - 7))/binary, "/extract">>;
+        false -> to_bin(openagentic_http_url:join(Url, <<"extract">>))
+      end
+  end.
+
+trim_trailing_slash(Bin0) ->
+  Bin = to_bin(Bin0),
+  case byte_size(Bin) of
+    0 -> Bin;
+    _ ->
+      case binary:last(Bin) of
+        $/ -> binary:part(Bin, 0, byte_size(Bin) - 1);
+        _ -> Bin
+      end
+  end.
+
+first_non_blank([]) -> undefined;
+first_non_blank([false | Rest]) -> first_non_blank(Rest);
+first_non_blank([undefined | Rest]) -> first_non_blank(Rest);
+first_non_blank([null | Rest]) -> first_non_blank(Rest);
+first_non_blank([V0 | Rest]) ->
+  V = string:trim(to_bin(V0)),
+  case V of
+    <<>> -> first_non_blank(Rest);
+    <<"undefined">> -> first_non_blank(Rest);
+    <<"false">> -> first_non_blank(Rest);
+    _ -> V
+  end.
+
+http_request(Method, Url0, Headers0, Body0, Ctx0) ->
+  Ctx = ensure_map(Ctx0),
+  case maps:get(webfetch_http_transport, Ctx, undefined) of
+    Fun when is_function(Fun, 4) ->
+      Fun(Method, Url0, Headers0, Body0);
+    _ ->
+      default_http_request(Method, Url0, Headers0, Body0)
+  end.
+
+default_http_request(post, Url0, Headers0, Body0) ->
+  Url = binary_to_list(to_bin(Url0)),
+  case httpc:request(post, {Url, Headers0, "application/json", Body0}, [{timeout, 60000}], [{body_format, binary}], openagentic_webfetch) of
+    {ok, {{_, Status, _}, RespHeaders, RespBody}} -> {ok, {Status, RespHeaders, RespBody}};
+    Err -> {error, Err}
+  end;
+default_http_request(get, Url0, Headers0, _Body0) ->
+  Url = binary_to_list(to_bin(Url0)),
+  case httpc:request(get, {Url, Headers0}, [{timeout, 60000}], [{body_format, binary}], openagentic_webfetch) of
+    {ok, {{_, Status, _}, RespHeaders, RespBody}} -> {ok, {Status, RespHeaders, RespBody}};
+    Err -> {error, Err}
+  end;
+default_http_request(_Method, _Url0, _Headers0, _Body0) ->
+  {error, unsupported_method}.
+
+trim_bin(Bin0) ->
+  string:trim(to_bin(Bin0)).
 
 fetch_follow_redirects(Url, Headers, Max, Transport) ->
   Chain0 = [Url],

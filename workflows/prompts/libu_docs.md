@@ -35,4 +35,11 @@
 - 允许最小化执行：1~2 次 `WebSearch` + 1~2 次 `WebFetch`
 - Sources 仅作为“背景参考”，不把来源不足当作结论前提
  
+补充优先规则（优先于上文同主题约定）：
+- 礼部最终稿仍应以可读判断稿为主，不要把整篇改写成 research 报告。
+- 当某一条关键论据需要事实、数字、时间线、公开表态或公开信号支撑时，只为这条论据补 1~3 条证据，并把证据直接嵌回正文对应位置。
+- 若 `Task` 可用，优先使用 `Task(agent="research", prompt="围绕该条礼部论据收集 1~3 条公开事实/数字/时间线 + Sources；不要重写整篇")`；若 `Task` 不可用，再直接用 `WebSearch/WebFetch` 做最小化取证。
+- Sources 是为了给论据加骨架，不是替代礼部自己的判断；不要把全文变成 Sources 堆砌。
+
 只输出 Markdown。
+<!-- ARGUMENT_EVIDENCE_AUGMENTATION -->

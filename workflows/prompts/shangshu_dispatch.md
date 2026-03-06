@@ -40,6 +40,14 @@
 - `libu`：`workspace:staging/libu/poem.md`（对外可读判断稿；若无明确核验任务，不要强制拆成“前提/已知/推测”三栏）
 - `libu_hr`：`workspace:staging/libu_hr/poem.md`（总领判断、六部协同主线、主次排序与核心结论）
 
+补充优先规则（优先于上文同主题约定）：
+- 对现实世界事件/新闻/局势研判类任务，要区分“整篇核验/整篇 research 化”和“论据级证据增强”。
+- 默认保留六部各自的判断、理由、路径与分阶段推演，不要把整篇改写成 research 报告。
+- 只有当某一条关键论据需要事实、数字、时间线、公开表态或公开信号来站稳时，才在对应 task / definition_of_done 里要求该部补 1~3 条公开证据与来源。
+- 若 `Task` 子代理可用，允许明确写出：`Task(agent="research", prompt="围绕该条论据收集 1~3 条公开事实/数字/时间线 + Sources；不要重写整篇")`；若 `Task` 不可用，则用 `WebSearch/WebFetch` 完成同等动作。
+- 取到的证据必须回填到该条论据下面，不要让六部把全文改写成 Sources 堆砌。
+
 只输出 JSON。
+<!-- ARGUMENT_EVIDENCE_AUGMENTATION -->
 <!-- PUBLIC_EVENTS_USE_WORKING_FACTS -->
 <!-- NO_MECHANICAL_UNVERIFIED_CAVEAT -->

@@ -13,6 +13,9 @@ normalize(Agents0) ->
 normalize_one(<<"explore">>) -> {true, openagentic_built_in_subagents:explore_agent()};
 normalize_one("explore") -> {true, openagentic_built_in_subagents:explore_agent()};
 normalize_one(explore) -> {true, openagentic_built_in_subagents:explore_agent()};
+normalize_one(<<"research">>) -> {true, openagentic_built_in_subagents:research_agent()};
+normalize_one("research") -> {true, openagentic_built_in_subagents:research_agent()};
+normalize_one(research) -> {true, openagentic_built_in_subagents:research_agent()};
 normalize_one(A) when is_binary(A); is_list(A); is_atom(A) ->
   Name = string:trim(to_bin(A)),
   case byte_size(Name) > 0 of
@@ -30,6 +33,7 @@ normalize_one(M0) when is_map(M0) ->
       Base =
         case string:lowercase(Name) of
           <<"explore">> -> openagentic_built_in_subagents:explore_agent();
+          <<"research">> -> openagentic_built_in_subagents:research_agent();
           _ -> #{name => Name, description => <<>>, allowed_tools => []}
         end,
       Desc0 = maps:get(description, M, maps:get(<<"description">>, M, maps:get(desc, M, maps:get(<<"desc">>, M, undefined)))),
@@ -104,4 +108,3 @@ to_bin(L) when is_list(L) -> unicode:characters_to_binary(L, utf8);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> iolist_to_binary(integer_to_list(I));
 to_bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other]), utf8).
-
