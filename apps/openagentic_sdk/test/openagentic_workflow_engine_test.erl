@@ -444,6 +444,41 @@ three_provinces_aggregate_prompt_uses_poem_staging_paths_test() ->
   ?assertEqual(nomatch, binary:match(Bin, <<"workspace:deliverables/六部各赋诗一首.md">>)),
   ok.
 
+
+three_provinces_dispatch_prompt_treats_assertive_public_events_as_working_facts_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_dispatch.md"])),
+  ?assert(binary:match(Bin, <<"PUBLIC_EVENTS_USE_WORKING_FACTS">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"NO_MECHANICAL_UNVERIFIED_CAVEAT">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"WebSearch/WebFetch">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"workspace:staging/gongbu/poem.md">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"workspace:staging/libu/poem.md">>) =/= nomatch),
+  ok.
+
+three_provinces_aggregate_prompt_requires_substantive_synthesis_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_aggregate.md"])),
+  ?assert(binary:match(Bin, <<"AGGREGATE_SUBSTANTIVE_SYNTHESIS">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"NO_FILE_STATUS_AS_MAIN_CONTENT">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"workspace:staging/libu_hr/poem.md">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"workspace:staging/hubu/poem.md">>) =/= nomatch),
+  ok.
+
+three_provinces_taizi_reply_prompt_avoids_overcautious_hypothetical_framing_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "taizi_reply.md"])),
+  ?assert(binary:match(Bin, <<"REPLY_AVOID_HYPOTHETICAL_PADDING">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"REPLY_USE_PUBLIC_SITUATION_NATURAL_WORDING">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"taizi_reply">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"Markdown">>) =/= nomatch),
+  ok.
+
+
+three_provinces_taizi_solo_prompt_avoids_overcautious_hypothetical_framing_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "taizi_solo.md"])),
+  ?assert(binary:match(Bin, <<"SOLO_AVOID_HYPOTHETICAL_PADDING">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"SOLO_USE_PUBLIC_SITUATION_NATURAL_WORDING">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"taizi_solo">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"Markdown">>) =/= nomatch),
+  ok.
+
 write_workflow(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
   ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
