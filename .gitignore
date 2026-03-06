@@ -7,3 +7,6 @@ rebar3.crashdump
 rebar3.*.crashdump
 .env
 .tmp/*
+
+node_modules
+node_modules/*
