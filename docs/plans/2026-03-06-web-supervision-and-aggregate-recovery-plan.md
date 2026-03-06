@@ -445,3 +445,9 @@ git commit -m "docs: record aggregate recovery and web supervision plan evidence
 
 - 计划中的 `git commit` 未执行；原因是当前会话的上层开发约束明确禁止代理自行提交。
 - 全量 `rebar3 eunit` 结束后仍会出现仓库既有的 `io:format(otp_release...)` / `erl_scan illegal,string` 噪音文本，但退出码为 `0`，且测试统计全绿，本次未将其视为回归。
+
+
+### 补充设计文档
+
+- docs/design/web-runtime-supervision.md：补充独立监督树的前后关系图、故障传播链路与状态语义说明。
+

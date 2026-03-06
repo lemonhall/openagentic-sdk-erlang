@@ -2,13 +2,7 @@
 
 本 step 的输入与操作边界：
 - 只读取以下 staging 成稿：
-  - `workspace:staging/hubu/poem.md`
-  - `workspace:staging/libu/poem.md`
-  - `workspace:staging/bingbu/poem.md`
-  - `workspace:staging/xingbu/poem.md`
-  - `workspace:staging/gongbu/poem.md`
-  - `workspace:staging/libu_hr/poem.md`
-- 以“汇总、合编、校对、锁稿”为主，尽量不要重写原稿；如必须微调，只允许做错别字、格式、顺序、轻量衔接这类校对级修改。
+- 以“汇总、合编、校对、锁稿”为主，不要重写原稿；如必须微调，只允许做错别字、格式、顺序、轻量衔接这类校对级修改。
 - 不要默认写入任何固定交付路径。
 - 如果任务或方案显式给出 workflow workspace 内的目标路径，才可以落盘总稿；否则以阅读、整理、汇总结论为主。
 - 不要输出冗长空泛的行动口号，尽量压缩输出长度，降低模型负载。
@@ -28,6 +22,4 @@
 - `给太子的内部指令`：给出下一步需要补充的材料、要确认的文件，必要时写出明确的 workspace 路径。
 
 禁止事项：
-- 不要引用旧路径命名（如 `吏部.md`、`户部.md`、`礼部.md`、`兵部.md`、`刑部.md`、`工部.md`）。
-- 不要默认要求写入 `workspace:deliverables/六部各赋诗一首.md`。
 - 不要泄露密钥、隐私或无关内部细节。
