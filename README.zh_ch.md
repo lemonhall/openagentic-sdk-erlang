@@ -1,190 +1,345 @@
 # openagentic-sdk-erlang（中文说明）
 
-English README: [`README.md`](README.md)
+英文说明见：[`README.md`](README.md)
 
-`openagentic-sdk-erlang` 是 `openagentic-sdk-kotlin` 的 Erlang/OTP 平行移植项目，目标是在 BEAM 上提供一套可落地的 Agent runtime：
+`openagentic-sdk-erlang` 是 `openagentic-sdk-kotlin` 的 Erlang/OTP 平行版本。
+它现在已经不只是一个空壳 SDK，而是一套能在 BEAM 上本地跑起来的 agent runtime、workflow 控制面和轻量 Web UI。
 
-- OpenAI Responses API provider（优先）+ SSE streaming
-- Tool-loop（函数调用）+ 权限门禁（HITL：human-in-the-loop）
-- 会话落盘（`meta.json` + `events.jsonl`），方便回溯与调试
-- 内置工具（Read/List/Glob/Grep/WebSearch/WebFetch/Skill/SlashCommand/…）
-- 本地 CLI 用来做端到端验证（适配 Windows 11 + PowerShell + 代理环境）
+## 当前功能现状
 
-> 本文档默认以 Windows 11 + PowerShell 7.x 为主（连续执行命令用 `;`，不要用 `&&`）。
+截至 **2026 年 3 月 7 日**，代码里已经落下来的能力包括：
 
-## 当前状态
+- **Runtime 入口**：`openagentic_sdk:query/2` 与 `openagentic_runtime:query/2`
+- **默认 Provider**：OpenAI Responses HTTP + SSE streaming
+- **协议切换**：支持 `--protocol responses|legacy` 切到 OpenAI Chat Completions legacy 模式
+- **本地优先会话落盘**：`meta.json` + append-only `events.jsonl`
+- **会话续跑**：支持 `resume_session_id` 与 Responses 的 `previous_response_id`
+- **统一时间上下文**：默认注入 `Asia/Shanghai`（东八区）时间信息到 system prompt 和 session metadata
+- **权限门禁（HITL）**：`default` 模式下自动放行安全只读工具
+- **内置工具集**：`AskUserQuestion`、`Read`、`List`、`Write`、`Edit`、`Glob`、`Grep`、`Bash`、`WebFetch`、`WebSearch`、`Skill`、`SlashCommand`、`NotebookEdit`、`LSP`、`TodoWrite`、`Task`
+- **Skills 系统**：支持多 root 扫描 `SKILL.md`，并解析 `summary`、`checklist`、front matter
+- **SlashCommand**：兼容 `.opencode/commands` 与 `.claude/commands` 模板
+- **子 agent 工具**：`Task` 已内置 `explore` / `research` 两个 subagent
+- **Workflow engine**：JSON DSL 驱动，支持 guards、output contracts、每步 tool policy、fanout/join、retry policy、step session 恢复
+- **Workflow manager**：支持 continue 排队、cancel、watchdog 检测 stalled、`resumed_from_stalled`
+- **本地 Web 控制面**：支持 workflow start/continue/cancel、问题回答、workspace 读取、健康检查、SSE 事件流
+- **Hooks 与 tool output artifacts**：支持 `hook.event`、`HookBlocked`、大输出外置 artifact
+- **WebFetch 安全策略**：阻断 localhost / 私网风格目标，并输出 `markdown` / `text` / `clean_html`
+- **WebSearch 后端**：优先 Tavily；没配 key 时回退到 DuckDuckGo HTML 抓取
+- **离线单测覆盖**：runtime、provider、session、CLI、workflow、tools、skills、web runtime、time context 等都有覆盖
 
-仓库提供两类验证方式：
+本地刚跑过的验证结果：
 
-- 离线单测（确定性）：`rebar3 eunit`
-- 真联网 E2E（真实网络 + 真实 key，可选）：`.\scripts\e2e-online-suite.ps1 -E2E`
+- `rebar3 eunit` -> **175 tests, 0 failures**（验证时间：**2026-03-07**）
 
-## 规范与协议
+## 仓库结构
 
-- 本地控制面 + 硬流程 DSL（三省六部）：`docs/spec/workflow-engine.md`
-- 中文说明：`docs/spec/workflow-engine.zh_ch.md`
-- 远程 subagent（HTTP + SSE）：`docs/spec/agent-host-protocol.md`
-- 中文说明：`docs/spec/agent-host-protocol.zh_ch.md`
+```text
+apps/openagentic_sdk/
+  src/
+    openagentic_sdk.erl               SDK 公共入口
+    openagentic_runtime.erl           tool-loop runtime
+    openagentic_cli.erl               CLI 入口
+    openagentic_workflow_dsl.erl      JSON DSL 加载与校验
+    openagentic_workflow_engine.erl   workflow 执行引擎
+    openagentic_workflow_mgr.erl      排队 / cancel / stalled 管理
+    openagentic_web*.erl              本地 Web 服务与 API
+    openagentic_tool_*.erl            内置工具
+    openagentic_skills.erl            SKILL.md 扫描与索引
+  test/
+    *_test.erl                        eunit 测试
+  priv/
+    toolprompts/                      工具提示模板
+    web/                              静态 Web UI
+workflows/
+  three-provinces-six-ministries.v1.json
+  prompts/
+scripts/
+  erlang-env.ps1
+  e2e-online-suite.ps1
+  e2e-web-online.ps1
+  kotlin-parity-check.ps1
+docs/
+  spec/                               workflow DSL 与 agent-host 协议
+  design/ analysis/ plans/            设计文档与计划文档
+```
+
+## 架构概览
+
+### 主入口
+
+- SDK 门面：`apps/openagentic_sdk/src/openagentic_sdk.erl`
+- Runtime / tool loop：`apps/openagentic_sdk/src/openagentic_runtime.erl`
+- CLI：`apps/openagentic_sdk/src/openagentic_cli.erl`
+- Workflow DSL 校验：`apps/openagentic_sdk/src/openagentic_workflow_dsl.erl`
+- Workflow engine：`apps/openagentic_sdk/src/openagentic_workflow_engine.erl`
+- Workflow manager / watchdog：`apps/openagentic_sdk/src/openagentic_workflow_mgr.erl`
+- Web server：`apps/openagentic_sdk/src/openagentic_web.erl`
+- Skills 索引：`apps/openagentic_sdk/src/openagentic_skills.erl`
+- Tool registry / schema：`apps/openagentic_sdk/src/openagentic_tool_registry.erl`、`apps/openagentic_sdk/src/openagentic_tool_schemas.erl`
+
+### 数据流
+
+```text
+CLI / Web UI / Workflow API
+        -> runtime 或 workflow engine
+        -> provider 请求 + SSE / 模型输出解析
+        -> permission gate
+        -> tool registry -> tool modules
+        -> session store 追加事件
+        -> Web SSE / CLI formatter / workspace readers
+```
+
+### 持久化约定
+
+默认的本地优先路径：
+
+- Session 根目录：`OPENAGENTIC_SDK_HOME\sessions\<session_id>\`
+- Session 文件：
+  - `meta.json`
+  - `events.jsonl`
+- Skills root（越本地优先级越高）：
+  - `OPENAGENTIC_AGENTS_HOME`（默认：`%USERPROFILE%\.agents`）
+  - `OPENAGENTIC_SDK_HOME`（默认：`%USERPROFILE%\.openagentic-sdk`）
+  - 项目根目录
+  - `project/.claude`
+- SlashCommand 模板：
+  - `project/.opencode/commands/*.md`
+  - `project/.claude/commands/*.md`
+  - `%USERPROFILE%\.config\opencode\commands\*.md`
 
 ## 环境要求
 
-- Erlang/OTP 28（已验证）
+- Erlang/OTP 28
 - `rebar3`
-- PowerShell 7.x 推荐
+- 推荐使用 Windows PowerShell 7.x
+- 中国大陆网络环境通常需要代理（本仓库默认本机代理是 `127.0.0.1:7897`）
 
 ## 快速开始（Windows PowerShell）
 
-1) 先执行环境脚本，把 Erlang 与缓存目录指到 **E 盘**（可选开启代理）：
+### 1）准备 Erlang 环境和 E 盘缓存目录
 
 ```powershell
-# 需要代理（大陆网络）：
+# 需要代理
 . .\scripts\erlang-env.ps1 -EnableProxy -SkipRebar3Verify
 
-# 不需要代理：
+# 不需要代理
 # . .\scripts\erlang-env.ps1 -SkipRebar3Verify
 ```
 
-说明：
-- 默认代理地址是 `http://127.0.0.1:7897`（可用 `-Proxy` 覆盖）。
-- 脚本会把 rebar3/hex/httpc 的数据目录都放到 E 盘，避免 C 盘爆炸。
+这个脚本会设置：
 
-2) 跑单测（推荐在“新开终端”里跑一次，确保环境变量已刷新）：
+- `ERLANG_HOME=E:\lang\erlang`
+- `REBAR_BASE_DIR=E:\erlang\rebar3`
+- `REBAR_CACHE_DIR=E:\erlang\rebar3\cache`
+- `HEX_HOME=E:\erlang\hex`
+
+### 2）跑离线单测
 
 ```powershell
 rebar3 eunit
 ```
 
-3) 启动交互式 CLI（通过 Erlang shell）：
+### 3）进入 Erlang shell
 
 ```powershell
 rebar3 shell
 ```
 
-进入 Erlang shell 后：
+进入 shell 后可以这样跑：
 
 ```erlang
-openagentic_cli:main(["chat"]).
-%% 或：
+%% 单轮 query
 openagentic_cli:main(["run", "你好，Erlang!"]).
-%% Workflow（硬流程，DSL 驱动）：
-openagentic_cli:main(["workflow", "--dsl", "workflows/three-provinces-six-ministries.v1.json", "请按三省六部流程完成：..."]).
-%% Web UI（左侧：三省六部流程图；右侧：对话窗口）：
+
+%% 交互式聊天
+openagentic_cli:main(["chat"]).
+
+%% workflow（JSON DSL）
+openagentic_cli:main([
+  "workflow",
+  "--dsl", "workflows/three-provinces-six-ministries.v1.json",
+  "请规划并完成 X"
+]).
+
+%% 本地 Web UI / 控制面
 openagentic_cli:main(["web"]).
 ```
 
-启动 Web UI 后，按控制台输出的 URL 用浏览器打开即可（默认：`http://127.0.0.1:8088/`）。
+默认 Web 地址：`http://127.0.0.1:8088/`
+
+## CLI 当前能力面
+
+`openagentic_cli:main/1` 目前提供四个命令：
+
+- `run`：单次 prompt / 单次 session
+- `chat`：交互式对话，并可续接已有 session
+- `workflow`：跑 JSON DSL workflow
+- `web`：启动本地 Cowboy Web UI + API
+
+高价值参数：
+
+- `--model <name>`
+- `--base-url <url>`
+- `--api-key <key>`
+- `--protocol <responses|legacy>`
+- `--max-steps <1..200>`
+- `--stream` / `--no-stream`
+- `--permission <bypass|deny|prompt|default>`
+- `--project-dir <path>`
+- `--session-root <path>`
+- `--resume-session-id <sid>`
+- `--dsl <path>`（给 `workflow`）
+- `--web-bind <ip>` / `--web-port <port>`（给 `web`）
+- `--render-markdown` / `--no-render-markdown`
+- `--color` / `--no-color`
+
+## Workflow engine：现在已经具备什么
+
+workflow 子系统现在已经不是占位实现了，代码里已经支持：
+
+- JSON DSL 加载与校验
+- step role + prompt file
+- output contract（`decision`、`markdown_sections`、`json_object` 等）
+- guard 检查
+- 每步独立 tool policy allow/deny
+- step session 与 workflow session 的事件桥接
+- 多部并行的 fanout/join
+- provider transient error 的 retry policy
+- workflow 仍在运行时，`continue` 消息可排队
+- cancel 与 status 查询
+- watchdog 检测 stalled，并把 `stalled` 状态写回 session
+
+默认示例 DSL：
+
+- `workflows/three-provinces-six-ministries.v1.json`
+
+## Web UI / API
+
+当前本地 Web 服务提供这些路由：
+
+- `GET /` -> 静态 Web UI
+- `POST /api/workflows/start`
+- `POST /api/workflows/continue`
+- `POST /api/workflows/cancel`
+- `POST /api/workspace/read`
+- `POST /api/questions/answer`
+- `GET /api/sessions/:sid/events` -> SSE 追踪 session 事件
+- `GET /api/health`
+
+这套 Web UI 是 local-first 的，不依赖额外数据库，而是直接基于 session 文件工作。
+
+## 工具与安全行为
+
+### 权限默认行为
+
+在 `default` 模式下，以下工具在 schema 合法时默认视为安全：
+
+- `List`
+- `Read`
+- `Glob`
+- `Grep`
+- `WebFetch`
+- `WebSearch`
+- `Skill`
+- `SlashCommand`
+- `AskUserQuestion`
+
+如果 `Write` / `Edit` 的目标路径能被解析到 workspace 内，也可以自动放行。其余工具会走 prompt 模式。
+
+### 一些值得知道的工具行为
+
+- `Read` 支持 offset + 行号分页
+- `List` 用于先发现文件再 `Read` / `Grep`
+- `Glob` / `Grep` 支持递归匹配和稳定排序
+- `WebFetch` 可输出 `markdown` / `text` / `clean_html`
+- `WebSearch` 优先 Tavily，没配 key 时回退 DuckDuckGo HTML
+- `Skill` 会返回 `SKILL.md` 的元数据和正文
+- `SlashCommand` 会从项目、本地和全局根查找命令模板
+- `Task` 可拉起内置 `explore` / `research` 子 agent
+- 大 tool output 可以被外置成 artifact 文件，并返回 truncated wrapper
+- hooks 可以写 `hook.event`，也能用 `HookBlocked` 直接阻断工具调用
 
 ## 配置（.env）
 
-CLI 会从项目目录读取 `.env`。
-注意：不要把真实 key 粘贴到 issue/log 里，本仓库已把 `.env` 加入 `.gitignore`。
+CLI 会从解析后的项目目录读取 `.env`。
+不要提交真实密钥。
 
-最小 `.env` 示例（别填真实密钥到公共场合）：
+最小示例：
 
 ```dotenv
 OPENAI_API_KEY=your_key_here
 MODEL=gpt-4.1-mini
 ```
 
-常用键：
+常用变量：
 
-- `OPENAI_API_KEY`（必填）
-- `OPENAI_MODEL` 或 `MODEL`（必填）
-- `OPENAI_BASE_URL`（可选；默认 `https://api.openai.com/v1`）
-- `OPENAI_API_KEY_HEADER`（可选；默认 `authorization`；某些网关需要 `x-api-key` 等）
-- `OPENAI_STORE`（可选；Responses API 默认开启 store）
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` 或 `MODEL`
+- `OPENAI_BASE_URL`
+- `OPENAI_API_KEY_HEADER`
+- `OPENAI_STORE`
+- `OPENAGENTIC_SDK_HOME`
+- `OPENAGENTIC_AGENTS_HOME`
+- `HTTP_PROXY`
+- `HTTPS_PROXY`
+- `TAVILY_API_KEY`
+- `TAVILY_URL`
 
-WebSearch（可选，但想要“真正的搜索能力”建议配上）：
+## 测试与验证
 
-- `TAVILY_API_KEY`（建议）
-- `TAVILY_URL`（可选；默认 `https://api.tavily.com`，并会自动补成 `/search`）
+### 离线
 
-## CLI 常用参数
+```powershell
+. .\scripts\erlang-env.ps1 -SkipRebar3Verify
+rebar3 eunit
+```
 
-CLI 入口：`openagentic_cli:main/1`
-
-- `--max-steps <1..200>`：每次 query 的最大“模型 step”轮数（默认：`50`）
-- `--stream` / `--no-stream`：是否启用流式输出（默认：开）
-- `--permission <bypass|deny|prompt|default>`：权限门禁模式（默认：`default`）
-- `--color` / `--no-color`：终端 ANSI 颜色（默认：自动）
-- `--render-markdown` / `--no-render-markdown`：提升长 Markdown 可读性（仅对非流式输出生效）
-
-颜色也可以通过环境变量关闭：
-
-- `NO_COLOR=1`（标准）
-- `OPENAGENTIC_NO_COLOR=1`（项目约定）
-
-## 权限门禁（HITL）
-
-运行时内置 PermissionGate 用来控制工具调用：
-
-- `default` 模式下：**安全的只读工具默认直接放行**，避免频繁 `yes/no` 打断。
-- 写文件/执行 shell/跑 task 等“危险工具”：需要用户明确允许。
-
-当某个工具被拒绝时，拒绝原因会以“工具错误输出”的形式回传给模型，避免模型陷入反复重试的死循环。
-
-## 工具（概览）
-
-运行时注册了一套工具供模型使用，例如：
-
-- 文件系统：`List` / `Read` / `Glob` / `Grep` / `Write` / `Edit`
-- 网络：`WebSearch`（Tavily 后端）/ `WebFetch`
-- Agent 组件：`Skill` / `SlashCommand` / `Task` / `AskUserQuestion` 等
-
-CLI 会把每次 `tool.use` 打印成“带摘要”的人类可读格式（会显示它要读哪个文件/列哪个目录/搜索什么 query/执行什么 command），`tool.result` 也会输出精简摘要，并做 best-effort 的密钥脱敏。
-
-## Skills（技能系统）
-
-技能文件是 `SKILL.md`，会从多个 root 扫描并按“越本地优先级越高”的规则覆盖：
-
-1) `OPENAGENTIC_AGENTS_HOME`（默认：`%USERPROFILE%\.agents`）
-2) `OPENAGENTIC_SDK_HOME`（默认：`%USERPROFILE%\.openagentic-sdk`）
-3) 项目目录
-4) `./.claude`
-
-本仓库提供了一些示例技能，位于 `./skills/`。
-
-## Sessions（会话落盘位置）
-
-每次运行会生成一个 session，默认落盘到：
-
-- `OPENAGENTIC_SDK_HOME\sessions\<session_id>\`
-
-文件包括：
-
-- `meta.json`
-- `events.jsonl`（JSONL 事件流，追加写）
-
-设计目标是：人类用通用工具（文本查看/grep）就能排障与回溯。
-
-## 在线 E2E（真实联网）
-
-想验证“真实网络 + 真实 key”的全链路效果：
+### 可选在线套件
 
 ```powershell
 .\scripts\e2e-online-suite.ps1 -EnableProxy -SkipRebar3Verify -E2E
+.\scripts\e2e-web-online.ps1 -EnableProxy -SkipRebar3Verify -E2E
 ```
 
-说明：
-- 需要 `.env` 里配置好 OpenAI key + model（以及可选 Tavily）。
-- 开启 `-EnableProxy` 时会走本机代理。
+### Kotlin parity 辅助检查
 
-## 常见问题（Troubleshooting）
+```powershell
+.\scripts\kotlin-parity-check.ps1
+```
 
-### 401 / “Missing API key”
+## 规范与设计文档
 
-- 检查项目目录下的 `.env` 是否存在且包含 `OPENAI_API_KEY`。
-- 如果你走网关，可能需要 `OPENAI_API_KEY_HEADER=x-api-key`（或你网关要求的 header）。
+- Workflow engine 规范：`docs/spec/workflow-engine.md`
+- Workflow engine 中文：`docs/spec/workflow-engine.zh_ch.md`
+- Agent-host 协议：`docs/spec/agent-host-protocol.md`
+- Agent-host 中文：`docs/spec/agent-host-protocol.zh_ch.md`
+- Workflow DSL schema：`docs/spec/workflow-dsl-schema.md`
+- Workflow DSL schema 中文：`docs/spec/workflow-dsl-schema.zh_ch.md`
 
-### rebar3 / escript.exe 找不到
+## 常见问题
 
-先在同一个终端里执行环境脚本：
+### `401` / 缺 API key
+
+- 确认项目目录下存在 `.env`
+- 确认 `OPENAI_API_KEY` 已设置
+- 如果你走网关，确认 `OPENAI_API_KEY_HEADER` 配对正确
+
+### `rebar3` 或 Erlang 找不到
+
+先在同一个终端里执行：
 
 ```powershell
 . .\scripts\erlang-env.ps1 -SkipRebar3Verify
 ```
 
-### 输出太密 / 眼睛疲劳
+### 输出太密
 
-- 长回答建议用 `--no-stream`（更利于排版，也能启用 Markdown 渲染）。
-- 颜色不兼容就用 `--no-color` 或 `NO_COLOR=1`。
+- 长回答建议用 `--no-stream`
+- 终端不支持 ANSI 就用 `--no-color` 或 `NO_COLOR=1`
+- 非流式模式下保留 `--render-markdown`
+
+### WebSearch 结果偏弱
+
+- 配置 `TAVILY_API_KEY` 会明显更稳
+- 不配 Tavily 时会退回 DuckDuckGo HTML 抓取
