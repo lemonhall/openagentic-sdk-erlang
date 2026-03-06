@@ -64,6 +64,35 @@ workflow_engine_keeps_one_explicit_time_context_across_steps_test() ->
   ?assertEqual(InitTc, RunStartTc),
   ok.
 
+workflow_engine_persists_time_context_into_step_sessions_test() ->
+  Root = test_root(),
+  ok = write_workflow(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      case StepId of
+        <<"a">> -> {ok, <<"# A\n\nok\n">>};
+        <<"b">> -> {ok, <<"{\"decision\":\"approve\",\"reasons\":[],\"required_changes\":[]}">>};
+        _ -> {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w.json", <<"hello">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  WfSid = maps:get(workflow_session_id, Res),
+  Events = openagentic_session_store:read_events(Root, WfSid),
+  [FirstStepStart | _] = [E || E <- ensure_list_value(Events), maps:get(<<"type">>, ensure_map(E), <<>>) =:= <<"workflow.step.start">>],
+  StepSid = to_bin(maps:get(<<"step_session_id">>, ensure_map(FirstStepStart), <<>>)),
+  StepDir = openagentic_session_store:session_dir(Root, StepSid),
+  StepMeta = openagentic_json:decode(element(2, file:read_file(filename:join([StepDir, "meta.json"])))),
+  StepMetaTc = ensure_map(maps:get(<<"time_context">>, maps:get(<<"metadata">>, StepMeta, #{}), #{})),
+  ?assertEqual(<<"Asia/Shanghai">>, maps:get(<<"timezone">>, StepMetaTc, undefined)),
+  ?assertEqual(<<"UTC+08:00 / 东八区"/utf8>>, maps:get(<<"timezone_label">>, StepMetaTc, undefined)),
+  [StepInit | _] = [E || E <- openagentic_session_store:read_events(Root, StepSid), maps:get(<<"type">>, ensure_map(E), <<>>) =:= <<"system.init">>],
+  StepInitTc = ensure_map(maps:get(<<"time_context">>, ensure_map(StepInit), #{})),
+  ?assertEqual(StepMetaTc, StepInitTc),
+  ok.
+
 workflow_engine_filters_tasks_input_by_ministry_role_test() ->
   Root = test_root(),
   ok = write_workflow_task_filter(Root),
@@ -424,6 +453,36 @@ workflow_engine_fanout_join_workflow_event_seq_monotonic_test() ->
   ?assertEqual(Seqs, lists:sort(Seqs)),
   ?assertEqual(length(Seqs), length(lists:usort(Seqs))),
   ok.
+
+fanout_wait_does_not_require_down_after_result_test() ->
+  Parent = self(),
+  Worker =
+    spawn(
+      fun () ->
+        Child = spawn(fun () -> receive after infinity -> ok end end),
+        Ref = erlang:monitor(process, Child),
+        Result =
+          {ok,
+            #{
+              attempt => 1,
+              output => <<"# Result\n\nok\n">>,
+              parsed => #{type => markdown},
+              output_format => <<"markdown">>,
+              step_session_id => <<"fanout_step_session">>
+            }},
+        self() ! {fanout_result, <<"leaf_a">>, Result},
+        Res = openagentic_workflow_engine:wait_for_fanout_for_test(#{Ref => #{step_id => <<"leaf_a">>, pid => Child}}, #{}, #{}),
+        Parent ! {fanout_wait_done, Res},
+        exit(Child, kill)
+      end
+    ),
+  receive
+    {fanout_wait_done, {ok, Results}} ->
+      ?assertMatch(#{<<"leaf_a">> := {ok, _}}, Results)
+  after 500 ->
+    exit(Worker, kill),
+    ?assert(false)
+  end.
 
 three_provinces_workflow_uses_fanout_join_test() ->
   {ok, Bin} = file:read_file(filename:join(["workflows", "three-provinces-six-ministries.v1.json"])),

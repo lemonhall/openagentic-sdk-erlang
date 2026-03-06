@@ -11,7 +11,7 @@
 
 -define(DEFAULT_TIMEZONE, <<"Asia/Shanghai">>).
 -define(DEFAULT_UTC_OFFSET, <<"+08:00">>).
--define(DEFAULT_TIMEZONE_LABEL, <<"UTC+08:00 / 东八区">>).
+-define(DEFAULT_TIMEZONE_LABEL, <<"UTC+08:00 / 东八区"/utf8>>).
 
 marker() ->
   <<"OPENAGENTIC_TIME_CONTEXT_V1">>.

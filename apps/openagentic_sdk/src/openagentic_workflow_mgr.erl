@@ -7,6 +7,10 @@
 -export([note_progress/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
+-ifdef(TEST).
+-export([idle_timeout_ms_for_test/1]).
+-endif.
+
 %% A minimal workflow run manager (web-friendly).
 %%
 %% Goals:
@@ -20,7 +24,7 @@
 
 -define(SERVER, ?MODULE).
 -define(TICK_MS, 5000).
--define(DEFAULT_IDLE_TIMEOUT_MS, 120 * 1000).
+-define(DEFAULT_IDLE_TIMEOUT_MS, 300 * 1000).
 -define(DEFAULT_QUESTION_TIMEOUT_MS, 10 * 60 * 1000).
 
 start_link() ->
@@ -155,7 +159,7 @@ handle_call(_Other, _From, State0) ->
 handle_cast({note_progress, WfSid, Ev0}, State0) ->
   Ev = ensure_map(Ev0),
   Now = now_ms(),
-  EvType = to_bin(maps:get(type, Ev, maps:get(<<"type">>, Ev, <<>>))),
+  EvType = event_progress_type(Ev),
   case maps:find(WfSid, State0) of
     {ok, Item0} ->
       Item = Item0#{last_progress_ms => Now, last_event_type => EvType},
@@ -305,6 +309,11 @@ idle_timeout_ms(EngineOpts0) ->
   Sec = int_or_default(Sec0, ?DEFAULT_IDLE_TIMEOUT_MS div 1000),
   clamp_int(Sec, 5, 3600) * 1000.
 
+-ifdef(TEST).
+idle_timeout_ms_for_test(EngineOpts) ->
+  idle_timeout_ms(EngineOpts).
+-endif.
+
 question_timeout_ms(EngineOpts0) ->
   EngineOpts = ensure_map(EngineOpts0),
   Sec0 =
@@ -395,6 +404,19 @@ session_root_from_opts(Opts0) ->
     V -> V
   end.
 
+event_progress_type(Ev0) ->
+  Ev = ensure_map(Ev0),
+  EvType = to_bin(maps:get(type, Ev, maps:get(<<"type">>, Ev, <<>>))),
+  case EvType of
+    <<"workflow.step.event">> ->
+      StepEv = ensure_map(maps:get(step_event, Ev, maps:get(<<"step_event">>, Ev, #{}))),
+      case to_bin(maps:get(type, StepEv, maps:get(<<"type">>, StepEv, <<>>))) of
+        <<>> -> EvType;
+        StepType -> StepType
+      end;
+    _ ->
+      EvType
+  end.
 now_ms() ->
   erlang:monotonic_time(millisecond).
 

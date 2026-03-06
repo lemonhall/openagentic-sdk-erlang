@@ -2,6 +2,10 @@
 
 -export([run/4, start/4, continue/4, continue_start/4]).
 
+-ifdef(TEST).
+-export([wait_for_fanout_for_test/3]).
+-endif.
+
 -define(DEFAULT_MAX_STEPS, 50).
 
 %% Synchronous, local-first workflow runner.
@@ -582,9 +586,11 @@ wait_for_fanout(Pending, Results0, State0) ->
   receive
     {wf_event, Ev} ->
       ok = append_wf_event(State0, Ev),
+      _ = (catch openagentic_workflow_mgr:note_progress(to_bin(maps:get(workflow_session_id, State0, <<>>)), Ev)),
       wait_for_fanout(Pending, Results0, State0);
     {fanout_result, StepId, Result} ->
-      wait_for_fanout(Pending, Results0#{StepId => Result}, State0);
+      {Pending1, Results1} = record_fanout_result(StepId, Result, Pending, Results0),
+      wait_for_fanout(Pending1, Results1, State0);
     {'DOWN', Ref, process, _Pid, Reason} ->
       case maps:take(Ref, Pending) of
         error ->
@@ -597,6 +603,33 @@ wait_for_fanout(Pending, Results0, State0) ->
             end,
           wait_for_fanout(Pending1, Results1, State0)
       end
+  end.
+
+-ifdef(TEST).
+wait_for_fanout_for_test(Pending, Results, State) ->
+  wait_for_fanout(Pending, Results, State).
+-endif.
+
+record_fanout_result(StepId, Result, Pending0, Results0) ->
+  Results1 = Results0#{StepId => Result},
+  case take_pending_ref_by_step_id(StepId, Pending0) of
+    {ok, _Ref, Pending1} ->
+      {Pending1, Results1};
+    error ->
+      {Pending0, Results1}
+  end.
+
+take_pending_ref_by_step_id(StepId, Pending0) ->
+  Pending = ensure_map(Pending0),
+  take_pending_ref_by_step_id_loop(StepId, maps:to_list(Pending), Pending).
+
+take_pending_ref_by_step_id_loop(_StepId, [], _Pending) ->
+  error;
+take_pending_ref_by_step_id_loop(StepId, [{Ref, Meta0} | Rest], Pending) ->
+  Meta = ensure_map(Meta0),
+  case to_bin(maps:get(step_id, Meta, maps:get(<<"step_id">>, Meta, <<>>))) =:= to_bin(StepId) of
+    true -> {ok, Ref, maps:remove(Ref, Pending)};
+    false -> take_pending_ref_by_step_id_loop(StepId, Rest, Pending)
   end.
 
 finalize_fanout_results(Results) ->
@@ -1348,16 +1381,18 @@ workflow_workspace_dir(SessionRoot0, WorkflowSessionId0) ->
 
 create_step_session(State0, StepId, Role, Attempt) ->
   Root = maps:get(session_root, State0),
+  TimeContext = maps:get(time_context, State0, undefined),
   Meta =
     #{
       workflow_id => wf_id(State0),
       step_id => StepId,
       role => Role,
-      attempt => Attempt
+      attempt => Attempt,
+      time_context => TimeContext
     },
   {ok, Sid} = openagentic_session_store:create_session(Root, Meta),
   SidBin = to_bin(Sid),
-  ok = append_wf_event(Root, Sid, openagentic_events:system_init(SidBin, maps:get(project_dir, State0), #{})),
+  ok = append_wf_event(Root, Sid, openagentic_events:system_init(SidBin, maps:get(project_dir, State0), #{time_context => TimeContext})),
   Sid.
 
 append_wf_event(State0, Ev) ->
@@ -1372,6 +1407,7 @@ append_wf_event(Root0, Sid0, Ev) ->
   Root = ensure_list_str(Root0),
   Sid = ensure_list_str(Sid0),
   {ok, _Stored} = openagentic_session_store:append_event(Root, Sid, Ev),
+  _ = (catch openagentic_workflow_mgr:note_progress(Sid, Ev)),
   ok.
 
 finalize(State0, Status0, FinalText0) ->
