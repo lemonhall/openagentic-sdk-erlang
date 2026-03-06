@@ -157,10 +157,24 @@
       "guards": [
         { "type": "regex_must_match", "pattern": "\"tasks\"\\s*:" }
       ],
-      "on_pass": "hubu_data",
+      "on_pass": "six_ministries_fanout",
       "on_fail": "shangshu_dispatch",
       "max_attempts": 2,
       "timeout_seconds": 600
+    },
+    {
+      "id": "six_ministries_fanout",
+      "role": "shangshu",
+      "executor": "fanout_join",
+      "fanout": {
+        "steps": ["hubu_data", "libu_docs", "bingbu_engineering", "xingbu_compliance", "gongbu_infra", "libu_hr_people"],
+        "join": "shangshu_aggregate",
+        "max_concurrency": 6,
+        "fail_fast": false
+      },
+      "on_fail": "shangshu_dispatch",
+      "max_attempts": 2,
+      "timeout_seconds": 1200
     },
     {
       "id": "hubu_data",
@@ -174,7 +188,7 @@
       "guards": [
         { "type": "max_words", "value": 700 }
       ],
-      "on_pass": "libu_docs",
+      "on_pass": null,
       "on_fail": "hubu_data",
       "max_attempts": 2,
       "timeout_seconds": 600
@@ -196,7 +210,7 @@
       "guards": [
         { "type": "max_words", "value": 700 }
       ],
-      "on_pass": "bingbu_engineering",
+      "on_pass": null,
       "on_fail": "libu_docs",
       "max_attempts": 2,
       "timeout_seconds": 600
@@ -218,7 +232,7 @@
       "guards": [
         { "type": "max_words", "value": 800 }
       ],
-      "on_pass": "xingbu_compliance",
+      "on_pass": null,
       "on_fail": "bingbu_engineering",
       "max_attempts": 2,
       "timeout_seconds": 1200
@@ -235,7 +249,7 @@
       "guards": [
         { "type": "max_words", "value": 800 }
       ],
-      "on_pass": "gongbu_infra",
+      "on_pass": null,
       "on_fail": "xingbu_compliance",
       "max_attempts": 2,
       "timeout_seconds": 600
@@ -257,7 +271,7 @@
       "guards": [
         { "type": "max_words", "value": 800 }
       ],
-      "on_pass": "libu_hr_people",
+      "on_pass": null,
       "on_fail": "gongbu_infra",
       "max_attempts": 2,
       "timeout_seconds": 600
@@ -274,7 +288,7 @@
       "guards": [
         { "type": "max_words", "value": 700 }
       ],
-      "on_pass": "shangshu_aggregate",
+      "on_pass": null,
       "on_fail": "libu_hr_people",
       "max_attempts": 2,
       "timeout_seconds": 600

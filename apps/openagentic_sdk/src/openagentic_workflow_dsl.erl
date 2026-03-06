@@ -117,7 +117,8 @@ validate_steps(ProjectDir, [S0 | Rest], StrictUnknown, Idx, Seen0, AccInfosRev, 
     <<"max_attempts">>,
     <<"timeout_seconds">>,
     <<"tool_policy">>,
-    <<"executor">>
+    <<"executor">>,
+    <<"fanout">>
   ],
   Errors1 = maybe_only_keys(StrictUnknown, S, AllowedStep, Path0, Errors0),
 
@@ -140,48 +141,96 @@ validate_steps(ProjectDir, [S0 | Rest], StrictUnknown, Idx, Seen0, AccInfosRev, 
   Role = get_bin(S, [<<"role">>, role], <<>>),
   Errors5 = require_nonempty_bin(iolist_to_binary([Path0, <<".role">>]), Role, <<"role is required">>, Errors4),
 
-  {Input, Errors6} = require_map(iolist_to_binary([Path0, <<".input">>]), get_any(S, [<<"input">>, input], undefined), <<"input is required">>, Errors5),
-  Errors7 = validate_input_binding(iolist_to_binary([Path0, <<".input">>]), Input, Errors6),
+  Exec = get_bin(S, [<<"executor">>, executor], <<>>),
+  IsFanoutJoin = Exec =:= <<"fanout_join">>,
 
-  {Prompt, Errors8} = require_map(iolist_to_binary([Path0, <<".prompt">>]), get_any(S, [<<"prompt">>, prompt], undefined), <<"prompt is required">>, Errors7),
-  Errors9 = validate_prompt_ref(ProjectDir, iolist_to_binary([Path0, <<".prompt">>]), Prompt, Errors8),
+  Errors6 =
+    case Exec of
+      <<>> -> Errors5;
+      <<"local_otp">> -> Errors5;
+      <<"fanout_join">> -> Errors5;
+      <<"http_sse_remote">> -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unsupported_executor">>, <<"http_sse_remote is reserved for future">>) | Errors5];
+      _ -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unknown_executor">>, <<"unknown executor">>) | Errors5]
+    end,
 
-  {OutC, Errors10} =
-    require_map(iolist_to_binary([Path0, <<".output_contract">>]), get_any(S, [<<"output_contract">>, output_contract], undefined), <<"output_contract is required">>, Errors9),
-  Errors11 = validate_output_contract(iolist_to_binary([Path0, <<".output_contract">>]), OutC, Errors10),
+  {Input, Errors7} =
+    case IsFanoutJoin of
+      true -> {#{}, Errors6};
+      false -> require_map(iolist_to_binary([Path0, <<".input">>]), get_any(S, [<<"input">>, input], undefined), <<"input is required">>, Errors6)
+    end,
+  Errors8 =
+    case IsFanoutJoin of
+      true -> Errors7;
+      false -> validate_input_binding(iolist_to_binary([Path0, <<".input">>]), Input, Errors7)
+    end,
+
+  {Prompt, Errors9} =
+    case IsFanoutJoin of
+      true -> {#{}, Errors8};
+      false -> require_map(iolist_to_binary([Path0, <<".prompt">>]), get_any(S, [<<"prompt">>, prompt], undefined), <<"prompt is required">>, Errors8)
+    end,
+  Errors10 =
+    case IsFanoutJoin of
+      true -> Errors9;
+      false -> validate_prompt_ref(ProjectDir, iolist_to_binary([Path0, <<".prompt">>]), Prompt, Errors9)
+    end,
+
+  {OutC, Errors11} =
+    case IsFanoutJoin of
+      true -> {#{}, Errors10};
+      false -> require_map(iolist_to_binary([Path0, <<".output_contract">>]), get_any(S, [<<"output_contract">>, output_contract], undefined), <<"output_contract is required">>, Errors10)
+    end,
+  Errors12 =
+    case IsFanoutJoin of
+      true -> Errors11;
+      false -> validate_output_contract(iolist_to_binary([Path0, <<".output_contract">>]), OutC, Errors11)
+    end,
 
   Guards0 = get_any(S, [<<"guards">>, guards], []),
   Guards = case is_list(Guards0) of true -> Guards0; false -> [] end,
-  Errors12 =
-    case is_list(Guards0) of
-      true -> Errors11;
-      false -> [err(iolist_to_binary([Path0, <<".guards">>]), <<"not_array">>, <<"guards must be an array">>) | Errors11]
+  Errors13 =
+    case {IsFanoutJoin, is_list(Guards0)} of
+      {true, _} -> Errors12;
+      {false, true} -> Errors12;
+      {false, false} -> [err(iolist_to_binary([Path0, <<".guards">>]), <<"not_array">>, <<"guards must be an array">>) | Errors12]
     end,
-  Errors13 = validate_guards(iolist_to_binary([Path0, <<".guards">>]), Guards, Errors12),
+  Errors14 =
+    case IsFanoutJoin of
+      true -> Errors13;
+      false -> validate_guards(iolist_to_binary([Path0, <<".guards">>]), Guards, Errors13)
+    end,
 
-  OnPass = get_nullable_step_ref(S, [<<"on_pass">>, on_pass]),
+  OnPass0 = get_nullable_step_ref(S, [<<"on_pass">>, on_pass]),
+  OnPass =
+    case {IsFanoutJoin, OnPass0} of
+      {true, undefined} -> null;
+      _ -> OnPass0
+    end,
   OnFail = get_nullable_step_ref(S, [<<"on_fail">>, on_fail]),
   OnDecision0 = get_any(S, [<<"on_decision">>, on_decision], undefined),
-  {OnDecision, Errors13b} = validate_on_decision(iolist_to_binary([Path0, <<".on_decision">>]), OnDecision0, Errors13),
+  {OnDecision, Errors15} = validate_on_decision(iolist_to_binary([Path0, <<".on_decision">>]), OnDecision0, Errors14),
 
-  Exec = get_bin(S, [<<"executor">>, executor], <<>>),
-  Errors14 =
-    case Exec of
-      <<>> -> Errors13b;
-      <<"local_otp">> -> Errors13b;
-      <<"http_sse_remote">> -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unsupported_executor">>, <<"http_sse_remote is reserved for future">>) | Errors13b];
-      _ -> [err(iolist_to_binary([Path0, <<".executor">>]), <<"unknown_executor">>, <<"unknown executor">>) | Errors13b]
+  {FanoutSteps, Join, Errors16} =
+    case IsFanoutJoin of
+      true -> validate_fanout(iolist_to_binary([Path0, <<".fanout">>]), get_any(S, [<<"fanout">>, fanout], undefined), Errors15);
+      false -> {[], null, Errors15}
     end,
 
-  Info = #{id => Id, role => Role, on_pass => OnPass, on_fail => OnFail, on_decision => OnDecision, raw => S},
-  validate_steps(ProjectDir, Rest, StrictUnknown, Idx + 1, Seen, [Info | AccInfosRev], Errors14).
+  Info = #{id => Id, role => Role, executor => Exec, on_pass => OnPass, on_fail => OnFail, on_decision => OnDecision, fanout_steps => FanoutSteps, join => Join, raw => S},
+  validate_steps(ProjectDir, Rest, StrictUnknown, Idx + 1, Seen, [Info | AccInfosRev], Errors16).
 
 validate_transitions(StepInfos, StepIdSet, Errors0) ->
   lists:foldl(
-    fun (#{id := Id, on_pass := OnPass, on_fail := OnFail, on_decision := OnDecision, raw := _Raw}, Acc) ->
-      Acc1 = validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".on_pass">>]), OnPass, StepIdSet, Acc),
+    fun (#{id := Id, executor := Exec, on_pass := OnPass, on_fail := OnFail, on_decision := OnDecision, fanout_steps := FanoutSteps, join := Join, raw := _Raw}, Acc) ->
+      Acc1 =
+        case Exec of
+          <<"fanout_join">> -> Acc;
+          _ -> validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".on_pass">>]), OnPass, StepIdSet, Acc)
+        end,
       Acc2 = validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".on_fail">>]), OnFail, StepIdSet, Acc1),
-      validate_on_decision_refs(iolist_to_binary([<<"steps.">>, Id, <<".on_decision">>]), OnDecision, StepIdSet, Acc2)
+      Acc3 = validate_on_decision_refs(iolist_to_binary([<<"steps.">>, Id, <<".on_decision">>]), OnDecision, StepIdSet, Acc2),
+      Acc4 = validate_step_refs(iolist_to_binary([<<"steps.">>, Id, <<".fanout.steps">>]), FanoutSteps, StepIdSet, Acc3),
+      validate_step_ref(iolist_to_binary([<<"steps.">>, Id, <<".fanout.join">>]), Join, StepIdSet, Acc4)
     end,
     Errors0,
     StepInfos
@@ -194,10 +243,13 @@ validate_terminal_path(StepInfos, StepIdSet, Errors0) ->
       Visited = reachable_steps(StartId, StepInfos, StepIdSet, #{}),
       HasTerminal =
         lists:any(
-          fun (#{id := Id, on_pass := OnPass, on_fail := OnFail}) ->
+          fun (#{id := Id, executor := Exec, on_pass := OnPass, on_fail := OnFail, join := Join}) ->
             case maps:get(Id, Visited, false) of
               false -> false;
-              true -> (OnPass =:= null) orelse (OnFail =:= null)
+              true ->
+                (OnPass =:= null)
+                orelse (OnFail =:= null)
+                orelse ((Exec =:= <<"fanout_join">>) andalso (Join =:= null))
             end
           end,
           StepInfos
@@ -218,12 +270,19 @@ reachable_steps(StartId, StepInfos, StepIdSet, Visited0) ->
       case Step of
         undefined ->
           Visited1;
-        #{on_pass := OnPass, on_fail := OnFail, on_decision := OnDecision} ->
+        #{on_pass := OnPass, on_fail := OnFail, on_decision := OnDecision, fanout_steps := FanoutSteps, join := Join} ->
           Visited2 = follow_ref(OnPass, StepInfos, StepIdSet, Visited1),
           Visited3 = follow_ref(OnFail, StepInfos, StepIdSet, Visited2),
-          follow_refs_in_map(OnDecision, StepInfos, StepIdSet, Visited3)
+          Visited4 = follow_refs_in_map(OnDecision, StepInfos, StepIdSet, Visited3),
+          Visited5 = follow_refs_in_list(FanoutSteps, StepInfos, StepIdSet, Visited4),
+          follow_ref(Join, StepInfos, StepIdSet, Visited5)
       end
   end.
+
+follow_refs_in_list([], _StepInfos, _StepIdSet, Visited0) ->
+  Visited0;
+follow_refs_in_list([Ref | Rest], StepInfos, StepIdSet, Visited0) ->
+  follow_refs_in_list(Rest, StepInfos, StepIdSet, follow_ref(Ref, StepInfos, StepIdSet, Visited0)).
 
 follow_refs_in_map(Map0, StepInfos, StepIdSet, Visited0) ->
   Map = ensure_map(Map0),
@@ -258,6 +317,44 @@ validate_step_ref(Path, undefined, _StepIdSet, Errors) ->
   [err(Path, <<"missing">>, <<"step ref is required (or null)">>) | Errors];
 validate_step_ref(Path, _Other, _StepIdSet, Errors) ->
   [err(Path, <<"invalid_type">>, <<"step ref must be a string or null">>) | Errors].
+
+validate_step_refs(_Path, [], _StepIdSet, Errors) ->
+  Errors;
+validate_step_refs(Path, Refs, StepIdSet, Errors0) when is_list(Refs) ->
+  lists:foldl(
+    fun (Ref, Acc) ->
+      validate_step_ref(Path, Ref, StepIdSet, Acc)
+    end,
+    Errors0,
+    Refs
+  );
+validate_step_refs(Path, _Other, _StepIdSet, Errors) ->
+  [err(Path, <<"invalid_type">>, <<"step refs must be an array">>) | Errors].
+
+validate_fanout(Path, Fanout0, Errors0) ->
+  {Fanout, Errors1} = require_map(Path, Fanout0, <<"fanout is required">>, Errors0),
+  Steps0 = get_any(Fanout, [<<"steps">>, steps], undefined),
+  {Steps, Errors2} = require_list(iolist_to_binary([Path, <<".steps">>]), Steps0, <<"fanout.steps must be an array">>, Errors1),
+  Errors3 =
+    case Steps of
+      [] -> [err(iolist_to_binary([Path, <<".steps">>]), <<"empty">>, <<"fanout.steps must be non-empty">>) | Errors2];
+      _ -> Errors2
+    end,
+  FanoutSteps = [to_bin(StepId) || StepId <- Steps],
+  Errors4 =
+    case lists:all(fun is_binary/1, FanoutSteps) of
+      true -> Errors3;
+      false -> [err(iolist_to_binary([Path, <<".steps">>]), <<"invalid_type">>, <<"fanout.steps must contain strings">>) | Errors3]
+    end,
+  Join = get_nullable_step_ref(Fanout, [<<"join">>, join]),
+  Errors5 =
+    case Join of
+      undefined -> [err(iolist_to_binary([Path, <<".join">>]), <<"missing">>, <<"fanout.join is required">>) | Errors4];
+      _ -> Errors4
+    end,
+  _MaxConcurrency = get_any(Fanout, [<<"max_concurrency">>, max_concurrency], undefined),
+  _FailFast = get_any(Fanout, [<<"fail_fast">>, fail_fast], undefined),
+  {FanoutSteps, Join, Errors5}.
 
 validate_input_binding(Path, Input, Errors0) ->
   T = get_bin(Input, [<<"type">>, type], <<>>),

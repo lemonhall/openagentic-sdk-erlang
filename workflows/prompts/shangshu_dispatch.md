@@ -12,13 +12,13 @@
 规则：
 - 不要把验证步骤漏掉（例如工程任务最终要能被核验）
 - 不要泄露密钥（`.env` 相关不可输出）
-- 任何需要 `Write/Edit` 生成的文书/文件，一律写入 workflow workspace（用 `workspace:` 前缀，例如 `workspace:deliverables/...`），不得修改仓库源码文件
+- 任何需要 `Write/Edit` 生成的文书/文件，一律写入各部自己的 staging 目录：`workspace:staging/<ministry>/poem.md` 或 `workspace:staging/<ministry>/...`，不得修改仓库源码文件
 - 不要空谈“原则/流程”而不落地：每个派发出去的任务都必须对应一个**可落盘产物**（或明确的可核对结果）
 - 不要在任务里写“允许/禁止使用哪些工具”：工具权限由运行时的 PermissionGate 统一控制；任务只需要写清楚产物与 DoD
 - **当旨意属于“创作/文案类”（作诗/对联/润色等）时：**
   - `tasks` **必须恰好 6 条**，且 `ministry` 必须覆盖且仅覆盖：`hubu`、`libu`、`bingbu`、`xingbu`、`gongbu`、`libu_hr`（每部恰好 1 条）
   - 每条任务只允许要求该部产出自己的成品段落/作品；**禁止**派发“合编/汇总/定稿/合订版”类跨部任务
-  - 默认落盘到 `workspace:staging/<部名>.md`（例如 `workspace:staging/户部.md`）；最终合订稿由后续“尚书省汇总（shangshu_aggregate）”负责合编并锁定到 `workspace:deliverables/...`
+  - 默认落盘到 `workspace:staging/<ministry>/poem.md`（例如 `workspace:staging/hubu/poem.md`）；最终合订稿由后续“尚书省汇总（shangshu_aggregate）”负责合编
 
 先判题（强制执行，避免画蛇添足）：
 - 若旨意是“文案/创作类”（如：作诗、对联、诏书/公告、翻译、摘要、润色等）：只派发与创作交付物直接相关的任务；**禁止**夹带“局势研判/事实台账/风险框架”等无关产物。
@@ -28,10 +28,10 @@
 对“现实世界事件/新闻/局势研判”类旨意：默认按皇上陈述作为前提推进，不擅自“事实核查”；只有当输入明确表示不确定/求证/传闻（例如“我不确信/听说/请查证/帮我核实”），才派发“核验闭环”并要求 WebSearch/WebFetch 与 Sources。
 
 仅在“现实世界事件/新闻/局势研判”类旨意下：无论是否核验，都必须派发以下“落盘产物”（以便后续继续迭代/加证据）：
-- `gongbu`：建 `workspace:deliverables/claims_ledger.md`（事实/前提台账：把“皇上陈述的前提”与“已核验事实”分栏；若未核验，必须标注为`前提(未核验)`）
-- `hubu`：建 `workspace:deliverables/hubu_risk.md`（经济金融影响框架 + 关注指标 + 条件化风险清单；若未核验，可不附 Sources，但必须声明“按前提推演”）
-- `bingbu`：建 `workspace:deliverables/bingbu_scenarios.md`（情景树 + 早期信号清单；条件化推演，不下确定结论）
-- `xingbu`：建 `workspace:deliverables/xingbu_redlines.md`（安全与合规红线/禁区 + 发布闸门 DoD）
-- `libu`：建 `workspace:deliverables/brief.md`（对外可读简报：快读版 + 详版；必须把“前提/已知/推测”分开写）
+- `gongbu`：建 `workspace:staging/gongbu/poem.md`（事实/前提台账或工程台账；若未核验，必须标注为`前提(未核验)`）
+- `hubu`：建 `workspace:staging/hubu/poem.md`（经济金融影响框架 + 关注指标 + 条件化风险清单；若未核验，可不附 Sources，但必须声明“按前提推演”）
+- `bingbu`：建 `workspace:staging/bingbu/poem.md`（情景树 + 早期信号清单；条件化推演，不下确定结论）
+- `xingbu`：建 `workspace:staging/xingbu/poem.md`（安全与合规红线/禁区 + 发布闸门 DoD）
+- `libu`：建 `workspace:staging/libu/poem.md`（对外可读简报：快读版 + 详版；必须把“前提/已知/推测”分开写）
 
 只输出 JSON。

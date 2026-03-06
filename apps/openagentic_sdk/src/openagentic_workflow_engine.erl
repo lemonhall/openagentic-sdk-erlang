@@ -400,7 +400,10 @@ run_loop(StepId0, State0) ->
               finalize(State0, <<"failed">>, Msg);
             true ->
               State1 = put_in(State0, [step_attempts, StepId], Attempt),
-              run_one_step(StepId, StepRaw, Attempt, State1)
+              case step_executor_kind(StepRaw) of
+                <<"fanout_join">> -> run_fanout_join_step(StepId, StepRaw, Attempt, State1);
+                _ -> run_one_step(StepId, StepRaw, Attempt, State1)
+              end
           end
       end
   end.
@@ -465,6 +468,189 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
       ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"prompt">>, [to_bin(Reason)])),
       finalize(State0, <<"failed">>, to_bin(Reason))
   end.
+
+run_fanout_join_step(StepId, StepRaw, Attempt, State0) ->
+  Role = to_bin(get_any(StepRaw, [<<"role">>, role], <<>>)),
+  StepSessionId0 = create_step_session(State0, StepId, Role, Attempt),
+  StepSessionId = to_bin(StepSessionId0),
+  ok = append_wf_event(State0, openagentic_events:workflow_step_start(wf_id(State0), StepId, Role, Attempt, StepSessionId)),
+  FanoutCfg = ensure_map(get_any(StepRaw, [<<"fanout">>, fanout], #{})),
+  FanoutSteps = [to_bin(S) || S <- ensure_list_value(get_any(FanoutCfg, [<<"steps">>, steps], []))],
+  JoinStep = step_ref(FanoutCfg, [<<"join">>, join]),
+  case collect_fanout_results(FanoutSteps, State0) of
+    {ok, Results} ->
+      State1 = persist_fanout_successes(FanoutSteps, Results, State0),
+      ok = append_wf_event(State1, openagentic_events:workflow_step_pass(wf_id(State1), StepId, Attempt, JoinStep)),
+      ok = append_wf_event(State1, openagentic_events:workflow_transition(wf_id(State1), StepId, <<"pass">>, JoinStep, <<"fanout_join_completed">>)),
+      case JoinStep of
+        null -> finalize(State1, <<"completed">>, <<"fanout_join_completed">>);
+        _ -> run_loop(JoinStep, State1)
+      end;
+    {error, Reasons} ->
+      ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"fanout">>, Reasons)),
+      NextFail = step_ref(StepRaw, [<<"on_fail">>, on_fail]),
+      ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"fanout_join_failed">>)),
+      case NextFail of
+        null -> finalize(State0, <<"failed">>, join_bins(Reasons, <<"\n">>));
+        _ ->
+          StateFail = put_in(State0, [step_failures, StepId], Reasons),
+          run_loop(NextFail, StateFail)
+      end
+  end.
+
+collect_fanout_results(StepIds0, State0) ->
+  StepIds = uniq_bins(StepIds0),
+  Parent = self(),
+  Sink = fun (Ev) -> Parent ! {wf_event, Ev}, ok end,
+  Pending =
+    lists:foldl(
+      fun (LeafStepId, Acc) ->
+        {Pid, Ref} =
+          spawn_monitor(
+            fun () ->
+              Parent ! {fanout_result, LeafStepId, safe_run_fanout_child(LeafStepId, State0, Sink)}
+            end
+          ),
+        Acc#{Ref => #{step_id => LeafStepId, pid => Pid}}
+      end,
+      #{},
+      StepIds
+    ),
+  wait_for_fanout(Pending, #{}, State0).
+
+wait_for_fanout(Pending, Results, _State0) when map_size(Pending) =:= 0 ->
+  finalize_fanout_results(Results);
+wait_for_fanout(Pending, Results0, State0) ->
+  receive
+    {wf_event, Ev} ->
+      ok = append_wf_event(State0, Ev),
+      wait_for_fanout(Pending, Results0, State0);
+    {fanout_result, StepId, Result} ->
+      wait_for_fanout(Pending, Results0#{StepId => Result}, State0);
+    {'DOWN', Ref, process, _Pid, Reason} ->
+      case maps:take(Ref, Pending) of
+        error ->
+          wait_for_fanout(Pending, Results0, State0);
+        {#{step_id := StepId}, Pending1} ->
+          Results1 =
+            case maps:is_key(StepId, Results0) of
+              true -> Results0;
+              false -> Results0#{StepId => down_reason_to_result(StepId, Reason)}
+            end,
+          wait_for_fanout(Pending1, Results1, State0)
+      end
+  end.
+
+finalize_fanout_results(Results) ->
+  case [format_fanout_reason(StepId, Reason) || {StepId, {error, Reason}} <- maps:to_list(Results)] of
+    [] -> {ok, Results};
+    Reasons -> {error, Reasons}
+  end.
+
+down_reason_to_result(_StepId, normal) ->
+  {error, [<<"fanout child exited before returning a result">>]};
+down_reason_to_result(_StepId, Reason) ->
+  {error, [iolist_to_binary(io_lib:format("fanout child crashed: ~p", [Reason]))]}.
+
+safe_run_fanout_child(StepId, State0, Sink) ->
+  try
+    run_fanout_child(StepId, State0, Sink)
+  catch
+    Class:Reason ->
+      {error, [iolist_to_binary(io_lib:format("fanout child crashed: ~p:~p", [Class, Reason]))]}
+  end.
+
+run_fanout_child(StepId, State0, Sink) ->
+  StepRaw = ensure_map(maps:get(StepId, maps:get(steps_by_id, State0))),
+  ChildState = State0#{workflow_event_sink => Sink},
+  run_fanout_child_attempt(StepId, StepRaw, ChildState).
+
+run_fanout_child_attempt(StepId, StepRaw, State0) ->
+  Attempt0 = maps:get(StepId, maps:get(step_attempts, State0, #{}), 0),
+  Attempt = Attempt0 + 1,
+  MaxAttempts = step_max_attempts(StepRaw, State0),
+  case Attempt =< MaxAttempts of
+    false ->
+      Msg = iolist_to_binary([<<"max_attempts exceeded for step ">>, StepId]),
+      ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"max_attempts">>, [Msg])),
+      {error, [Msg]};
+    true ->
+      State1 = put_in(State0, [step_attempts, StepId], Attempt),
+      run_fanout_child_once(StepId, StepRaw, Attempt, State1)
+  end.
+
+run_fanout_child_once(StepId, StepRaw, Attempt, State0) ->
+  Role = to_bin(get_any(StepRaw, [<<"role">>, role], <<>>)),
+  StepSessionId0 = create_step_session(State0, StepId, Role, Attempt),
+  StepSessionId = to_bin(StepSessionId0),
+  ok = append_wf_event(State0, openagentic_events:workflow_step_start(wf_id(State0), StepId, Role, Attempt, StepSessionId)),
+  case resolve_prompt(State0, StepRaw) of
+    {ok, PromptText} ->
+      InputText = bind_input(State0, StepRaw),
+      Failures = maps:get(StepId, maps:get(step_failures, State0, #{}), []),
+      ControllerText = maps:get(controller_input, State0, <<>>),
+      UserPrompt = build_user_prompt(PromptText, ControllerText, InputText, Attempt, Failures),
+      ExecRes = run_step_executor_with_timeout(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw),
+      case ExecRes of
+        {ok, StepOut0} ->
+          StepOut = to_bin(StepOut0),
+          OutFormat = infer_output_format(StepRaw),
+          case eval_step_output(StepRaw, StepOut) of
+            {ok, Parsed} ->
+              {ok, #{attempt => Attempt, output => StepOut, parsed => Parsed, output_format => OutFormat, step_session_id => StepSessionId}};
+            {error, Reasons} ->
+              ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"guards">>, Reasons)),
+              NextFail = step_ref(StepRaw, [<<"on_fail">>, on_fail]),
+              ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"guard_failed">>)),
+              case NextFail of
+                StepId ->
+                  StateFail = put_in(State0, [step_failures, StepId], Reasons),
+                  run_fanout_child_attempt(StepId, StepRaw, StateFail);
+                null ->
+                  {error, Reasons};
+                _ ->
+                  {error, [iolist_to_binary([<<"unsupported fanout on_fail route: ">>, to_bin(NextFail)]) | Reasons]}
+              end
+          end;
+        {error, Reason} ->
+          ReasonBin = to_bin(Reason),
+          ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"executor">>, [ReasonBin])),
+          NextFail = step_ref(StepRaw, [<<"on_fail">>, on_fail]),
+          ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"executor_failed">>)),
+          case NextFail of
+            StepId ->
+              StateFail = put_in(State0, [step_failures, StepId], [ReasonBin]),
+              run_fanout_child_attempt(StepId, StepRaw, StateFail);
+            null ->
+              {error, [ReasonBin]};
+            _ ->
+              {error, [iolist_to_binary([<<"unsupported fanout on_fail route: ">>, to_bin(NextFail)]), ReasonBin]}
+          end
+      end;
+    {error, Reason} ->
+      ReasonBin = to_bin(Reason),
+      ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"prompt">>, [ReasonBin])),
+      {error, [ReasonBin]}
+  end.
+
+persist_fanout_successes(StepIds, Results, State0) ->
+  lists:foldl(
+    fun (StepId, AccState0) ->
+      {ok, #{attempt := Attempt, output := StepOut, parsed := Parsed, output_format := OutFormat, step_session_id := StepSessionId}} = maps:get(StepId, Results),
+      AccState1 = put_in(AccState0, [step_outputs, StepId], #{output => StepOut, parsed => Parsed, step_session_id => StepSessionId}),
+      ok = append_wf_event(AccState1, openagentic_events:workflow_step_output(wf_id(AccState1), StepId, Attempt, StepSessionId, StepOut, OutFormat)),
+      ok = append_wf_event(AccState1, openagentic_events:workflow_step_pass(wf_id(AccState1), StepId, Attempt, null)),
+      ok = append_wf_event(AccState1, openagentic_events:workflow_transition(wf_id(AccState1), StepId, <<"pass">>, null, <<"fanout_leaf_completed">>)),
+      AccState1
+    end,
+    State0,
+    StepIds
+  ).
+
+format_fanout_reason(StepId, Reasons) when is_list(Reasons) ->
+  iolist_to_binary([StepId, <<": ">>, join_bins(Reasons, <<"; ">>)]);
+format_fanout_reason(StepId, Reason) ->
+  iolist_to_binary([StepId, <<": ">>, to_bin(Reason)]).
 
 %% ---- executor ----
 
@@ -1024,7 +1210,12 @@ create_step_session(State0, StepId, Role, Attempt) ->
   Sid.
 
 append_wf_event(State0, Ev) ->
-  append_wf_event(maps:get(session_root, State0), maps:get(workflow_session_id, State0), Ev).
+  case maps:get(workflow_event_sink, State0, undefined) of
+    F when is_function(F, 1) ->
+      F(Ev);
+    _ ->
+      append_wf_event(maps:get(session_root, State0), maps:get(workflow_session_id, State0), Ev)
+  end.
 
 append_wf_event(Root0, Sid0, Ev) ->
   Root = ensure_list_str(Root0),
@@ -1072,6 +1263,13 @@ step_timeout_ms(StepRaw, State0) ->
   Sec0 = int_or_default(StepSec, int_or_default(DefSec, 600)),
   Sec = clamp_int(Sec0, 1, 3600),
   Sec * 1000.
+
+step_executor_kind(StepRaw) ->
+  Exec = to_bin(get_any(StepRaw, [<<"executor">>, executor], <<>>)),
+  case Exec of
+    <<"fanout_join">> -> <<"fanout_join">>;
+    _ -> <<"local_otp">>
+  end.
 
 %% ---- file/hash helpers ----
 

@@ -200,6 +200,119 @@ workflow_engine_decision_on_decision_routes_reject_test() ->
   ?assert(not lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.start">> andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"c">> end, Events)),
   ok.
 
+workflow_engine_fanout_join_parallel_steps_and_join_test() ->
+  Root = test_root(),
+  ok = write_workflow_fanout(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      Prompt = maps:get(user_prompt, Ctx, <<>>),
+      case StepId of
+        <<"dispatch">> ->
+          {ok,
+            <<
+              "{",
+              "\"tasks\":[",
+              "{\"id\":\"t-hubu\",\"title\":\"hubu\",\"ministry\":\"hubu\",\"definition_of_done\":[\"write workspace:staging/hubu/poem.md\"],\"needs_user_confirm\":false},",
+              "{\"id\":\"t-gongbu\",\"title\":\"gongbu\",\"ministry\":\"gongbu\",\"definition_of_done\":[\"write workspace:staging/gongbu/poem.md\"],\"needs_user_confirm\":false}",
+              "]",
+              "}"
+            >>};
+        <<"hubu">> ->
+          timer:sleep(120),
+          ?assert(binary:match(Prompt, <<"\"ministry\":\"hubu\"">>) =/= nomatch),
+          ?assertEqual(nomatch, binary:match(Prompt, <<"\"ministry\":\"gongbu\"">>)),
+          ?assert(binary:match(Prompt, <<"workspace:staging/hubu/poem.md">>) =/= nomatch),
+          {ok, <<"# Result\n\nhubu finished\n\n# Artifacts\n\n- workspace:staging/hubu/poem.md\n\n# Handoff\n\nplease join\n">>};
+        <<"gongbu">> ->
+          timer:sleep(40),
+          ?assert(binary:match(Prompt, <<"\"ministry\":\"gongbu\"">>) =/= nomatch),
+          ?assertEqual(nomatch, binary:match(Prompt, <<"\"ministry\":\"hubu\"">>)),
+          ?assert(binary:match(Prompt, <<"workspace:staging/gongbu/poem.md">>) =/= nomatch),
+          {ok, <<"# Result\n\ngongbu finished\n\n# Artifacts\n\n- workspace:staging/gongbu/poem.md\n\n# Handoff\n\nplease join\n">>};
+        <<"aggregate">> ->
+          ?assert(binary:match(Prompt, <<"hubu finished">>) =/= nomatch),
+          ?assert(binary:match(Prompt, <<"gongbu finished">>) =/= nomatch),
+          {ok, <<"# Summary\n\nall done\n">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_fanout.json", <<"hello">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  WfSid = maps:get(workflow_session_id, Res),
+  Events = openagentic_session_store:read_events(Root, WfSid),
+  ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.start">> andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"fanout">> end, Events)),
+  ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.output">> andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"hubu">> end, Events)),
+  ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.output">> andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"gongbu">> end, Events)),
+  ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.output">> andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"aggregate">> end, Events)),
+  ok.
+
+workflow_engine_fanout_join_workflow_event_seq_monotonic_test() ->
+  Root = test_root(),
+  ok = write_workflow_fanout(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      case StepId of
+        <<"dispatch">> ->
+          {ok,
+            <<
+              "{",
+              "\"tasks\":[",
+              "{\"id\":\"t-hubu\",\"title\":\"hubu\",\"ministry\":\"hubu\",\"definition_of_done\":[],\"needs_user_confirm\":false},",
+              "{\"id\":\"t-gongbu\",\"title\":\"gongbu\",\"ministry\":\"gongbu\",\"definition_of_done\":[],\"needs_user_confirm\":false}",
+              "]",
+              "}"
+            >>};
+        <<"hubu">> ->
+          timer:sleep(80),
+          {ok, <<"# Result\n\nhubu\n\n# Artifacts\n\n- ok\n\n# Handoff\n\njoin\n">>};
+        <<"gongbu">> ->
+          timer:sleep(10),
+          {ok, <<"# Result\n\ngongbu\n\n# Artifacts\n\n- ok\n\n# Handoff\n\njoin\n">>};
+        <<"aggregate">> ->
+          {ok, <<"# Summary\n\nall done\n">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_fanout.json", <<"hello">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  Events = openagentic_session_store:read_events(Root, maps:get(workflow_session_id, Res)),
+  Seqs = [maps:get(<<"seq">>, E, maps:get(seq, E, -1)) || E <- Events],
+  ?assertEqual(Seqs, lists:sort(Seqs)),
+  ?assertEqual(length(Seqs), length(lists:usort(Seqs))),
+  ok.
+
+three_provinces_workflow_uses_fanout_join_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "three-provinces-six-ministries.v1.json"])),
+  Wf = openagentic_json:decode(Bin),
+  Steps = maps:get(<<"steps">>, Wf),
+  Dispatch = find_step_by_id(<<"shangshu_dispatch">>, Steps),
+  Fanout = find_step_by_id(<<"six_ministries_fanout">>, Steps),
+  Hubu = find_step_by_id(<<"hubu_data">>, Steps),
+  Gongbu = find_step_by_id(<<"gongbu_infra">>, Steps),
+  ?assertEqual(<<"six_ministries_fanout">>, maps:get(<<"on_pass">>, Dispatch)),
+  ?assertEqual(<<"fanout_join">>, maps:get(<<"executor">>, Fanout)),
+  ?assertEqual(<<"shangshu_aggregate">>, maps:get(<<"join">>, maps:get(<<"fanout">>, Fanout))),
+  ?assertEqual(null, maps:get(<<"on_pass">>, Hubu)),
+  ?assertEqual(<<"hubu_data">>, maps:get(<<"on_fail">>, Hubu)),
+  ?assertEqual(null, maps:get(<<"on_pass">>, Gongbu)),
+  ?assertEqual(<<"gongbu_infra">>, maps:get(<<"on_fail">>, Gongbu)),
+  ok.
+
+three_provinces_ministry_prompts_use_staging_paths_test() ->
+  assert_prompt_has_staging_constraints("workflows/prompts/hubu_data.md", <<"hubu">>),
+  assert_prompt_has_staging_constraints("workflows/prompts/libu_docs.md", <<"libu">>),
+  assert_prompt_has_staging_constraints("workflows/prompts/bingbu_engineering.md", <<"bingbu">>),
+  assert_prompt_has_staging_constraints("workflows/prompts/xingbu_compliance.md", <<"xingbu">>),
+  assert_prompt_has_staging_constraints("workflows/prompts/gongbu_infra.md", <<"gongbu">>),
+  assert_prompt_has_staging_constraints("workflows/prompts/libu_hr_people.md", <<"libu_hr">>),
+  ok.
+
 write_workflow(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
   ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
@@ -342,6 +455,71 @@ write_workflow_decision_route(Root) ->
       "]}">>,
   write_file(filename:join([Root, "workflows", "w_decision.json"]), Json).
 
+write_workflow_fanout(Root) ->
+  ok = write_file(filename:join([Root, "workflows", "prompts", "dispatch.md"]), <<"# dispatch\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "hubu.md"]), <<"只允许写入 workspace:staging/hubu/poem.md\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "gongbu.md"]), <<"只允许写入 workspace:staging/gongbu/poem.md\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "aggregate.md"]), <<"# aggregate\n">>),
+  Json =
+    openagentic_json:encode(
+      #{
+        workflow_version => <<"1.0">>,
+        name => <<"fanout">>,
+        steps => [
+          #{
+            id => <<"dispatch">>,
+            role => <<"shangshu">>,
+            input => #{type => <<"controller_input">>},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/dispatch.md">>},
+            output_contract => #{type => <<"json_object">>, schema_hint => #{tasks => []}},
+            guards => [#{type => <<"regex_must_match">>, pattern => <<"tasks">>}],
+            on_pass => <<"fanout">>,
+            on_fail => null
+          },
+          #{
+            id => <<"fanout">>,
+            role => <<"shangshu">>,
+            executor => <<"fanout_join">>,
+            fanout => #{steps => [<<"hubu">>, <<"gongbu">>], join => <<"aggregate">>, max_concurrency => 2, fail_fast => false},
+            on_fail => null
+          },
+          #{
+            id => <<"hubu">>,
+            role => <<"hubu">>,
+            input => #{type => <<"step_output">>, step_id => <<"dispatch">>},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/hubu.md">>},
+            output_contract => #{type => <<"markdown_sections">>, required => [<<"Result">>, <<"Artifacts">>, <<"Handoff">>]},
+            guards => [],
+            on_pass => null,
+            on_fail => <<"hubu">>,
+            max_attempts => 2
+          },
+          #{
+            id => <<"gongbu">>,
+            role => <<"gongbu">>,
+            input => #{type => <<"step_output">>, step_id => <<"dispatch">>},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/gongbu.md">>},
+            output_contract => #{type => <<"markdown_sections">>, required => [<<"Result">>, <<"Artifacts">>, <<"Handoff">>]},
+            guards => [],
+            on_pass => null,
+            on_fail => <<"gongbu">>,
+            max_attempts => 2
+          },
+          #{
+            id => <<"aggregate">>,
+            role => <<"shangshu">>,
+            input => #{type => <<"merge">>, sources => [#{type => <<"step_output">>, step_id => <<"hubu">>}, #{type => <<"step_output">>, step_id => <<"gongbu">>}]},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/aggregate.md">>},
+            output_contract => #{type => <<"markdown_sections">>, required => [<<"Summary">>]},
+            guards => [],
+            on_pass => null,
+            on_fail => null
+          }
+        ]
+      }
+    ),
+  write_file(filename:join([Root, "workflows", "w_fanout.json"]), <<Json/binary, "\n">>).
+
 test_root() ->
   {ok, Cwd} = file:get_cwd(),
   Base = filename:join([Cwd, ".tmp", "eunit", "openagentic_workflow_engine_test"]),
@@ -403,3 +581,16 @@ to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
+
+find_step_by_id(_Id, []) ->
+  erlang:error(step_not_found);
+find_step_by_id(Id, [#{<<"id">> := Id} = Step | _]) ->
+  Step;
+find_step_by_id(Id, [_ | Rest]) ->
+  find_step_by_id(Id, Rest).
+
+assert_prompt_has_staging_constraints(Path, Ministry) ->
+  {ok, Bin} = file:read_file(Path),
+  ?assert(binary:match(Bin, iolist_to_binary([<<"workspace:staging/">>, Ministry, <<"/poem.md">>])) =/= nomatch),
+  ?assert(binary:match(Bin, iolist_to_binary([<<"workspace:staging/">>, Ministry, <<"/...">>])) =/= nomatch),
+  ?assertEqual(nomatch, binary:match(Bin, <<"workspace:deliverables/">>)).
