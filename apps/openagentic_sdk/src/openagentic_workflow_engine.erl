@@ -696,6 +696,7 @@ resolve_prompt(State0, StepRaw) ->
 bind_input(State0, StepRaw) ->
   Input0 = ensure_map(get_any(StepRaw, [<<"input">>, input], #{})),
   T = to_bin(get_any(Input0, [<<"type">>, type], <<>>)),
+  Role = to_bin(get_any(StepRaw, [<<"role">>, role], <<>>)),
   StepOutputs = maps:get(step_outputs, State0, #{}),
   case T of
     <<"controller_input">> ->
@@ -703,7 +704,7 @@ bind_input(State0, StepRaw) ->
     <<"step_output">> ->
       From = to_bin(get_any(Input0, [<<"step_id">>, step_id], <<>>)),
       case maps:get(From, StepOutputs, undefined) of
-        #{output := Out} -> to_bin(Out);
+        #{output := Out} -> maybe_filter_tasks_input(Role, to_bin(Out));
         _ -> <<>>
       end;
     <<"merge">> ->
@@ -712,6 +713,35 @@ bind_input(State0, StepRaw) ->
     _ ->
       <<>>
   end.
+
+maybe_filter_tasks_input(Role, OutBin) ->
+  case is_ministry_role(Role) of
+    false ->
+      OutBin;
+    true ->
+      case (catch openagentic_json:decode(OutBin)) of
+        #{<<"tasks">> := Tasks0} = Obj when is_list(Tasks0) ->
+          Tasks =
+            [
+              T0
+              || T0 <- Tasks0,
+                 is_map(T0),
+                 to_bin(maps:get(<<"ministry">>, T0, maps:get(ministry, T0, <<>>))) =:= Role
+            ],
+          %% Keep all other keys intact, only filter `tasks`.
+          openagentic_json:encode(Obj#{<<"tasks">> => Tasks});
+        _ ->
+          OutBin
+      end
+  end.
+
+is_ministry_role(<<"hubu">>) -> true;
+is_ministry_role(<<"libu">>) -> true;
+is_ministry_role(<<"bingbu">>) -> true;
+is_ministry_role(<<"xingbu">>) -> true;
+is_ministry_role(<<"gongbu">>) -> true;
+is_ministry_role(<<"libu_hr">>) -> true;
+is_ministry_role(_) -> false.
 
 merge_sources([], _StepOutputs, _Idx, AccRev) ->
   iolist_to_binary(lists:reverse(AccRev));

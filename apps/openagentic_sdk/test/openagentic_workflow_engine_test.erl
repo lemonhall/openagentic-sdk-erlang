@@ -26,6 +26,38 @@ workflow_engine_happy_path_test() ->
   ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.done">> end, Events)),
   ok.
 
+workflow_engine_filters_tasks_input_by_ministry_role_test() ->
+  Root = test_root(),
+  ok = write_workflow_task_filter(Root),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      Prompt = maps:get(user_prompt, Ctx, <<>>),
+      case StepId of
+        <<"dispatch">> ->
+          {ok,
+            <<
+              "{",
+              "\"tasks\":[",
+              "{\"id\":\"t-hubu\",\"title\":\"hubu\",\"ministry\":\"hubu\",\"definition_of_done\":[],\"needs_user_confirm\":false},",
+              "{\"id\":\"t-gongbu\",\"title\":\"gongbu\",\"ministry\":\"gongbu\",\"definition_of_done\":[],\"needs_user_confirm\":false}",
+              "]",
+              "}"
+            >>};
+        <<"gongbu">> ->
+          %% Input should be filtered down to only this ministry's tasks.
+          ?assert(binary:match(Prompt, <<"\"ministry\":\"gongbu\"">>) =/= nomatch),
+          ?assertEqual(nomatch, binary:match(Prompt, <<"\"ministry\":\"hubu\"">>)),
+          {ok, <<"# R\n\nok\n">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_filter.json", <<"hello">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  ok.
+
 workflow_engine_contract_fail_test() ->
   Root = test_root(),
   ok = write_workflow(Root),
@@ -199,6 +231,38 @@ write_workflow(Root) ->
       "}",
       "]}">>,
   write_file(filename:join([Root, "workflows", "w.json"]), Json).
+
+write_workflow_task_filter(Root) ->
+  ok = write_file(filename:join([Root, "workflows", "prompts", "dispatch.md"]), <<"# dispatch prompt\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "gongbu.md"]), <<"# gongbu prompt\n">>),
+  Json =
+    <<
+      "{",
+      "\"workflow_version\":\"1.0\",",
+      "\"name\":\"t\",",
+      "\"steps\":[",
+      "{",
+      "\"id\":\"dispatch\",",
+      "\"role\":\"shangshu\",",
+      "\"input\":{\"type\":\"controller_input\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/dispatch.md\"},",
+      "\"output_contract\":{\"type\":\"json_object\"},",
+      "\"guards\":[{\"type\":\"regex_must_match\",\"pattern\":\"\\\\\\\"tasks\\\\\\\"\\\\s*:\"}],",
+      "\"on_pass\":\"gongbu\",",
+      "\"on_fail\":null",
+      "},",
+      "{",
+      "\"id\":\"gongbu\",",
+      "\"role\":\"gongbu\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"dispatch\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/gongbu.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"R\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":null,",
+      "\"on_fail\":null",
+      "}",
+      "]}">>,
+  write_file(filename:join([Root, "workflows", "w_filter.json"]), Json).
 
 write_workflow_retry(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
