@@ -462,6 +462,25 @@ three_provinces_aggregate_prompt_requires_substantive_synthesis_test() ->
   ?assert(binary:match(Bin, <<"workspace:staging/hubu/poem.md">>) =/= nomatch),
   ok.
 
+three_provinces_aggregate_prompt_requires_owned_judgment_and_real_escalation_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_aggregate.md"])),
+  ?assert(binary:match(Bin, <<"AGGREGATE_OWN_JUDGMENT_AND_TRADEOFF">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"AGGREGATE_REAL_BLOCKERS_ONLY">>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"Markdown">>) =/= nomatch),
+  ok.
+
+three_provinces_aggregate_prompt_preserves_utf8_text_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_aggregate.md"])),
+  ?assert(binary:match(Bin, <<"尚书省的定稿官"/utf8>>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"需要皇上裁决"/utf8>>) =/= nomatch),
+  ok.
+
+three_provinces_taizi_solo_prompt_preserves_utf8_text_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "taizi_solo.md"])),
+  ?assert(binary:match(Bin, <<"太子：独办回信"/utf8>>) =/= nomatch),
+  ?assert(binary:match(Bin, <<"对皇上的回信"/utf8>>) =/= nomatch),
+  ok.
+
 three_provinces_taizi_reply_prompt_avoids_overcautious_hypothetical_framing_test() ->
   {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "taizi_reply.md"])),
   ?assert(binary:match(Bin, <<"REPLY_AVOID_HYPOTHETICAL_PADDING">>) =/= nomatch),
