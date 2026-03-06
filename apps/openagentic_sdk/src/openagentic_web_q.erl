@@ -52,6 +52,8 @@ handle_cast({answer, Qid, Answer0}, State0) ->
   State = ensure_map(State0),
   Answer = Answer0,
   case maps:find(Qid, State) of
+    {ok, #{from := undefined} = Item} ->
+      {noreply, State#{Qid => Item#{answer => Answer}}};
     {ok, #{from := From} = Item} ->
       gen_server:reply(From, Answer),
       {noreply, State#{Qid => Item#{answer => Answer, from => undefined}}};
@@ -70,4 +72,3 @@ to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
-

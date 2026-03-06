@@ -8,6 +8,9 @@ web_runtime_supervisor_isolates_caller_from_internal_service_crash_test_() ->
 workflow_watchdog_visibility_and_continue_status_test_() ->
   {timeout, 45, fun workflow_watchdog_visibility_and_continue_status_body/0}.
 
+web_question_broker_ignores_duplicate_answer_test_() ->
+  {timeout, 10, fun web_question_broker_ignores_duplicate_answer_body/0}.
+
 web_runtime_supervisor_isolates_caller_from_internal_service_crash_body() ->
   reset_web_runtime(),
   Root = tmp_root(),
@@ -117,6 +120,34 @@ workflow_watchdog_visibility_and_continue_status_body() ->
     openagentic_web:stop(),
     ets:delete(Tab),
     reset_web_runtime()
+  end,
+  ok.
+
+web_question_broker_ignores_duplicate_answer_body() ->
+  reset_web_runtime(),
+  PrevTrap = process_flag(trap_exit, true),
+  try
+    {ok, QPid} = openagentic_web_q:start_link(),
+    Parent = self(),
+    Qid = <<"q_dup_1">>,
+    AskPid = spawn(fun () ->
+      Answer = openagentic_web_q:ask(<<"wf_1">>, #{question_id => Qid, prompt => <<"Allow?">>, choices => [<<"yes">>, <<"no">>]}),
+      Parent ! {ask_answer, Answer}
+    end),
+    timer:sleep(50),
+    ok = openagentic_web_q:answer(Qid, <<"yes">>),
+    receive
+      {ask_answer, <<"yes">>} -> ok
+    after 5000 ->
+      ?assert(false)
+    end,
+    ok = openagentic_web_q:answer(Qid, <<"yes">>),
+    timer:sleep(100),
+    ?assert(is_process_alive(QPid)),
+    ?assert(is_process_alive(AskPid) =:= false)
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
   end,
   ok.
 
