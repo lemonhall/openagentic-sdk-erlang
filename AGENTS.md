@@ -144,6 +144,10 @@ User prompt
   - `REBAR_BASE_DIR=E:\erlang\rebar3`
   - `REBAR_CACHE_DIR=E:\erlang\rebar3\cache`
   - `HEX_HOME=E:\erlang\hex`
+- **Session / workflow 运行目录（已确认）**：
+  - `OPENAGENTIC_SDK_HOME=E:\openagentic-sdk`
+  - workflow / runtime sessions 默认落在 `E:\openagentic-sdk\sessions`
+  - 当用户给出 `workflow_session_id` 时，优先去 `E:\openagentic-sdk\sessions\<workflow_session_id>` 查 `meta.json` / `events.jsonl`
 - 禁止把真实密钥写进仓库、日志、测试夹具；`.env` 必须保持本地化并 gitignored。
 - 任何批量删除/破坏性操作（`Remove-Item -Recurse -Force` 等）必须先征得用户确认。
 
