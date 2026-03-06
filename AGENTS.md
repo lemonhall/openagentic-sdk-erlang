@@ -94,6 +94,8 @@ User prompt
 ## 当前进度（续上用）
 
 - 核心（已落地）：Responses + SSE provider、session store（`meta.json` + `events.jsonl`）、runtime/tool-loop、permission gate、基础安全文件工具。
+- 已对齐：workflow step 可显式声明 `retry_policy`；仅对明确开启 `transient_provider_errors` 的幂等 step 自动重试 provider timeout / stream transient failures，默认不对副作用 step 盲目重跑。
+- 已对齐：`openagentic web` 内部服务由 `openagentic_web_runtime_sup` 独立监督；`openagentic_web_q` / `openagentic_workflow_mgr` 不再直接绑到 shell 调用方，watchdog 触发后会把 `stalled` 写入 session，并在 Web API 中区分 `queued` / `resumed_from_stalled`。
 - 正在对齐：`Skill` / `SlashCommand`（对齐 Kotlin 的 skills roots precedence + `/skills` 等命令）。
 - 已解决：`rebar3 eunit` 的 skills 相关失败（根因是 skills 文件扫描里误用 `lists:flatten/1` 把“路径列表”拍平为“字符列表”）。现已全绿。
 - 已对齐：`SlashCommand`（opencode commands 模板加载 + `${args}`/`${path}` 渲染）与 `Skill`（summary/checklist/front-matter 解析 + 输出字段）；`rebar3 eunit` 全绿后再继续扩展工具集。

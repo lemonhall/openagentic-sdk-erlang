@@ -46,7 +46,11 @@ init(Req0, State0) ->
                   workflow_id => WfId,
                   workflow_session_id => WfSid,
                   workspace_dir => openagentic_fs:norm_abs_bin(WorkspaceDir),
-                  events_url => iolist_to_binary([<<"/api/sessions/">>, to_bin(WfSid), <<"/events">>])
+                  events_url => iolist_to_binary([<<"/api/sessions/">>, to_bin(WfSid), <<"/events">>]),
+                  queued => maps:get(queued, Res, false),
+                  queue_length => maps:get(queue_length, Res, 0),
+                  status => to_bin(maps:get(status, Res, <<"running">>)),
+                  resumed_from_stalled => maps:get(resumed_from_stalled, Res, false)
                 },
               reply_json(201, Resp, Req1, State);
             {error, Reason} ->

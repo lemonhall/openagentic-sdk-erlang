@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, ensure_started/0]).
--export([start_workflow/4, continue_workflow/4, cancel_workflow/2, status/1]).
+-export([start_workflow/4, continue_workflow/4, cancel_workflow/2, status/1, status/2]).
 -export([note_progress/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -55,7 +55,11 @@ cancel_workflow(SessionRoot, WorkflowSessionId) ->
 
 status(WorkflowSessionId) ->
   ensure_started(),
-  gen_server:call(?SERVER, {status, WorkflowSessionId}, 60000).
+  gen_server:call(?SERVER, {status, undefined, WorkflowSessionId}, 60000).
+
+status(SessionRoot, WorkflowSessionId) ->
+  ensure_started(),
+  gen_server:call(?SERVER, {status, SessionRoot, WorkflowSessionId}, 60000).
 
 note_progress(WorkflowSessionId0, Event0) ->
   ensure_started(),
@@ -73,7 +77,7 @@ handle_call({start_workflow, ProjectDir, WorkflowRelPath, Prompt, EngineOpts0}, 
       WfSid = to_bin(maps:get(workflow_session_id, Info, <<>>)),
       Pid = maps:get(pid, Info, undefined),
       State1 = maybe_track_runner(WfSid, Pid, ensure_list(session_root_from_opts(EngineOpts)), EngineOpts, State0),
-      {reply, {ok, Info#{queued => false, queue_length => 0}}, State1};
+      {reply, {ok, Info#{queued => false, queue_length => 0, status => <<"running">>, resumed_from_stalled => false}}, State1};
     Err ->
       {reply, Err, State0}
   end;
@@ -88,15 +92,28 @@ handle_call({continue_workflow, SessionRoot0, WorkflowSessionId0, Message0, Engi
       Q = Q0 ++ [Message],
       Item = Item0#{queue := Q, session_root := SessionRoot, engine_opts := EngineOpts},
       State1 = State0#{WorkflowSessionId => Item},
-      Reply = #{queued => true, queue_length => length(Q)},
+      Reply = #{queued => true, queue_length => length(Q), status => <<"queued">>, resumed_from_stalled => false},
       {reply, {ok, Reply}, State1};
     false ->
+      PreviousStatus = session_terminal_status(SessionRoot, WorkflowSessionId),
       Res = openagentic_workflow_engine:continue_start(SessionRoot, ensure_list(WorkflowSessionId), Message, EngineOpts),
       case Res of
         {ok, Info} ->
           Pid = maps:get(pid, Info, undefined),
           State1 = maybe_track_runner(WorkflowSessionId, Pid, SessionRoot, EngineOpts, State0),
-          Reply = Info#{queued => false, queue_length => 0},
+          ResumedFromStalled = PreviousStatus =:= <<"stalled">>,
+          Status =
+            case ResumedFromStalled of
+              true -> <<"resumed_from_stalled">>;
+              false -> <<"running">>
+            end,
+          Reply0 = Info#{queued => false, queue_length => 0, status => Status, resumed_from_stalled => ResumedFromStalled},
+          Reply =
+            case PreviousStatus of
+              undefined -> Reply0;
+              <<>> -> Reply0;
+              _ -> Reply0#{previous_status => PreviousStatus}
+            end,
           {reply, {ok, Reply}, State1};
         Err ->
           {reply, Err, State0}
@@ -114,14 +131,23 @@ handle_call({cancel_workflow, SessionRoot0, WorkflowSessionId0}, _From, State0) 
       %% Nothing to cancel; treat as ok.
       {reply, {ok, #{ok => true, canceled => false}}, State0}
   end;
-handle_call({status, WorkflowSessionId0}, _From, State0) ->
+handle_call({status, SessionRoot0, WorkflowSessionId0}, _From, State0) ->
+  SessionRoot = SessionRoot0,
   WorkflowSessionId = to_bin(WorkflowSessionId0),
   case is_running(WorkflowSessionId, State0) of
     {true, Item} ->
-      Reply = #{running => true, queue_length => length(ensure_list_value(maps:get(queue, Item, [])))},
+      QueueLength = length(ensure_list_value(maps:get(queue, Item, []))),
+      Status =
+        case QueueLength > 0 of
+          true -> <<"queued">>;
+          false -> <<"running">>
+        end,
+      Reply = #{running => true, queue_length => QueueLength, status => Status},
       {reply, {ok, Reply}, State0};
     false ->
-      {reply, {ok, #{running => false, queue_length => 0}}, State0}
+      Reply0 = #{running => false, queue_length => 0},
+      Reply = maps:merge(Reply0, session_status_info(SessionRoot, WorkflowSessionId)),
+      {reply, {ok, Reply}, State0}
   end;
 handle_call(_Other, _From, State0) ->
   {reply, {error, bad_request}, State0}.
@@ -324,6 +350,43 @@ append_stalled_done(SessionRoot0, WorkflowSessionId0, LastEventType0, TimeoutMs0
   Ev = openagentic_events:workflow_done(WfId, WfName, <<"stalled">>, Msg, #{by => <<"watchdog">>}),
   _ = openagentic_session_store:append_event(SessionRoot, WfSid, Ev),
   ok.
+
+session_status_info(undefined, _WorkflowSessionId) ->
+  #{};
+session_status_info(SessionRoot0, WorkflowSessionId0) ->
+  SessionRoot = ensure_list(SessionRoot0),
+  WorkflowSessionId = ensure_list(WorkflowSessionId0),
+  case find_last_workflow_done(openagentic_session_store:read_events(SessionRoot, WorkflowSessionId)) of
+    false ->
+      #{};
+    Ev0 ->
+      Ev = ensure_map(Ev0),
+      Base = #{status => to_bin(maps:get(<<"status">>, Ev, maps:get(status, Ev, <<>>)))},
+      case maps:get(<<"by">>, Ev, maps:get(by, Ev, undefined)) of
+        undefined -> Base;
+        By -> Base#{by => to_bin(By)}
+      end
+  end.
+
+session_terminal_status(SessionRoot, WorkflowSessionId) ->
+  case session_status_info(SessionRoot, WorkflowSessionId) of
+    #{status := Status} -> Status;
+    _ -> undefined
+  end.
+
+find_last_workflow_done(Events0) ->
+  Events = ensure_list_value(Events0),
+  lists:foldl(
+    fun (Ev0, Best0) ->
+      Ev = ensure_map(Ev0),
+      case maps:get(<<"type">>, Ev, maps:get(type, Ev, <<>>)) of
+        <<"workflow.done">> -> Ev;
+        _ -> Best0
+      end
+    end,
+    false,
+    Events
+  ).
 
 session_root_from_opts(Opts0) ->
   Opts = ensure_map(Opts0),

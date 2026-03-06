@@ -38,7 +38,7 @@ start(ProjectDir0, WorkflowRelPath0, ControllerInput0, Opts0) ->
   case init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) of
     {ok, Start, State0} ->
       Pid =
-        spawn_link(
+        spawn(
           fun () ->
             _ = execute(Start, State0),
             ok
@@ -77,7 +77,7 @@ continue_start(SessionRoot0, WorkflowSessionId0, Message0, Opts0) ->
   case init_continue(SessionRoot, WorkflowSessionId, Message, Opts) of
     {ok, StartStepId, State0} ->
       Pid =
-        spawn_link(
+        spawn(
           fun () ->
             _ = execute(StartStepId, State0),
             ok
@@ -409,6 +409,9 @@ run_loop(StepId0, State0) ->
   end.
 
 run_one_step(StepId, StepRaw, Attempt, State0) ->
+  run_one_step_attempt(StepId, StepRaw, Attempt, 0, State0).
+
+run_one_step_attempt(StepId, StepRaw, Attempt, RetryCount0, State0) ->
   Role = to_bin(get_any(StepRaw, [<<"role">>, role], <<>>)),
   StepSessionId0 = create_step_session(State0, StepId, Role, Attempt),
   StepSessionId = to_bin(StepSessionId0),
@@ -454,14 +457,20 @@ run_one_step(StepId, StepRaw, Attempt, State0) ->
               end
           end;
         {error, Reason} ->
-          ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"executor">>, [to_bin(Reason)])),
-          NextFail = step_ref(StepRaw, [<<"on_fail">>, on_fail]),
-          ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"executor_failed">>)),
-          case NextFail of
-            null -> finalize(State0, <<"failed">>, to_bin(Reason));
-            _ ->
-              StateFail = put_in(State0, [step_failures, StepId], [to_bin(Reason)]),
-              run_loop(NextFail, StateFail)
+          ReasonBin = to_bin(Reason),
+          case maybe_retry_transient_provider_error(State0, StepId, StepRaw, Attempt, RetryCount0, ReasonBin) of
+            {retry, RetryState} ->
+              run_one_step_attempt(StepId, StepRaw, Attempt, RetryCount0 + 1, RetryState);
+            no_retry ->
+              ok = append_wf_event(State0, openagentic_events:workflow_guard_fail(wf_id(State0), StepId, Attempt, <<"executor">>, [ReasonBin])),
+              NextFail = step_ref(StepRaw, [<<"on_fail">>, on_fail]),
+              ok = append_wf_event(State0, openagentic_events:workflow_transition(wf_id(State0), StepId, <<"fail">>, NextFail, <<"executor_failed">>)),
+              case NextFail of
+                null -> finalize(State0, <<"failed">>, ReasonBin);
+                _ ->
+                  StateFail = put_in(State0, [step_failures, StepId], [ReasonBin]),
+                  run_loop(NextFail, StateFail)
+              end
           end
       end;
     {error, Reason} ->
@@ -681,6 +690,98 @@ run_step_executor_with_timeout(State0, StepId, Role, Attempt, StepSessionId0, Us
     _ = erlang:demonitor(MRef, [flush]),
     {error, {step_timeout, TimeoutMs}}
   end.
+
+maybe_retry_transient_provider_error(State0, StepId, StepRaw, Attempt, RetryCount0, Reason0) ->
+  Reason = to_bin(Reason0),
+  case retry_policy(StepRaw) of
+    #{enabled := true, max_retries := MaxRetries, backoff_ms := BackoffMs}
+      when RetryCount0 < MaxRetries ->
+      case is_transient_provider_error(Reason0) of
+        true ->
+          RetryCount = RetryCount0 + 1,
+          ok =
+            append_wf_event(
+              State0,
+              #{
+                type => <<"workflow.step.retry">>,
+                workflow_id => wf_id(State0),
+                step_id => StepId,
+                attempt => Attempt,
+                retry_count => RetryCount,
+                max_retries => MaxRetries,
+                backoff_ms => BackoffMs,
+                reason => Reason,
+                retry_kind => <<"transient_provider_error">>
+              }
+            ),
+          maybe_sleep_ms(BackoffMs),
+          {retry, put_in(State0, [step_failures, StepId], [Reason])};
+        false ->
+          no_retry
+      end;
+    _ ->
+      no_retry
+  end.
+
+retry_policy(StepRaw) ->
+  Policy0 = ensure_map(get_any(StepRaw, [<<"retry_policy">>, retry_policy], #{})),
+  Enabled = to_bool_default(get_any(Policy0, [<<"transient_provider_errors">>, transient_provider_errors], false), false),
+  MaxRetries0 = int_or_default(get_any(Policy0, [<<"max_retries">>, max_retries], 0), 0),
+  BackoffMs0 = int_or_default(get_any(Policy0, [<<"backoff_ms">>, backoff_ms], 1000), 1000),
+  #{enabled => Enabled, max_retries => clamp_int(MaxRetries0, 0, 3), backoff_ms => clamp_int(BackoffMs0, 1, 30000)}.
+
+maybe_sleep_ms(Ms) when is_integer(Ms), Ms > 0 ->
+  timer:sleep(Ms),
+  ok;
+maybe_sleep_ms(_Ms) ->
+  ok.
+
+is_transient_provider_error(timeout) ->
+  true;
+is_transient_provider_error({step_timeout, _}) ->
+  true;
+is_transient_provider_error({http_stream_error, _}) ->
+  true;
+is_transient_provider_error({httpc_request_failed, _}) ->
+  true;
+is_transient_provider_error(stream_ended_without_response_completed) ->
+  true;
+is_transient_provider_error({provider_error, Reason}) ->
+  is_transient_provider_error(Reason);
+is_transient_provider_error({executor_crashed, Reason}) ->
+  is_transient_provider_error(Reason);
+is_transient_provider_error(Reason0) ->
+  Reason = string:lowercase(string:trim(to_bin(Reason0))),
+  Deny =
+    [
+      <<"unauthorized">>,
+      <<"forbidden">>,
+      <<"authentication">>,
+      <<"invalid api key">>,
+      <<"permission">>,
+      <<"quota">>,
+      <<"billing">>,
+      <<"payment">>,
+      <<"bad request">>,
+      <<"invalid request">>,
+      <<"validation">>,
+      <<"model not found">>,
+      <<"unsupported">>
+    ],
+  Allow =
+    [
+      <<"timeout">>,
+      <<"timed out">>,
+      <<"stream ended without response completed">>,
+      <<"http_stream_error">>,
+      <<"connection reset">>,
+      <<"connection aborted">>,
+      <<"temporarily unavailable">>,
+      <<"econnreset">>,
+      <<"broken pipe">>
+    ],
+  (not lists:any(fun (Pat) -> binary:match(Reason, Pat) =/= nomatch end, Deny))
+  andalso lists:any(fun (Pat) -> binary:match(Reason, Pat) =/= nomatch end, Allow).
 
 run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, StepRaw) ->
   Opts = maps:get(opts, State0, #{}),

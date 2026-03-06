@@ -106,6 +106,106 @@ workflow_engine_retry_includes_failure_reason_test() ->
   ?assertEqual(<<"completed">>, maps:get(status, Res)),
   ok.
 
+workflow_engine_retries_transient_provider_timeout_when_retry_policy_enabled_test() ->
+  Root = test_root(),
+  ok = write_workflow_provider_retry(Root, true),
+  Tab = ets:new(workflow_engine_retry_tab, [public]),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      case StepId of
+        <<"draft">> ->
+          {ok, <<"# Draft\n\nok\n">>};
+        <<"aggregate">> ->
+          Count = ets:update_counter(Tab, aggregate_attempts, 1, {aggregate_attempts, 0}),
+          case Count of
+            1 -> {error, timeout};
+            _ -> {ok, <<"# Summary\n\nok\n">>}
+          end;
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  try
+    {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_provider_retry.json", <<"hello">>, Opts),
+    ?assertEqual(<<"completed">>, maps:get(status, Res)),
+    ?assertEqual(2, ets:lookup_element(Tab, aggregate_attempts, 2)),
+    Events = openagentic_session_store:read_events(Root, maps:get(workflow_session_id, Res)),
+    ?assert(
+      lists:any(
+        fun (E) ->
+          maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.output">>
+          andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"aggregate">>
+        end,
+        Events
+      )
+    ),
+    ?assert(
+      lists:any(
+        fun (E) ->
+          maps:get(<<"type">>, E, <<>>) =:= <<"workflow.step.pass">>
+          andalso maps:get(<<"step_id">>, E, <<>>) =:= <<"aggregate">>
+        end,
+        Events
+      )
+    ),
+    ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.done">> end, Events))
+  after
+    ets:delete(Tab)
+  end.
+
+workflow_engine_does_not_retry_transient_provider_timeout_without_retry_policy_test() ->
+  Root = test_root(),
+  ok = write_workflow_provider_retry(Root, false),
+  Tab = ets:new(workflow_engine_no_retry_tab, [public]),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      case StepId of
+        <<"draft">> ->
+          {ok, <<"# Draft\n\nok\n">>};
+        <<"aggregate">> ->
+          _ = ets:update_counter(Tab, aggregate_attempts, 1, {aggregate_attempts, 0}),
+          {error, timeout};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  try
+    {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w_provider_retry.json", <<"hello">>, Opts),
+    ?assertEqual(<<"failed">>, maps:get(status, Res)),
+    ?assertEqual(1, ets:lookup_element(Tab, aggregate_attempts, 2)),
+    Events = openagentic_session_store:read_events(Root, maps:get(workflow_session_id, Res)),
+    ?assert(
+      lists:any(
+        fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.guard.fail">> end,
+        Events
+      )
+    ),
+    ?assert(
+      lists:any(
+        fun (E) ->
+          maps:get(<<"type">>, E, <<>>) =:= <<"workflow.transition">>
+          andalso maps:get(<<"outcome">>, E, <<>>) =:= <<"fail">>
+        end,
+        Events
+      )
+    ),
+    ?assert(
+      lists:any(
+        fun (E) ->
+          maps:get(<<"type">>, E, <<>>) =:= <<"workflow.done">>
+          andalso maps:get(<<"status">>, E, <<>>) =:= <<"failed">>
+        end,
+        Events
+      )
+    )
+  after
+    ets:delete(Tab)
+  end.
+
 workflow_engine_continue_after_completed_restarts_from_start_test() ->
   Root = test_root(),
   ok = write_workflow(Root),
@@ -313,6 +413,37 @@ three_provinces_ministry_prompts_use_staging_paths_test() ->
   assert_prompt_has_staging_constraints("workflows/prompts/libu_hr_people.md", <<"libu_hr">>),
   ok.
 
+three_provinces_aggregate_prompt_uses_poem_staging_paths_test() ->
+  {ok, Bin} = file:read_file(filename:join(["workflows", "prompts", "shangshu_aggregate.md"])),
+  lists:foreach(
+    fun (Path) ->
+      ?assert(binary:match(Bin, Path) =/= nomatch)
+    end,
+    [
+      <<"workspace:staging/hubu/poem.md">>,
+      <<"workspace:staging/libu/poem.md">>,
+      <<"workspace:staging/bingbu/poem.md">>,
+      <<"workspace:staging/xingbu/poem.md">>,
+      <<"workspace:staging/gongbu/poem.md">>,
+      <<"workspace:staging/libu_hr/poem.md">>
+    ]
+  ),
+  lists:foreach(
+    fun (OldName) ->
+      ?assertEqual(nomatch, binary:match(Bin, OldName))
+    end,
+    [
+      <<"户部.md">>,
+      <<"礼部.md">>,
+      <<"兵部.md">>,
+      <<"刑部.md">>,
+      <<"工部.md">>,
+      <<"吏部.md">>
+    ]
+  ),
+  ?assertEqual(nomatch, binary:match(Bin, <<"workspace:deliverables/六部各赋诗一首.md">>)),
+  ok.
+
 write_workflow(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
   ok = write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
@@ -409,6 +540,51 @@ write_workflow_retry(Root) ->
       "}",
       "]}">>,
   write_file(filename:join([Root, "workflows", "w_retry.json"]), Json).
+
+write_workflow_provider_retry(Root, EnableRetry) ->
+  ok = write_file(filename:join([Root, "workflows", "prompts", "draft.md"]), <<"# draft prompt\n">>),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "aggregate.md"]), <<"# aggregate prompt\n">>),
+  AggregateStep0 =
+    #{
+      id => <<"aggregate">>,
+      role => <<"shangshu">>,
+      input => #{type => <<"step_output">>, step_id => <<"draft">>},
+      prompt => #{type => <<"file">>, path => <<"workflows/prompts/aggregate.md">>},
+      output_contract => #{type => <<"markdown_sections">>, required => [<<"Summary">>]},
+      guards => [],
+      on_pass => null,
+      on_fail => null,
+      max_attempts => 1
+    },
+  AggregateStep =
+    case EnableRetry of
+      true ->
+        AggregateStep0#{retry_policy => #{transient_provider_errors => true, max_retries => 2, backoff_ms => 1}};
+      false ->
+        AggregateStep0
+    end,
+  Json =
+    openagentic_json:encode(
+      #{
+        workflow_version => <<"1.0">>,
+        name => <<"provider_retry">>,
+        steps => [
+          #{
+            id => <<"draft">>,
+            role => <<"zhongshu">>,
+            input => #{type => <<"controller_input">>},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/draft.md">>},
+            output_contract => #{type => <<"markdown_sections">>, required => [<<"Draft">>]},
+            guards => [],
+            on_pass => <<"aggregate">>,
+            on_fail => null,
+            max_attempts => 1
+          },
+          AggregateStep
+        ]
+      }
+    ),
+  write_file(filename:join([Root, "workflows", "w_provider_retry.json"]), <<Json/binary, "\n">>).
 
 write_workflow_decision_route(Root) ->
   ok = write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),

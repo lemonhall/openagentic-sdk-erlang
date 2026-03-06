@@ -151,13 +151,34 @@ web_cmd(Args0) ->
       web_bind => to_bin(Bind0),
       web_port => Port0
     },
-  case openagentic_web:start(Opts) of
+  case start_web_runtime_unlinked(Opts) of
     {ok, #{url := Url}} ->
       io:format("~nWeb UI: ~ts~n", [to_text(Url)]),
       ok;
     {error, Reason} ->
       io:format("~nERROR: ~p~n", [Reason]),
       halt(1)
+  end.
+
+start_web_runtime_unlinked(Opts) ->
+  Parent = self(),
+  Ref = make_ref(),
+  {Pid, MRef} =
+    spawn_monitor(
+      fun () ->
+        Parent ! {web_start_result, Ref, openagentic_web:start(Opts)}
+      end
+    ),
+  receive
+    {web_start_result, Ref, Res} ->
+      _ = erlang:demonitor(MRef, [flush]),
+      Res;
+    {'DOWN', MRef, process, Pid, Reason} ->
+      receive
+        {web_start_result, Ref, Res2} -> Res2
+      after 50 ->
+        {error, {web_start_failed, Reason}}
+      end
   end.
 
 usage() ->

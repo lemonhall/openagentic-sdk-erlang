@@ -87,8 +87,69 @@ no_terminal_path_is_error_test() ->
   {error, {invalid_workflow_dsl, Errors}} = openagentic_workflow_dsl:load_and_validate(Root, "workflows/w.json", #{}),
   ?assert(has_error_code(Errors, <<"no_terminal">>)).
 
+retry_policy_allows_valid_transient_provider_error_config_test() ->
+  Root = test_root(),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "p.md"]), <<"# ok\n">>),
+  Workflow =
+    openagentic_json:encode(
+      #{
+        workflow_version => <<"1.0">>,
+        name => <<"t">>,
+        steps => [
+          #{
+            id => <<"s1">>,
+            role => <<"r">>,
+            input => #{type => <<"controller_input">>},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/p.md">>},
+            output_contract => #{type => <<"markdown_sections">>, required => [<<"A">>]},
+            guards => [],
+            on_pass => null,
+            on_fail => null,
+            retry_policy => #{transient_provider_errors => true, max_retries => 2, backoff_ms => 1000}
+          }
+        ]
+      }
+    ),
+  ok = write_file(filename:join([Root, "workflows", "w.json"]), <<Workflow/binary, "\n">>),
+  {ok, Wf} = openagentic_workflow_dsl:load_and_validate(Root, "workflows/w.json", #{}),
+  Step = maps:get(<<"s1">>, maps:get(<<"steps_by_id">>, Wf)),
+  RetryPolicy = maps:get(<<"retry_policy">>, Step),
+  ?assertEqual(true, maps:get(<<"transient_provider_errors">>, RetryPolicy)),
+  ?assertEqual(2, maps:get(<<"max_retries">>, RetryPolicy)),
+  ?assertEqual(1000, maps:get(<<"backoff_ms">>, RetryPolicy)).
+
+retry_policy_rejects_negative_max_retries_test() ->
+  Root = test_root(),
+  ok = write_file(filename:join([Root, "workflows", "prompts", "p.md"]), <<"# ok\n">>),
+  Workflow =
+    openagentic_json:encode(
+      #{
+        workflow_version => <<"1.0">>,
+        name => <<"t">>,
+        steps => [
+          #{
+            id => <<"s1">>,
+            role => <<"r">>,
+            input => #{type => <<"controller_input">>},
+            prompt => #{type => <<"file">>, path => <<"workflows/prompts/p.md">>},
+            output_contract => #{type => <<"markdown_sections">>, required => [<<"A">>]},
+            guards => [],
+            on_pass => null,
+            on_fail => null,
+            retry_policy => #{transient_provider_errors => true, max_retries => -1, backoff_ms => 1000}
+          }
+        ]
+      }
+    ),
+  ok = write_file(filename:join([Root, "workflows", "w.json"]), <<Workflow/binary, "\n">>),
+  {error, {invalid_workflow_dsl, Errors}} = openagentic_workflow_dsl:load_and_validate(Root, "workflows/w.json", #{}),
+  ?assert(has_error_path(Errors, <<"steps[0].retry_policy.max_retries">>)).
+
 has_error_code(Errors, Code) ->
   lists:any(fun (E) -> maps:get(code, E, <<>>) =:= Code end, Errors).
+
+has_error_path(Errors, Path) ->
+  lists:any(fun (E) -> maps:get(path, E, <<>>) =:= Path end, Errors).
 
 repo_root() ->
   {ok, Cwd} = file:get_cwd(),

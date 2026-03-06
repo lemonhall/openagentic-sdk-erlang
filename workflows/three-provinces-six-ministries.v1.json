@@ -319,6 +319,11 @@
       "on_pass": "taizi_reply",
       "on_fail": "shangshu_aggregate",
       "max_attempts": 2,
+      "retry_policy": {
+        "transient_provider_errors": true,
+        "max_retries": 2,
+        "backoff_ms": 1000
+      },
       "timeout_seconds": 600
     },
     {

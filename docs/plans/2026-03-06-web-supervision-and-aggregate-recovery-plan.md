@@ -403,3 +403,45 @@ git commit -m "docs: record aggregate recovery and web supervision plan evidence
 - `openagentic web` 不再因 linked 子服务异常把 Eshell 调用方炸成 `killed`
 - `workflow_mgr` 的 `stalled` 状态对 API / UI 可见
 - `rebar3 eunit` 全绿
+
+---
+
+## Execution Evidence / 实际落地证据
+
+### 实际落地文件
+
+- `workflows/prompts/shangshu_aggregate.md`
+- `workflows/three-provinces-six-ministries.v1.json`
+- `apps/openagentic_sdk/src/openagentic_workflow_dsl.erl`
+- `apps/openagentic_sdk/src/openagentic_workflow_engine.erl`
+- `apps/openagentic_sdk/src/openagentic_web_runtime_sup.erl`
+- `apps/openagentic_sdk/src/openagentic_web.erl`
+- `apps/openagentic_sdk/src/openagentic_cli.erl`
+- `apps/openagentic_sdk/src/openagentic_workflow_mgr.erl`
+- `apps/openagentic_sdk/src/openagentic_web_api_workflows_start.erl`
+- `apps/openagentic_sdk/src/openagentic_web_api_workflows_continue.erl`
+- `apps/openagentic_sdk/test/openagentic_workflow_dsl_test.erl`
+- `apps/openagentic_sdk/test/openagentic_workflow_engine_test.erl`
+- `apps/openagentic_sdk/test/openagentic_web_runtime_test.erl`
+- `AGENTS.md`
+
+### 实际运行命令
+
+- `pwsh -Command ". .\scripts\erlang-env.ps1 -SkipRebar3Verify ; rebar3 eunit -m openagentic_workflow_dsl_test"`
+- `pwsh -Command ". .\scripts\erlang-env.ps1 -SkipRebar3Verify ; rebar3 eunit -m openagentic_workflow_engine_test"`
+- `pwsh -Command ". .\scripts\erlang-env.ps1 -SkipRebar3Verify ; rebar3 eunit -m openagentic_web_runtime_test"`
+- `pwsh -Command ". .\scripts\erlang-env.ps1 -SkipRebar3Verify ; rebar3 eunit -m openagentic_web_e2e_online_test"`
+- `pwsh -Command ". .\scripts\erlang-env.ps1 -SkipRebar3Verify ; rebar3 eunit"`
+
+### 关键输出摘要
+
+- `openagentic_workflow_dsl_test`：通过，覆盖 `retry_policy` 合法配置与非法参数拒绝。
+- `openagentic_workflow_engine_test`：通过，覆盖 `shangshu_aggregate` 新 prompt 路径与 transient provider retry 行为。
+- `openagentic_web_runtime_test`：通过，覆盖 web runtime supervisor 隔离、watchdog stalled 可见性、`continue` 的 `queued` / `resumed_from_stalled` 状态。
+- `openagentic_web_e2e_online_test`：当前无在线用例执行，未见回归。
+- `rebar3 eunit`：`153 tests, 0 failures`。
+
+### 未做项 / 说明
+
+- 计划中的 `git commit` 未执行；原因是当前会话的上层开发约束明确禁止代理自行提交。
+- 全量 `rebar3 eunit` 结束后仍会出现仓库既有的 `io:format(otp_release...)` / `erl_scan illegal,string` 噪音文本，但退出码为 `0`，且测试统计全绿，本次未将其视为回归。

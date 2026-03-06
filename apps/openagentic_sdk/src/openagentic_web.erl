@@ -14,8 +14,7 @@
 start(Opts0) ->
   Opts = ensure_map(Opts0),
   ok = ensure_cowboy_started(),
-  ok = ensure_q_started(),
-  ok = ensure_mgr_started(),
+  ok = ensure_runtime_started(),
 
   Bind0 = ensure_list(maps:get(web_bind, Opts, maps:get(bind, Opts, ?DEFAULT_BIND))),
   Bind1 = string:trim(Bind0),
@@ -55,7 +54,11 @@ start(Opts0) ->
       ]}
     ]),
 
-  {ok, _} = cowboy:start_clear(openagentic_web_listener, [{ip, parse_ip(Bind)}, {port, Port}], #{env => #{dispatch => Dispatch}}),
+  case cowboy:start_clear(openagentic_web_listener, [{ip, parse_ip(Bind)}, {port, Port}], #{env => #{dispatch => Dispatch}}) of
+    {ok, _} -> ok;
+    {error, {already_started, _}} -> ok;
+    Other -> erlang:error({cowboy_listener_start_failed, Other})
+  end,
   {ok, #{bind => Bind, port => Port, url => base_url(#{bind => Bind, port => Port})}}.
 
 stop() ->
@@ -78,28 +81,11 @@ ensure_cowboy_started() ->
     Other -> erlang:error({cowboy_start_failed, Other})
   end.
 
-ensure_q_started() ->
-  case whereis(openagentic_web_q) of
-    undefined ->
-      case openagentic_web_q:start_link() of
-        {ok, _Pid} -> ok;
-        {error, {already_started, _}} -> ok;
-        Other -> erlang:error({question_broker_start_failed, Other})
-      end;
-    _ ->
-      ok
-  end.
-
-ensure_mgr_started() ->
-  case whereis(openagentic_workflow_mgr) of
-    undefined ->
-      case openagentic_workflow_mgr:start_link() of
-        {ok, _Pid} -> ok;
-        {error, {already_started, _}} -> ok;
-        Other -> erlang:error({workflow_mgr_start_failed, Other})
-      end;
-    _ ->
-      ok
+ensure_runtime_started() ->
+  case openagentic_web_runtime_sup:ensure_started() of
+    {ok, _Pid} -> ok;
+    {error, {already_started, _Pid}} -> ok;
+    Other -> erlang:error({web_runtime_start_failed, Other})
   end.
 
 priv_web_dir(ProjectDir0) ->

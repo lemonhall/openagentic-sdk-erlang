@@ -44,7 +44,10 @@ init(Req0, State0) ->
                   workspace_dir => openagentic_fs:norm_abs_bin(WorkspaceDir),
                   events_url => iolist_to_binary([<<"/api/sessions/">>, to_bin(Sid), <<"/events">>]),
                   queued => maps:get(queued, Res, false),
-                  queue_length => maps:get(queue_length, Res, 0)
+                  queue_length => maps:get(queue_length, Res, 0),
+                  status => to_bin(maps:get(status, Res, <<"running">>)),
+                  resumed_from_stalled => maps:get(resumed_from_stalled, Res, false),
+                  previous_status => maps:get(previous_status, Res, null)
                 },
               reply_json(202, Resp, Req1, State);
             {error, Reason} ->

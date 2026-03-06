@@ -117,6 +117,7 @@ validate_steps(ProjectDir, [S0 | Rest], StrictUnknown, Idx, Seen0, AccInfosRev, 
     <<"max_attempts">>,
     <<"timeout_seconds">>,
     <<"tool_policy">>,
+    <<"retry_policy">>,
     <<"executor">>,
     <<"fanout">>
   ],
@@ -209,15 +210,18 @@ validate_steps(ProjectDir, [S0 | Rest], StrictUnknown, Idx, Seen0, AccInfosRev, 
   OnFail = get_nullable_step_ref(S, [<<"on_fail">>, on_fail]),
   OnDecision0 = get_any(S, [<<"on_decision">>, on_decision], undefined),
   {OnDecision, Errors15} = validate_on_decision(iolist_to_binary([Path0, <<".on_decision">>]), OnDecision0, Errors14),
+  RetryPolicy0 = get_any(S, [<<"retry_policy">>, retry_policy], undefined),
+  {RetryPolicy, Errors16} = validate_retry_policy(iolist_to_binary([Path0, <<".retry_policy">>]), RetryPolicy0, StrictUnknown, Errors15),
 
-  {FanoutSteps, Join, Errors16} =
+  {FanoutSteps, Join, Errors17} =
     case IsFanoutJoin of
-      true -> validate_fanout(iolist_to_binary([Path0, <<".fanout">>]), get_any(S, [<<"fanout">>, fanout], undefined), Errors15);
-      false -> {[], null, Errors15}
+      true -> validate_fanout(iolist_to_binary([Path0, <<".fanout">>]), get_any(S, [<<"fanout">>, fanout], undefined), Errors16);
+      false -> {[], null, Errors16}
     end,
 
-  Info = #{id => Id, role => Role, executor => Exec, on_pass => OnPass, on_fail => OnFail, on_decision => OnDecision, fanout_steps => FanoutSteps, join => Join, raw => S},
-  validate_steps(ProjectDir, Rest, StrictUnknown, Idx + 1, Seen, [Info | AccInfosRev], Errors16).
+  Raw1 = normalize_retry_policy_raw(S, RetryPolicy),
+  Info = #{id => Id, role => Role, executor => Exec, on_pass => OnPass, on_fail => OnFail, on_decision => OnDecision, retry_policy => RetryPolicy, fanout_steps => FanoutSteps, join => Join, raw => Raw1},
+  validate_steps(ProjectDir, Rest, StrictUnknown, Idx + 1, Seen, [Info | AccInfosRev], Errors17).
 
 validate_transitions(StepInfos, StepIdSet, Errors0) ->
   lists:foldl(
@@ -527,6 +531,53 @@ validate_on_decision_refs(Path, Map0, StepIdSet, Errors0) ->
     maps:to_list(Map)
   ).
 
+validate_retry_policy(_Path, undefined, _StrictUnknown, Errors) ->
+  {undefined, Errors};
+validate_retry_policy(_Path, null, _StrictUnknown, Errors) ->
+  {undefined, Errors};
+validate_retry_policy(Path, Retry0, StrictUnknown, Errors0) ->
+  {Retry, Errors1} = require_map(Path, Retry0, <<"retry_policy must be an object">>, Errors0),
+  Allowed = [<<"transient_provider_errors">>, <<"max_retries">>, <<"backoff_ms">>],
+  Errors2 = maybe_only_keys(StrictUnknown, Retry, Allowed, Path, Errors1),
+  {TransientProviderErrors, Errors3} =
+    case get_any(Retry, [<<"transient_provider_errors">>, transient_provider_errors], undefined) of
+      undefined -> {false, Errors2};
+      true -> {true, Errors2};
+      false -> {false, Errors2};
+      _ ->
+        {false, [err(iolist_to_binary([Path, <<".transient_provider_errors">>]), <<"invalid_type">>, <<"transient_provider_errors must be a boolean">>) | Errors2]}
+    end,
+  {MaxRetries, Errors4} =
+    validate_retry_int(
+      iolist_to_binary([Path, <<".max_retries">>]),
+      get_any(Retry, [<<"max_retries">>, max_retries], undefined),
+      0,
+      0,
+      3,
+      <<"max_retries must be an integer between 0 and 3">>,
+      Errors3
+    ),
+  {BackoffMs, Errors5} =
+    validate_retry_int(
+      iolist_to_binary([Path, <<".backoff_ms">>]),
+      get_any(Retry, [<<"backoff_ms">>, backoff_ms], undefined),
+      1000,
+      1,
+      30000,
+      <<"backoff_ms must be an integer between 1 and 30000">>,
+      Errors4
+    ),
+  {#{<<"transient_provider_errors">> => TransientProviderErrors, <<"max_retries">> => MaxRetries, <<"backoff_ms">> => BackoffMs}, Errors5}.
+
+validate_retry_int(_Path, undefined, Default, _Min, _Max, _Msg, Errors) ->
+  {Default, Errors};
+validate_retry_int(_Path, Value, _Default, Min, Max, _Msg, Errors) when is_integer(Value), Value >= Min, Value =< Max ->
+  {Value, Errors};
+validate_retry_int(Path, Value, Default, _Min, _Max, Msg, Errors) when is_integer(Value) ->
+  {Default, [err(Path, <<"out_of_range">>, Msg) | Errors]};
+validate_retry_int(Path, _Value, Default, _Min, _Max, Msg, Errors) ->
+  {Default, [err(Path, <<"invalid_type">>, Msg) | Errors]}.
+
 %% ---- normalization ----
 
 normalize_workflow(Workflow, StepInfos) ->
@@ -540,6 +591,11 @@ normalize_workflow(Workflow, StepInfos) ->
         _ -> <<>>
       end
   }.
+
+normalize_retry_policy_raw(StepRaw, undefined) ->
+  StepRaw;
+normalize_retry_policy_raw(StepRaw, RetryPolicy) ->
+  StepRaw#{<<"retry_policy">> => RetryPolicy}.
 
 %% ---- generic helpers ----
 
