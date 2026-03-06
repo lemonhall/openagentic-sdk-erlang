@@ -1214,7 +1214,390 @@ v1 默认只让以下三类对象拥有独立 session：
 
 ---
 
-## 60. 当前已确认、但后续仍需继续展开的话题
+## 60. 核心对象采用统一外壳 schema
+### 60.1 统一顶层结构
+v1 的核心对象 JSON 应统一采用以下外壳结构：
+- `header`
+- `links`
+- `spec`
+- `state`
+- `audit`
+- `ext`
+
+### 60.2 各层职责
+- `header`：通用头字段，如 `id`、`type`、`schema_version`、`created_at`、`updated_at`、`revision`
+- `links`：对象关系，如 `case_id`、`round_id`、`task_id`、`pack_id`、`session_id`、`op_id`
+- `spec`：相对稳定、意图性的定义内容
+- `state`：当前状态、活动指针、进度与生命周期信息
+- `audit`：最近变更摘要、来源、触发者、reason 等审计辅助信息
+- `ext`：预留扩展位
+
+### 60.3 原则
+所有核心对象都应遵守这套统一外壳，而不是每种对象各自自由发挥顶层 JSON 结构。
+
+---
+
+## 61. `case` 的最小 schema
+### 61.1 `case` 要回答的问题
+`case` 的最小 schema 应回答：
+- 这案子是什么
+- 它从哪来
+- 它现在处于什么阶段
+- 当前应关注哪几个下级对象
+
+### 61.2 建议结构
+- `header`
+- `links`：如 `origin_round_id`、`origin_workflow_session_id`、`current_round_id`、`latest_briefing_id`、`active_pack_ids`
+- `spec`：如 `title`、`display_code`、`topic`、`owner`、`default_timezone`、`labels`、`opening_brief`
+- `state`：如 `status`、`current_summary`、`active_task_count`、`active_pack_count`
+- `audit` / `ext`
+
+### 61.3 两类摘要必须分离
+`case` 必须同时保留：
+- `opening_brief`：立案时的原始案由，尽量不改
+- `current_summary`：随着轮次推进不断更新的当前案情摘要
+
+---
+
+## 62. `case` 显式拥有 `phase`
+### 62.1 原则
+`case` 除了生命周期层面的 `status` 外，还应显式拥有一个 `phase` 字段，用于表达“当前主要处于哪种治理阶段”。
+
+### 62.2 示例阶段
+可参考：
+- `post_deliberation_extraction`
+- `monitoring_active`
+- `briefing_ready`
+- `briefing_deferred`
+- `reconsideration_in_progress`
+- `awaiting_new_signals`
+- `closed`
+
+---
+
+## 63. `deliberation_round` 的最小 schema
+### 63.1 `deliberation_round` 要回答的问题
+它应回答：
+- 这一次正式朝会是什么
+- 由什么触发
+- 实际吃了哪些材料
+- 产出了什么正式结论文书
+
+### 63.2 建议结构
+- `header`
+- `links`：`case_id`、`parent_round_id`、`workflow_session_id`、`triggering_briefing_id`、`resolution_id`
+- `spec`：`round_index`、`kind`、`trigger_reason`、`starter_role`、`input_material_refs`
+- `state`：`status`、`phase`、`started_at`、`ended_at`
+- `audit`
+
+### 63.3 关键要求
+`deliberation_round` 应显式记录 `triggering_briefing_id` 和 `input_material_refs`，用于审计“这一轮朝会到底吃了哪些卷宗和材料”。
+
+---
+
+## 64. `monitoring_task` 的最小 schema
+### 64.1 `monitoring_task` 要回答的问题
+它应回答：
+- 这份差事是什么
+- 它现在是否有效
+- 当前该按哪个版本执行
+- 它依附于哪个治理会话与 workspace
+- 它当前健康不健康
+
+### 64.2 建议结构
+- `header`
+- `links`：`case_id`、`source_round_id`、`source_candidate_id`、`governance_session_id`、`active_version_id`、`workspace_ref`、`active_pack_ids`
+- `spec`：`title`、`display_code`、`mission_statement`、`default_timezone`、`schedule_policy_ref`、`template_ref`、`credential_binding_refs`
+- `state`：`status`、`health`、`latest_run_id`、`latest_successful_run_id`、`last_report_at`
+- `audit` / `ext`
+
+### 64.3 任务级长期真相
+`monitoring_task` 中只放“任务级长期真相”，不要把具体执行细节和版本细节塞进任务主对象。
+
+---
+
+## 65. `mission_statement` 属于 `task`，细则下沉到 `task_version`
+### 65.1 原则
+`monitoring_task` 中应有一个简洁但正式的 `mission_statement`，作为这份差事的长期“使命定义”。
+
+### 65.2 边界
+更细的执行规则、阈值、交付物细则，应下沉到 `task_version`。
+
+---
+
+## 66. `task_version` 的最小 schema
+### 66.1 `task_version` 要回答的问题
+`task_version` 应回答：“在这一版里，这份差具体怎么做。”
+
+### 66.2 建议结构
+- `header`
+- `links`：`case_id`、`task_id`、`previous_version_id`、`derived_from_template_ref`、`approved_by_op_id`
+- `spec`：`objective`、`schedule_policy`、`report_contract`、`alert_rules`、`source_strategy`、`tool_profile`、`credential_requirements`、`autonomy_policy`、`promotion_policy`
+- `state`：`status`、`activated_at`、`superseded_at`
+- `audit`：`change_summary`、`approval_summary`
+
+### 66.3 不可变原则
+`task_version` 一旦进入 `active`，就应视为不可变；任何定义层变更都必须创建新的版本，而不是回改旧版本。
+
+---
+
+## 67. `report_contract` 必须显式存在于 `task_version.spec`
+### 67.1 原则
+`task_version.spec` 必须显式包含 `report_contract`，把“这版差事应交什么卷”正式写死，而不是默会约定。
+
+### 67.2 作用
+它用于规定：
+- 本版任务必须交哪些正式产物
+- 每种产物的最小结构要求
+- 哪些字段是必须的
+- 什么情况下可判定“交卷不合格”
+
+---
+
+## 68. `report_contract` 采用统一底线 + 任务扩展
+### 68.1 系统底线
+系统级最低交卷底线至少包括：
+- `report.md`
+- `facts.json`
+- `artifacts.json`
+- `facts.json` 满足统一骨架
+- `artifacts.json` 能定位正式附件
+- 至少有一个可追溯来源引用
+
+### 68.2 任务扩展
+每个 `task_version.report_contract` 可在底线之上增加自己的扩展要求，但不能低于底线。
+
+---
+
+## 69. `observation_pack` 的最小 schema
+### 69.1 `observation_pack` 要回答的问题
+它应回答：
+- 这包材料是为了回答什么问题
+- 它要求哪几份监测任务一起交卷
+- 什么情况下算 ready
+- 当前离 ready 还有多远
+
+### 69.2 建议结构
+- `header`
+- `links`：`case_id`、`source_round_id`、`latest_briefing_id`、`current_inspection_review_id`
+- `spec`：`title`、`target_question`、`task_bindings`、`freshness_window`、`completeness_rule`、`inspection_rule`、`trigger_policy`
+- `state`：`status`、`ready_score`、`missing_requirements`、`latest_ready_at`、`latest_deferred_briefing_id`
+
+### 69.3 `task_bindings`
+`observation_pack` 不应只保存一个平面的 `task_ids` 列表，而应显式保存 `task_bindings`，至少表达：
+- `task_id`
+- `role`
+- `required`
+- `freshness_requirement`
+- `notes`
+
+---
+
+## 70. `ready_score` 是辅助信号，不是裁决字段
+### 70.1 定位
+`ready_score` 只能是 UI / 督办辅助信号，不能取代正式的 readiness 规则与检察结论。
+
+### 70.2 真正裁决来源
+真正决定 `ready_for_reconsideration` 的，仍应是：
+- freshness 是否满足
+- completeness_rule 是否满足
+- inspection_review 是否通过
+- 是否存在阻断性争议 / 缺件
+
+---
+
+## 71. `inspection_review` 的最小 schema
+### 71.1 `inspection_review` 要回答的问题
+它应回答：
+- 检察官审的是哪一个观察包、哪一批材料
+- 结论是什么
+- 缺什么、争什么、风险点在哪
+- 这份检察结果是否已经被某版卷宗包采用
+
+### 71.2 建议结构
+- `header`
+- `links`：`case_id`、`pack_id`、`reviewed_run_ids`、`reviewed_report_ids`、`derived_briefing_id`
+- `spec`：`review_scope`、`checklist`、`applied_rules`、`controversy_candidates`
+- `state`：`status`、`decision`、`blocking_issues`、`missing_items`、`quality_notes`、`confidence_notes`
+- `audit` / `ext`
+
+### 71.3 快照原则
+`inspection_review` 应是一份次次留痕的独立检察快照对象，而不是挂在 `observation_pack` 上被不断原地改写的单一状态块。
+
+---
+
+## 72. `reconsideration_package` 的最小 schema
+### 72.1 `reconsideration_package` 要回答的问题
+它应回答：
+- 属于哪个 `case`、哪个 `observation_pack`
+- 基于哪次检察、哪轮上次结论、哪些报告材料
+- 当前状态是什么
+- 冻结内容到底是什么
+- 最终有没有触发新一轮复议
+
+### 72.2 建议结构
+- `header`
+- `links`：`case_id`、`pack_id`、`based_on_round_id`、`source_inspection_review_id`、`supersedes_briefing_id`、`consumed_by_round_id`
+- `spec`：`trigger_reason`、`included_report_refs`、`included_resolution_ref`、`included_urgent_refs`、`included_controversy_refs`
+- `state`：`status`、`freshness_checked_at`、`stale_reason`、`display_code`
+
+### 72.3 冻结快照原则
+`reconsideration_package` 必须同时保存对象引用 refs 与一份冻结后的卷宗内容快照 `snapshot / frozen_payload`，而不能只靠动态引用现场再拼。
+
+---
+
+## 73. `monitoring_run` 的最小 schema
+### 73.1 `monitoring_run` 要回答的问题
+它应回答：
+- 这一轮差，本来为什么要跑
+- 按什么版本跑
+- 最后交了什么
+
+### 73.2 建议结构
+- `header`
+- `links`：`case_id`、`task_id`、`task_version_id`、`pack_ids`、`latest_attempt_id`、`successful_attempt_id`、`report_id`
+- `spec`：`run_kind`、`trigger_type`、`trigger_ref`、`expected_outputs_contract_ref`
+- `state`：`status`、`attempt_count`、`last_attempt_status`、`completed_at`、`result_summary`
+- `audit` / `ext`
+
+### 73.3 时间语义必须分离
+`monitoring_run` 必须同时显式记录：
+- `planned_for_at`：制度上本来应何时执行
+- `started_at / triggered_at`：实际上何时开始执行
+
+---
+
+## 74. `run_attempt` 的最小 schema
+### 74.1 `run_attempt` 要回答的问题
+它应回答：
+- 为了完成这轮差，这一次尝试具体是怎么跑的
+- 在什么环境下跑的
+- 结果如何
+
+### 74.2 建议结构
+- `header`
+- `links`：`case_id`、`task_id`、`run_id`、`previous_attempt_id`、`execution_session_id`、`scratch_ref`
+- `spec`：`attempt_index`、`attempt_reason`、`execution_profile_snapshot`、`strategy_note`
+- `state`：`status`、`started_at`、`ended_at`、`failure_class`、`failure_summary`、`promoted_artifact_refs`
+
+### 74.3 冻结执行环境
+每个 `run_attempt` 都必须在启动时保存一份不可变的 `execution_profile_snapshot`，明确冻结当时实际使用的模型、工具、权限与关键运行参数。
+
+---
+
+## 75. `fact_report` 作为一等对象
+### 75.1 原则
+`fact_report` 应当是一个独立的一等对象，专门包装并引用 `report.md + facts.json + artifacts.json` 三件套，而不是把三份文件直接视为“报告本体”。
+
+### 75.2 建议结构
+- `header`
+- `links`：`case_id`、`task_id`、`run_id`、`successful_attempt_id`、`pack_ids`
+- `spec`：`report_contract_ref`、`artifact_refs`、`observed_window`、`report_kind`
+- `state`：`status`、`submitted_at`、`accepted_at`、`quality_summary`、`alert_summary`
+
+---
+
+## 76. `fact_report` 提交后冻结，不回改
+### 76.1 不可变原则
+`fact_report` 一旦进入 `submitted`，就应视为不可变。若需补件或修订，应创建新的 `fact_report` 对象，而不是回改旧报告。
+
+### 76.2 报告谱系
+建议通过以下字段串起谱系：
+- `supersedes_report_id`
+- `superseded_by_report_id`
+- `report_lineage_id`
+
+---
+
+## 77. `internal_mail` 的最小 schema
+### 77.1 `internal_mail` 要回答的问题
+它应回答：
+- 这封信是什么类型
+- 它在提醒你什么
+- 它指向哪些对象
+- 你现在可以对它做什么
+
+### 77.2 建议结构
+- `header`
+- `links`：`case_id`、`related_object_refs`、`source_op_id`、`source_session_id`
+- `spec`：`message_type`、`title`、`summary`、`recommended_action`、`available_actions`
+- `state`：`status`、`severity`、`acted_at`、`acted_action`、`consumed_by_op_id`
+- `audit` / `ext`：`issuer_role` 等
+
+### 77.3 消息快照原则
+`internal_mail` 必须保存一份冻结的消息内容快照，而不能只是存几个 refs 然后每次打开时动态现拼。
+
+---
+
+## 78. `schedule_policy` 先作为版本内嵌值对象
+### 78.1 原则
+v1 的 `schedule_policy` 先作为 `task_version.spec` 中的内嵌值对象存在，而不是一上来单独做成一等对象。
+
+### 78.2 可包含内容
+例如：
+- `mode`
+- `timezone`
+- `interval`
+- `fixed_times`
+- `windows`
+- `misfire_policy`
+- `catchup_policy`
+- `supplemental_trigger_policy`
+
+---
+
+## 79. `tool_profile` 先作为版本内嵌冻结策略
+### 79.1 原则
+`tool_profile` 应像 `schedule_policy` 一样，先作为 `task_version.spec` 中的内嵌冻结策略存在；可以记录来源模板，但不能在运行时动态跟随外部模板漂移。
+
+### 79.2 设计意义
+这样可确保：
+- 这版任务到底能做什么工具活是明确冻结的
+- 旧版任务不会因外部模板变化而被污染
+
+---
+
+## 80. `credential_binding` 作为 `task` 级一等对象
+### 80.1 原则
+v1 应把 `credential_binding` 设计成 `task` 级独立对象，并用 `material_ref` 指向敏感材料本体；而不是把真实 API key / cookie / session 内容直接写进 `task` 或 `task_version` 的主 JSON。
+
+### 80.2 建议结构
+例如：
+- `slot_name`
+- `binding_type`
+- `provider`
+- `status`
+- `validated_at`
+- `expires_at`
+- `material_ref`
+
+---
+
+## 81. 敏感材料本体与普通 workspace 分离
+### 81.1 原则
+真实的 API key / cookie / session 文件本体，应存放在独立于普通 `task workspace` 的受控安全区中；`task workspace` 里最多只出现运行时注入后的受控访问视图，而不直接把密钥文件当普通工作文件长期裸放。
+
+### 81.2 设计意义
+这样可避免敏感材料被：
+- 错误打包进附件
+- 错误发布进共享区
+- 错误出现在日志或 artifacts 索引中
+
+---
+
+## 82. `run_attempt` 冻结非敏感凭证解析快照
+### 82.1 原则
+每个 `run_attempt` 都应保存一份不含敏感值的 `credential_resolution_snapshot`，明确记录本次实际解析并使用了哪些 `credential_binding_id`、它们当时的状态，以及是否走了备用绑定。
+
+### 82.2 作用
+它用于回答：
+- 这次 attempt 当时到底用了哪套信物
+- 为什么会报 `auth_expired`
+- 第二次 attempt 成功是不是因为切了备用绑定
+
+---
+
+## 83. 当前已确认、但后续仍需继续展开的话题
 以下议题已出现方向，但本稿暂不展开细则，待下一轮继续：
 - Web 详细页面结构与状态流转细节
 - 调度器与 runtime 的工程落地拆分
@@ -1223,23 +1606,25 @@ v1 默认只让以下三类对象拥有独立 session：
 - 观察包、卷宗包、朝会轮次之间的数据落盘结构
 - 对象类型注册表与通用读写器的实现方式
 - `operation` / `timeline` / 索引的修复与重建机制
+- `case / round / task / task_version / pack / review / briefing / run / attempt / report / mail` 的正式 JSON schema 示例
 
 ---
 
-## 61. 结论
-截至本稿，产品层与数据落盘层的核心世界观已经明确：
+## 84. 结论
+截至本稿，产品层、复议机制层与数据 schema 层的核心世界观已经明确：
 - 顶层对象是 `case`，不是单个 `workflow_session`
 - 候选任务、正式任务、任务版本、观察包、检察、复议都围绕 `case` 展开
 - 监测任务是长期存在的治理对象，但执行以 `monitoring_run -> run_attempt` 分层进行
 - 模板可复用，任务实例不共享执行体
 - 运行默认无人值守，异常异步上呈
-- 报告必须三件套交付
+- 报告必须三件套交付，且 `fact_report` 作为正式对象存在
 - 检察官只验卷，不越权定策，但可整理争议清单
 - 复议默认读取正式卷宗，而不是全量旧 transcript
 - 每轮朝会都沉淀正式结论文书三件套
 - 卷宗包采用“最小基线 + 变化主轴 + 争议清单”的结构
 - 卷宗包先预览，后决定是否开启复议，并支持 `deferred`、快照、版本链与后续再利用
 - 数据层坚持 local-first、以 `cases/<case_id>/...` 为根、对象快照 + 轻量历史 + 可重建索引
-- `operation`、`timeline`、`session`、`workspace` 各自分层，不互相冒充真相源
+- `operation`、`timeline`、`session`、`workspace`、`credential store` 各自分层，不互相冒充真相源
+- 核心对象正在收束为统一外壳 schema，并逐步建立最小正式 schema 草案
 
-这为后续详细设计、对象存储实现、Web 交互设计、调度与 runtime 落地，建立了更完整且稳定的 PRD 基线。
+这为后续正式 JSON schema 定稿、对象读写器实现、Web 交互落地、调度与 runtime 落地，建立了更完整且稳定的 PRD 基线。
