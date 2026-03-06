@@ -113,6 +113,27 @@ Web UI SSE：/api/sessions/<workflow_session_id>/events
 - prompt 拼装：`apps/openagentic_sdk/src/openagentic_workflow_engine.erl`（`build_user_prompt/5`）
 - `# Input` 绑定：同文件（`bind_input/2`，支持 `controller_input | step_output | merge`）
 
+### 统一时空上下文（2026-03-06 起）
+
+为避免三省六部主 agent 与派生 subagent 对“现在 / 今天 / 最近 / 截至目前”产生不同理解，workflow 运行时现在会为**一次 workflow run**统一生成（或继承）一份显式 `time_context`：
+
+- 在 `workflow.init` / `workflow.run.start` 事件里持久化，便于追溯。
+- 注入到每个 step 的执行上下文（`step_executor` 收到的 `Ctx.time_context`）。
+- 默认 step executor 会把这份 `time_context` 追加到 runtime 的 system prompt。
+- `Task` 派生的内建 subagent（如 `research` / `explore`）会继承同一份 `time_context`，而不是各自重新生成“当前时间”。
+
+当前默认时区口径为：
+
+- `Asia/Shanghai`
+- `UTC+08:00 / 东八区`
+- 一个显式的当前绝对时间快照（本地时间 + UTC 时间）
+
+因此，同一次 workflow run 内：
+
+- 主 agent 与 subagent 看到的是同一个“现在”。
+- 对相对时间词的解释基准一致。
+- 需要落正文时可以优先引用绝对日期/时间，减少时效性歧义。
+
 ---
 
 ## 尚书分派与六部历史到底在哪里？
@@ -187,4 +208,3 @@ Web UI SSE：/api/sessions/<workflow_session_id>/events
 - 将“哪些 step 能看到哪些 step_output”做成更显式的 DSL 约束/可视化（减少误配）。
 - 对 UI 增加“查看某 step_session 的原始事件”入口（从主会话的 `step_session_id` 跳转）。
 - attempt 重试可选“复用同一个 step_session”（让模型真的看到自己上次输出），但这会引入更强的跨 attempt 记忆，需谨慎权衡可控性与成功率。
-

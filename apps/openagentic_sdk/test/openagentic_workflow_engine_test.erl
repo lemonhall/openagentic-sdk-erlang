@@ -26,6 +26,44 @@ workflow_engine_happy_path_test() ->
   ?assert(lists:any(fun (E) -> maps:get(<<"type">>, E, <<>>) =:= <<"workflow.done">> end, Events)),
   ok.
 
+workflow_engine_keeps_one_explicit_time_context_across_steps_test() ->
+  Root = test_root(),
+  ok = write_workflow(Root),
+  _ = erlang:erase(openagentic_test_workflow_time_context),
+  Exec =
+    fun (Ctx) ->
+      StepId = maps:get(step_id, Ctx),
+      TimeContext = maps:get(time_context, Ctx, undefined),
+      ?assert(is_map(TimeContext)),
+      ?assertEqual(<<"Asia/Shanghai">>, maps:get(timezone, TimeContext, undefined)),
+      ?assertEqual(<<"+08:00">>, maps:get(utc_offset, TimeContext, undefined)),
+      ?assert(maps:get(current_local_time, TimeContext, undefined) =/= undefined),
+      case erlang:get(openagentic_test_workflow_time_context) of
+        undefined -> erlang:put(openagentic_test_workflow_time_context, TimeContext);
+        Prev -> ?assertEqual(Prev, TimeContext)
+      end,
+      case StepId of
+        <<"a">> ->
+          {ok, <<"# A\n\nok\n">>};
+        <<"b">> ->
+          {ok, <<"{\"decision\":\"approve\",\"reasons\":[],\"required_changes\":[]}">>};
+        _ ->
+          {error, unknown_step}
+      end
+    end,
+  Opts = #{session_root => Root, step_executor => Exec, strict_unknown_fields => true},
+  {ok, Res} = openagentic_workflow_engine:run(Root, "workflows/w.json", <<"hello">>, Opts),
+  ?assertEqual(<<"completed">>, maps:get(status, Res)),
+  WfSid = maps:get(workflow_session_id, Res),
+  Events = openagentic_session_store:read_events(Root, WfSid),
+  Init = find_first_event(Events, <<"workflow.init">>),
+  RunStart = find_last_event(Events, <<"workflow.run.start">>),
+  InitTc = ensure_map(maps:get(<<"time_context">>, Init, #{})),
+  RunStartTc = ensure_map(maps:get(<<"time_context">>, RunStart, #{})),
+  ?assertEqual(<<"Asia/Shanghai">>, maps:get(<<"timezone">>, InitTc, undefined)),
+  ?assertEqual(InitTc, RunStartTc),
+  ok.
+
 workflow_engine_filters_tasks_input_by_ministry_role_test() ->
   Root = test_root(),
   ok = write_workflow_task_filter(Root),
@@ -846,6 +884,22 @@ last_step_output(Events0, StepId0) ->
     <<>>,
     Events
   ).
+
+find_first_event(Events0, Type0) ->
+  Events = ensure_list_value(Events0),
+  Type = to_bin(Type0),
+  case [E || E <- Events, maps:get(<<"type">>, ensure_map(E), <<>>) =:= Type] of
+    [H | _] -> H;
+    [] -> #{}
+  end.
+
+find_last_event(Events0, Type0) ->
+  Events = ensure_list_value(Events0),
+  Type = to_bin(Type0),
+  case lists:reverse([E || E <- Events, maps:get(<<"type">>, ensure_map(E), <<>>) =:= Type]) of
+    [H | _] -> H;
+    [] -> #{}
+  end.
 
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);

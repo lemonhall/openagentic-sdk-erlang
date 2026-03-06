@@ -94,7 +94,9 @@ continue_start(SessionRoot0, WorkflowSessionId0, Message0, Opts0) ->
   end.
 
 init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
-  case openagentic_workflow_dsl:load_and_validate(ProjectDir, WorkflowRelPath, Opts) of
+  TimeContext = openagentic_time_context:resolve(Opts),
+  Opts1 = openagentic_time_context:put_in_opts(Opts, TimeContext),
+  case openagentic_workflow_dsl:load_and_validate(ProjectDir, WorkflowRelPath, Opts1) of
     {ok, Wf} ->
       case read_workflow_source(ProjectDir, WorkflowRelPath) of
         {ok, SrcBin} ->
@@ -106,13 +108,14 @@ init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
               workflow_id => WorkflowId,
               workflow_name => WfName,
               dsl_path => to_bin(WorkflowRelPath),
-              dsl_sha256 => DslHash
+              dsl_sha256 => DslHash,
+              time_context => TimeContext
             }),
            WfSessionId = to_bin(WfSessionId0),
-           Opts2 = ensure_web_answerer(Opts, WfSessionId),
+           Opts2 = ensure_web_answerer(Opts1, WfSessionId),
            WfWorkspaceDir = workflow_workspace_dir(SessionRoot, WfSessionId0),
            ok = filelib:ensure_dir(filename:join([WfWorkspaceDir, "x"])),
-           ok = append_wf_event(SessionRoot, WfSessionId0, openagentic_events:system_init(WfSessionId, ProjectDir, #{})),
+           ok = append_wf_event(SessionRoot, WfSessionId0, openagentic_events:system_init(WfSessionId, ProjectDir, #{time_context => TimeContext})),
            ok =
              append_wf_event(
                SessionRoot,
@@ -122,7 +125,7 @@ init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
                 WfName,
                 WorkflowRelPath,
                 DslHash,
-                #{project_dir => to_bin(ProjectDir), controller_input => ControllerInput}
+                #{project_dir => to_bin(ProjectDir), controller_input => ControllerInput, time_context => TimeContext}
               )
             ),
           State0 =
@@ -137,12 +140,14 @@ init_run(ProjectDir, WorkflowRelPath, ControllerInput, SessionRoot, Opts) ->
                defaults => ensure_map(maps:get(<<"defaults">>, Wf, #{})),
                steps_by_id => ensure_map(maps:get(<<"steps_by_id">>, Wf, #{})),
                controller_input => ControllerInput,
+              time_context => TimeContext,
               step_outputs => #{},
               step_attempts => #{},
               step_failures => #{},
               opts => Opts2
             },
           Start = maps:get(<<"start_step_id">>, Wf, <<>>),
+          ok = append_wf_event(State0, #{type => <<"workflow.run.start">>, workflow_id => to_bin(WorkflowId), start_step_id => to_bin(Start), time_context => TimeContext}),
           {ok, to_bin(Start), State0};
         {error, Reason} ->
           {error, Reason}
@@ -180,10 +185,10 @@ init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
       StepFailuresAll = reconstruct_step_failures(Events),
       StepAttempts = #{},
 
-      Opts = ensure_web_answerer(Opts0, to_bin(WorkflowSessionId)),
+      ExplicitTimeContext = openagentic_time_context:from_opts(Opts0),
       WfWorkspaceDir = workflow_workspace_dir(SessionRoot, WorkflowSessionId),
       ok = filelib:ensure_dir(filename:join([WfWorkspaceDir, "x"])),
-      case openagentic_workflow_dsl:load_and_validate(ProjectDir, ensure_list_str(DslPath), Opts) of
+      case openagentic_workflow_dsl:load_and_validate(ProjectDir, ensure_list_str(DslPath), Opts0) of
         {ok, Wf} ->
           Defaults = ensure_map(maps:get(<<"defaults">>, Wf, #{})),
           StepsById = ensure_map(maps:get(<<"steps_by_id">>, Wf, #{})),
@@ -201,6 +206,17 @@ init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
               true -> #{};
               false -> StepFailuresAll
             end,
+          TimeContext =
+            case ExplicitTimeContext of
+              undefined ->
+                case StartingFresh of
+                  true -> openagentic_time_context:resolve(Opts0);
+                  false -> recover_workflow_time_context(Events, Init, Opts0)
+                end;
+              Ctx -> Ctx
+            end,
+          Opts1 = openagentic_time_context:put_in_opts(Opts0, TimeContext),
+          Opts = ensure_web_answerer(Opts1, to_bin(WorkflowSessionId)),
           State0 =
             #{
               project_dir => ProjectDir,
@@ -213,6 +229,7 @@ init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
               defaults => Defaults,
               steps_by_id => StepsById,
               controller_input => ControllerInput,
+              time_context => TimeContext,
               step_outputs => StepOutputs,
               step_attempts => StepAttempts,
               step_failures => StepFailures,
@@ -220,7 +237,7 @@ init_continue(SessionRoot, WorkflowSessionId, Message, Opts0) ->
             },
           %% Observability for the UI.
           ok = append_wf_event(State0, #{type => <<"workflow.controller.message">>, workflow_id => to_bin(WfId), text => Message}),
-          ok = append_wf_event(State0, #{type => <<"workflow.run.start">>, workflow_id => to_bin(WfId), start_step_id => StartStepId}),
+          ok = append_wf_event(State0, #{type => <<"workflow.run.start">>, workflow_id => to_bin(WfId), start_step_id => StartStepId, time_context => TimeContext}),
           {ok, StartStepId, State0};
         Err ->
           Err
@@ -237,6 +254,38 @@ find_workflow_init(Events0) ->
 is_controller_message(E0) ->
   E = ensure_map(E0),
   to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))) =:= <<"workflow.controller.message">>.
+
+recover_workflow_time_context(Events0, Init0, Opts0) ->
+  case last_workflow_run_time_context(Events0) of
+    undefined ->
+      case event_time_context(Init0) of
+        undefined -> openagentic_time_context:resolve(Opts0);
+        TimeContext -> TimeContext
+      end;
+    TimeContext ->
+      TimeContext
+  end.
+
+last_workflow_run_time_context(Events0) ->
+  Events = lists:reverse(ensure_list_value(Events0)),
+  last_workflow_run_time_context_loop(Events).
+
+last_workflow_run_time_context_loop([]) ->
+  undefined;
+last_workflow_run_time_context_loop([E0 | Rest]) ->
+  E = ensure_map(E0),
+  case to_bin(maps:get(<<"type">>, E, maps:get(type, E, <<>>))) of
+    <<"workflow.run.start">> -> event_time_context(E);
+    _ -> last_workflow_run_time_context_loop(Rest)
+  end.
+
+event_time_context(E0) ->
+  E = ensure_map(E0),
+  case maps:get(<<"time_context">>, E, maps:get(time_context, E, undefined)) of
+    undefined -> undefined;
+    null -> undefined;
+    TimeContext -> openagentic_time_context:resolve(#{time_context => TimeContext})
+  end.
 
 reconstruct_step_outputs(Events0) ->
   Events = ensure_list_value(Events0),
@@ -795,6 +844,7 @@ run_step_executor(State0, StepId, Role, Attempt, StepSessionId0, UserPrompt, Ste
       role => Role,
       attempt => Attempt,
       step_session_id => to_bin(StepSessionId0),
+      time_context => maps:get(time_context, State0, undefined),
       user_prompt => UserPrompt
     },
   case maps:get(step_executor, Opts, undefined) of

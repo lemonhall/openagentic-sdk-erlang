@@ -98,6 +98,26 @@ tool_loop_auto_wires_research_task_subagent_test() ->
   ?assert(has_ok_tool_result(Events)),
   ?assertEqual(<<"OK">>, maps:get(final_text, Res)).
 
+tool_loop_built_in_task_subagent_reuses_parent_time_context_test() ->
+  Root = test_root(),
+  _ = erlang:erase(openagentic_test_task_time_step),
+  _ = erlang:erase(openagentic_test_task_parent_time_block),
+  Opts = #{
+    session_root => Root,
+    provider_mod => openagentic_testing_provider_task_time_context,
+    api_key => <<"dummy">>,
+    model => <<"dummy">>,
+    permission_gate => openagentic_permissions:bypass(),
+    tools => [openagentic_tool_task],
+    task_agents => [openagentic_built_in_subagents:research_agent()],
+    max_steps => 5
+  },
+  {ok, Res} = openagentic_runtime:query(<<"hi">>, Opts),
+  Sid = maps:get(session_id, Res),
+  Events = openagentic_session_store:read_events(Root, Sid),
+  ?assert(has_ok_tool_result(Events)),
+  ?assertEqual(<<"OK">>, maps:get(final_text, Res)).
+
 has_type(Events, TypeBin) ->
   lists:any(
     fun (E0) ->

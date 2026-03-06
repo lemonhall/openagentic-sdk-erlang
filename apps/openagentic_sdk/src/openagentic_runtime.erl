@@ -8,14 +8,17 @@
 query(Prompt0, Opts0) ->
   Prompt = iolist_to_binary(Prompt0),
   Opts = ensure_map(Opts0),
+  TimeContext = openagentic_time_context:resolve(Opts),
+  Opts1 = openagentic_time_context:put_in_opts(Opts, TimeContext),
 
-  RootDir = ensure_list(maps:get(session_root, Opts, openagentic_paths:default_session_root())),
-  Metadata = maps:get(session_metadata, Opts, #{}),
+  RootDir = ensure_list(maps:get(session_root, Opts1, openagentic_paths:default_session_root())),
+  Metadata0 = ensure_map(maps:get(session_metadata, Opts1, #{})),
+  Metadata = Metadata0#{time_context => TimeContext},
   Resume0 =
     maps:get(
       resume_session_id,
-      Opts,
-      maps:get(resumeSessionId, Opts, maps:get(<<"resume_session_id">>, Opts, maps:get(<<"resumeSessionId">>, Opts, undefined)))
+      Opts1,
+      maps:get(resumeSessionId, Opts1, maps:get(<<"resume_session_id">>, Opts1, maps:get(<<"resumeSessionId">>, Opts1, undefined)))
     ),
   Resume1 =
     case Resume0 of
@@ -30,21 +33,21 @@ query(Prompt0, Opts0) ->
       _ -> Resume1
     end,
 
-  Cwd = maps:get(cwd, Opts, ensure_list(file_get_cwd_safe())),
-  ProjectDir = ensure_list(maps:get(project_dir, Opts, maps:get(projectDir, Opts, Cwd))),
-  EventSink = maps:get(event_sink, Opts, maps:get(eventSink, Opts, undefined)),
+  Cwd = maps:get(cwd, Opts1, ensure_list(file_get_cwd_safe())),
+  ProjectDir = ensure_list(maps:get(project_dir, Opts1, maps:get(projectDir, Opts1, Cwd))),
+  EventSink = maps:get(event_sink, Opts1, maps:get(eventSink, Opts1, undefined)),
 
-  ApiKey = maps:get(api_key, Opts, maps:get(<<"api_key">>, Opts, undefined)),
-  Model = maps:get(model, Opts, maps:get(<<"model">>, Opts, undefined)),
-  BaseUrl = maps:get(base_url, Opts, maps:get(<<"base_url">>, Opts, undefined)),
-  TimeoutMs = maps:get(timeout_ms, Opts, maps:get(<<"timeout_ms">>, Opts, ?DEFAULT_TIMEOUT_MS)),
+  ApiKey = maps:get(api_key, Opts1, maps:get(<<"api_key">>, Opts1, undefined)),
+  Model = maps:get(model, Opts1, maps:get(<<"model">>, Opts1, undefined)),
+  BaseUrl = maps:get(base_url, Opts1, maps:get(<<"base_url">>, Opts1, undefined)),
+  TimeoutMs = maps:get(timeout_ms, Opts1, maps:get(<<"timeout_ms">>, Opts1, ?DEFAULT_TIMEOUT_MS)),
 
-  ProviderRetry = maps:get(provider_retry, Opts, maps:get(providerRetry, Opts, #{})),
-  IncludePartial = maps:get(include_partial_messages, Opts, maps:get(includePartialMessages, Opts, false)),
+  ProviderRetry = maps:get(provider_retry, Opts1, maps:get(providerRetry, Opts1, #{})),
+  IncludePartial = maps:get(include_partial_messages, Opts1, maps:get(includePartialMessages, Opts1, false)),
   OpenAiStore0 =
-    pick_opt(Opts, [openai_store, openAiStore, <<"openai_store">>, <<"openAiStore">>, default_store, defaultStore, <<"default_store">>, <<"defaultStore">>]),
+    pick_opt(Opts1, [openai_store, openAiStore, <<"openai_store">>, <<"openAiStore">>, default_store, defaultStore, <<"default_store">>, <<"defaultStore">>]),
   OpenAiStore = to_bool_default(OpenAiStore0, true),
-  ApiKeyHeader0 = pick_opt(Opts, [api_key_header, apiKeyHeader, <<"api_key_header">>, <<"apiKeyHeader">>]),
+  ApiKeyHeader0 = pick_opt(Opts1, [api_key_header, apiKeyHeader, <<"api_key_header">>, <<"apiKeyHeader">>]),
   ApiKeyHeader =
     case string:trim(to_bin(ApiKeyHeader0)) of
       <<>> -> undefined;
@@ -55,17 +58,17 @@ query(Prompt0, Opts0) ->
   Protocol0 =
     maps:get(
       protocol,
-      Opts,
+      Opts1,
       maps:get(
         provider_protocol,
-        Opts,
+        Opts1,
         maps:get(
           providerProtocol,
-          Opts,
+          Opts1,
           maps:get(
             provider_protocol_override,
-            Opts,
-            maps:get(providerProtocolOverride, Opts, maps:get(<<"protocol">>, Opts, maps:get(<<"provider_protocol">>, Opts, maps:get(<<"providerProtocol">>, Opts, undefined))))
+            Opts1,
+            maps:get(providerProtocolOverride, Opts1, maps:get(<<"protocol">>, Opts1, maps:get(<<"provider_protocol">>, Opts1, maps:get(<<"providerProtocol">>, Opts1, undefined))))
           )
         )
       )
@@ -73,7 +76,7 @@ query(Prompt0, Opts0) ->
   Protocol = openagentic_provider_protocol:normalize(Protocol0),
 
   ProviderMod =
-    case maps:get(provider_mod, Opts, undefined) of
+    case maps:get(provider_mod, Opts1, undefined) of
       undefined ->
         case Protocol of
           legacy -> openagentic_openai_chat_completions;
@@ -85,17 +88,18 @@ query(Prompt0, Opts0) ->
   SystemPrompt0 =
     maps:get(
       system_prompt,
-      Opts,
-      maps:get(systemPrompt, Opts, maps:get(<<"system_prompt">>, Opts, maps:get(<<"systemPrompt">>, Opts, undefined)))
+      Opts1,
+      maps:get(systemPrompt, Opts1, maps:get(<<"system_prompt">>, Opts1, maps:get(<<"systemPrompt">>, Opts1, undefined)))
     ),
   SystemPrompt1 = string:trim(to_bin(SystemPrompt0)),
-  SystemPrompt = case SystemPrompt1 of <<>> -> undefined; <<"undefined">> -> undefined; _ -> SystemPrompt1 end,
+  SystemPrompt2 = case SystemPrompt1 of <<"undefined">> -> <<>>; _ -> SystemPrompt1 end,
+  SystemPrompt = openagentic_time_context:compose_system_prompt(SystemPrompt2, TimeContext),
 
-  TaskAgents = maps:get(task_agents, Opts, maps:get(taskAgents, Opts, [])),
+  TaskAgents = maps:get(task_agents, Opts1, maps:get(taskAgents, Opts1, [])),
   AgentsVar = openagentic_task_agents:render_agents_for_prompt(TaskAgents),
 
-  ToolMods = maps:get(tools, Opts, default_tools()),
-  WorkspaceDirOpt0 = pick_opt(Opts, [workspace_dir, workspaceDir, <<"workspace_dir">>, <<"workspaceDir">>]),
+  ToolMods = maps:get(tools, Opts1, default_tools()),
+  WorkspaceDirOpt0 = pick_opt(Opts1, [workspace_dir, workspaceDir, <<"workspace_dir">>, <<"workspaceDir">>]),
   ToolSchemas =
     openagentic_tool_schemas:responses_tools(
       ToolMods,
@@ -103,20 +107,20 @@ query(Prompt0, Opts0) ->
     ),
   Registry = openagentic_tool_registry:new(ToolMods),
 
-  UserAnswerer = maps:get(user_answerer, Opts, undefined),
-  PermissionGate0 = maps:get(permission_gate, Opts, openagentic_permissions:default(UserAnswerer)),
-  PermissionGate = effective_permission_gate(Opts, PermissionGate0, UserAnswerer),
-  AllowedTools = maps:get(allowed_tools, Opts, undefined),
-  TaskProgressEmitter = maps:get(task_progress_emitter, Opts, maps:get(taskProgressEmitter, Opts, undefined)),
-  TaskRunner0 = maps:get(task_runner, Opts, undefined),
-  HookEngine = maps:get(hook_engine, Opts, maps:get(hookEngine, Opts, #{})),
-  ToolOutputArtifacts = maps:get(tool_output_artifacts, Opts, maps:get(toolOutputArtifacts, Opts, #{})),
-  MaxSteps = maps:get(max_steps, Opts, ?DEFAULT_MAX_STEPS),
-  ResumeMaxEvents = maps:get(resume_max_events, Opts, maps:get(resumeMaxEvents, Opts, 1000)),
-  ResumeMaxBytes = maps:get(resume_max_bytes, Opts, maps:get(resumeMaxBytes, Opts, 2000000)),
+  UserAnswerer = maps:get(user_answerer, Opts1, undefined),
+  PermissionGate0 = maps:get(permission_gate, Opts1, openagentic_permissions:default(UserAnswerer)),
+  PermissionGate = effective_permission_gate(Opts1, PermissionGate0, UserAnswerer),
+  AllowedTools = maps:get(allowed_tools, Opts1, undefined),
+  TaskProgressEmitter = maps:get(task_progress_emitter, Opts1, maps:get(taskProgressEmitter, Opts1, undefined)),
+  TaskRunner0 = maps:get(task_runner, Opts1, undefined),
+  HookEngine = maps:get(hook_engine, Opts1, maps:get(hookEngine, Opts1, #{})),
+  ToolOutputArtifacts = maps:get(tool_output_artifacts, Opts1, maps:get(toolOutputArtifacts, Opts1, #{})),
+  MaxSteps = maps:get(max_steps, Opts1, ?DEFAULT_MAX_STEPS),
+  ResumeMaxEvents = maps:get(resume_max_events, Opts1, maps:get(resumeMaxEvents, Opts1, 1000)),
+  ResumeMaxBytes = maps:get(resume_max_bytes, Opts1, maps:get(resumeMaxBytes, Opts1, 2000000)),
   TaskRunner =
     case TaskRunner0 of
-      undefined -> auto_task_runner(TaskAgents, Opts);
+      undefined -> auto_task_runner(TaskAgents, Opts1);
       _ -> TaskRunner0
     end,
 
@@ -168,6 +172,7 @@ query(Prompt0, Opts0) ->
         compaction => CompactionCfg,
         protocol => Protocol,
         system_prompt => SystemPrompt,
+        time_context => TimeContext,
         tool_schemas => ToolSchemas,
         registry => Registry,
         permission_gate => PermissionGate,
@@ -186,7 +191,7 @@ query(Prompt0, Opts0) ->
       State1 =
         case byte_size(Resume) > 0 of
           true -> State0;
-          false -> append_event(State0, openagentic_events:system_init(SessionId, Cwd, #{}))
+          false -> append_event(State0, openagentic_events:system_init(SessionId, Cwd, #{time_context => TimeContext}))
         end,
       State2 = append_event(State1, openagentic_events:user_message(Prompt)),
       run_loop(State2)
@@ -1075,8 +1080,10 @@ handle_task(ToolUseId, ToolName0, ToolInput0, HookCtx, State0) ->
           Emit = maps:get(task_progress_emitter, State0, undefined),
           ToolCtx =
             case Emit of
-              Ef when is_function(Ef, 1) -> #{session_id => SessionId, tool_use_id => ToolUseId, emit_progress => Ef};
-              _ -> #{session_id => SessionId, tool_use_id => ToolUseId}
+              Ef when is_function(Ef, 1) ->
+                #{session_id => SessionId, tool_use_id => ToolUseId, emit_progress => Ef, time_context => maps:get(time_context, State0, undefined)};
+              _ ->
+                #{session_id => SessionId, tool_use_id => ToolUseId, time_context => maps:get(time_context, State0, undefined)}
             end,
           try
             Out = F(Agent, Prompt, ToolCtx),
