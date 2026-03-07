@@ -1,4 +1,4 @@
-﻿.caseApp {
+.caseApp {
   min-height: 100vh;
 }
 
@@ -101,6 +101,59 @@
   padding: 0 16px 12px;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.contextHelp {
+  margin: 0;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.caseHeroMain .contextHelp {
+  margin-top: 2px;
+}
+
+.contextHelp > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.contextHelp > summary::-webkit-details-marker {
+  display: none;
+}
+
+.contextHelp > summary::after {
+  content: "\u5c55\u5f00";
+  float: right;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.contextHelp[open] > summary::after {
+  content: "\u6536\u8d77";
+}
+
+.contextHelpBody {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.contextHelpBody p,
+.contextHelpBody ul {
+  margin: 0;
+}
+
+.contextHelpBody ul {
+  padding-left: 18px;
 }
 
 .caseFormGrid {

@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -30,7 +30,14 @@
               <div class="caseHeroSummary" id="governancePageSummary">
                 此页的主任务是继续治理对话；如需调整任务定义，再提交版本修订。补权与激活是次级流程，只在需要时进入。
               </div>
-              <div class="hint" id="governanceContextHint">会话加载后，这里会同步当前对象引用、任务状态和授权状态。</div>
+              <div class="hint" id="governanceContextHint">加载后会显示当前对象、任务状态和授权状态。</div>
+              <details class="contextHelp">
+                <summary>查看治理说明</summary>
+                <div class="contextHelpBody">
+                  <p>候选阶段使用“审议”，正式任务阶段使用“治理会话”。</p>
+                  <p>本页主流程是继续对话；修订和补权都放在次级区域。</p>
+                </div>
+              </details>
               <div class="hint">Session：<code id="governanceSessionId"></code> ｜ 对象：<code id="governanceObjectRef">未指定</code></div>
             </div>
             <aside class="caseActionCard" id="governanceNextAction">
@@ -47,7 +54,7 @@
 
         <section class="casePanel casePanelWide" id="governanceConversationPanel">
           <div class="panelTitle">主任务：继续治理对话</div>
-          <div class="panelLead">这一屏只做治理对话和结论收敛；如果确认需要修改任务定义，再转入下面的修订区。</div>
+          <div class="panelLead">这一屏只做对话与结论收敛。</div>
           <div id="governanceTranscript" class="entityList empty">
             <div class="emptyState">
               <div class="emptyStateLabel">治理会话</div>
@@ -73,7 +80,7 @@
 
         <section class="casePanel casePanelWide" id="governanceRevisionPanel">
           <div class="panelTitle">次级流程：提交版本修订</div>
-          <div class="panelLead">只有当治理结论已经收敛、确认需要修改任务定义时，才进入这一块生成新版本。</div>
+          <div class="panelLead">需要修改任务定义时，再进入这里生成新版本。</div>
           <form id="governanceRevisionForm" class="caseFormGrid">
             <label class="span2">
               <span>变更摘要</span>

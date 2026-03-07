@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -30,7 +30,14 @@
               <div class="caseHeroSummary" id="taskPageSummary">
                 此页的主任务是判断当前任务状态：先看版本差异和授权结果，再决定是补权、激活，还是继续治理。
               </div>
-              <div class="hint" id="taskDetailHint">请先加载任务详情，再按页面提示处理当前任务。</div>
+              <div class="hint" id="taskDetailHint">先加载任务详情，再按页面提示处理当前任务。</div>
+              <details class="contextHelp">
+                <summary>查看任务详情说明</summary>
+                <div class="contextHelpBody">
+                  <p>推荐顺序：先看当前状态，再看版本差异与授权结果。</p>
+                  <p>只有确认差异与授权后，再决定是补权、激活，还是进入治理会话。</p>
+                </div>
+              </details>
               <div class="hint" id="taskPrimaryPathHint">任务详情优先：先在此页确认状态、差异与授权，再决定是否进入治理会话。</div>
             </div>
             <aside class="caseActionCard" id="taskNextAction">
@@ -47,7 +54,7 @@
 
         <section class="casePanel casePanelWide" id="taskSummaryPanel">
           <div class="panelTitle">当前任务状态</div>
-          <div class="panelLead">先确认任务当前是否健康、是否缺权，以及它承接的是哪一条治理会话。</div>
+          <div class="panelLead">先确认任务状态，再看它承接的治理会话。</div>
           <div id="taskSummary" class="overviewCard empty">
             <div class="emptyState">
               <div class="emptyStateLabel">任务状态</div>
@@ -59,7 +66,7 @@
 
         <section class="casePanel" id="taskVersionDiffPanel">
           <div class="panelTitle">版本差异</div>
-          <div class="panelLead">如果任务经过修订，这里只回答一个问题：最新版本改了什么，会不会触发重授权。</div>
+          <div class="panelLead">这里只回答一个问题：最新版本改了什么。</div>
           <div id="taskVersionDiff" class="entityList empty">
             <div class="emptyState">
               <div class="emptyStateLabel">版本差异</div>
@@ -75,7 +82,7 @@
 
         <section class="casePanel" id="taskAuthorizationPanel">
           <div class="panelTitle">授权结果</div>
-          <div class="panelLead">授权区只告诉你是否缺槽位、是否过期，以及补齐后能不能重新激活。</div>
+          <div class="panelLead">这里只展示授权是否缺失、过期，以及是否可重新激活。</div>
           <div id="taskAuthorization" class="entityList empty">
             <div class="emptyState">
               <div class="emptyStateLabel">授权结果</div>
@@ -87,7 +94,7 @@
 
         <section class="casePanel" id="taskVersionsPanel">
           <div class="panelTitle">版本历史</div>
-          <div class="panelLead">版本历史用于回看任务定义如何演进，不应抢占“当前状态”和“下一步动作”的主线。</div>
+          <div class="panelLead">版本历史只用于回看演进，不抢主线。</div>
           <div id="taskVersions" class="entityList empty">
             <div class="emptyState">
               <div class="emptyStateLabel">版本历史</div>

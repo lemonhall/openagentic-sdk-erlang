@@ -1,4 +1,4 @@
-﻿const el = (id) => document.getElementById(id);
+const el = (id) => document.getElementById(id);
 
 const ui = {
   workflowSessionId: el("workflowSessionId"),
@@ -207,7 +207,7 @@ function candidateSessionButton(candidate) {
   const state = candidate?.state || {};
   const href = candidateSessionHref(candidate);
   if (!href) return "";
-  const label = state.status === "approved" ? "继续治理" : "进入审议";
+  const label = state.status === "approved" ? "进入治理会话" : "进入审议";
   return `<a class="btn" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
 }
 
@@ -228,7 +228,7 @@ function taskSessionHref(task) {
 function taskSessionButton(task) {
   const href = taskSessionHref(task);
   if (!href) return "";
-  return `<a class="btn" href="${escapeHtml(href)}">打开治理</a>`;
+  return `<a class="btn" href="${escapeHtml(href)}">进入治理会话</a>`;
 }
 
 function taskDetailHref(task) {
@@ -253,7 +253,7 @@ function renderNextAction(action) {
   ui.caseNextAction.innerHTML = `
     <div class="caseActionLabel">下一步</div>
     <div class="caseActionTitle">${escapeHtml(action?.title || "先进入案卷")}</div>
-    <div class="caseActionBody">${escapeHtml(action?.body || "先立案或输入 Case ID，再进入案卷工作台。")}</div>
+    <div class="caseActionBody">${escapeHtml(action?.body || "先立案或输入案卷 ID，再进入案卷工作台。")}</div>
     <div class="caseActionButtons">
       ${buttons
         .map((button) => {
@@ -350,14 +350,14 @@ function syncCaseShell(data) {
     if (ui.caseBreadcrumb) ui.caseBreadcrumb.textContent = "Cases / 案卷入口";
     if (ui.casePageTitle) ui.casePageTitle.textContent = "先创建案卷或进入既有案卷";
     if (ui.casePageSummary) {
-      ui.casePageSummary.textContent = "此页的主任务是进入案卷：要么从已完成 Workflow 立案，要么输入既有 Case ID 进入工作台。";
+      ui.casePageSummary.textContent = "此页的主任务是进入案卷：要么从已完成 Workflow 立案，要么输入既有案卷 ID 进入工作台。";
     }
     renderNextAction({
-      title: "先创建案卷或输入 Case ID",
+      title: "先创建案卷或输入案卷 ID",
       body: "完成立案或进入既有案卷后，这一页才会展开案卷工作台。",
       buttons: [
         { type: "link", href: "#caseCreateForm", label: "去立案", primary: true },
-        { type: "link", href: "#caseIdInput", label: "输入 Case ID" },
+        { type: "link", href: "#caseIdInput", label: "输入案卷 ID" },
       ],
     });
     setWorkspaceVisible(false);
@@ -381,10 +381,10 @@ function renderOverview(data) {
       layout: "overviewCard empty",
       label: "案卷摘要",
       title: "暂无案卷数据",
-      body: "请先立案或输入 Case ID 进入工作台。",
+      body: "请先立案或输入案卷 ID 进入工作台。",
       actions: [
         { type: "link", href: "#caseCreateForm", label: "先立案", primary: true },
-        { type: "link", href: "#caseIdInput", label: "输入 Case ID" },
+        { type: "link", href: "#caseIdInput", label: "输入案卷 ID" },
       ],
     });
     return;
@@ -532,9 +532,9 @@ function renderTemplateList(templates) {
 function renderMailList(mailItems) {
   if (!Array.isArray(mailItems) || !mailItems.length) {
     setEmptyState(ui.mailList, {
-      label: "内邮",
-      title: "暂无内邮",
-      body: "候选抽取、转正或修订通知会沉淀在这里。",
+      label: "案卷消息",
+      title: "暂无案卷消息",
+      body: "候选抽取、转正或修订消息会沉淀在这里。",
       actions: [{ type: "link", href: "/view/inbox.html", label: "打开统一信箱" }],
     });
     return;
@@ -546,7 +546,7 @@ function renderMailList(mailItems) {
       const spec = item.spec || {};
       const state = item.state || {};
       return summaryCardMarkup({
-        title: spec.title || "内邮",
+        title: spec.title || "案卷消息",
         status: state.status || "",
         summary: spec.summary || "暂无摘要",
         actions: `<a class="btn" href="/view/inbox.html">打开统一信箱</a>`,
@@ -627,7 +627,7 @@ async function createCase(event) {
 async function extractCandidates() {
   const caseId = ui.caseIdInput.value.trim();
   if (!caseId) {
-    setHint("请先创建案卷或填入 case id。", true);
+    setHint("请先创建案卷或填入案卷 ID。", true);
     return;
   }
   setHint("正在重新抽取候选任务...");
@@ -667,7 +667,7 @@ async function createTemplate(event) {
   event.preventDefault();
   const caseId = ui.caseIdInput.value.trim();
   if (!caseId) {
-    setHint("请先创建案卷或填入 case id。", true);
+    setHint("请先创建案卷或填入案卷 ID。", true);
     return;
   }
   setHint("正在创建模板...");
@@ -685,7 +685,7 @@ async function createTemplate(event) {
 async function instantiateTemplate(templateId) {
   const caseId = ui.caseIdInput.value.trim();
   if (!caseId) {
-    setHint("请先创建案卷或填入 case id。", true);
+    setHint("请先创建案卷或填入案卷 ID。", true);
     return;
   }
   setHint(`正在按模板 ${templateId} 生成候选任务...`);

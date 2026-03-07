@@ -256,7 +256,7 @@ function deriveNextAction(detail) {
       body: "当前任务已有最新修订；先确认差异，再决定是否继续治理。",
       buttons: [
         { type: "link", href: "#taskVersionDiffPanel", label: "查看差异", primary: true },
-        ...(governance ? [{ type: "link", href: governance, label: "打开治理" }] : []),
+        ...(governance ? [{ type: "link", href: governance, label: "进入治理会话" }] : []),
       ],
     };
   }
@@ -266,7 +266,7 @@ function deriveNextAction(detail) {
     body: "当前任务已可正常查看；先看状态和授权结果，再决定是否进入治理。",
     buttons: [
       { type: "link", href: "#taskSummaryPanel", label: "查看状态", primary: true },
-      ...(governance ? [{ type: "link", href: governance, label: "打开治理" }] : []),
+      ...(governance ? [{ type: "link", href: governance, label: "进入治理会话" }] : []),
     ],
   };
 }

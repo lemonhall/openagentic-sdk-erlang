@@ -93,7 +93,7 @@ function renderMailList(items) {
   if (!ui.globalMailList) return;
   if (!Array.isArray(items) || !items.length) {
     ui.globalMailList.className = "entityList empty";
-    ui.globalMailList.textContent = "暂无内邮";
+    ui.globalMailList.textContent = "暂无案卷消息";
     return;
   }
   ui.globalMailList.className = "entityList";
@@ -108,7 +108,7 @@ function renderMailList(items) {
         <article class="entityCard compact">
           <div class="entityHeader">
             <div>
-              <div class="entityTitle">${escapeHtml(spec.title || "内邮")}</div>
+              <div class="entityTitle">${escapeHtml(spec.title || "案卷消息")}</div>
               <div class="entityMeta">${escapeHtml(ext.case_title || links.case_id || "")}</div>
             </div>
             <span class="statusChip">${escapeHtml(state.status || "")}</span>

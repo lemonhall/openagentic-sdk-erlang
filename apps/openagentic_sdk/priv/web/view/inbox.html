@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -36,13 +36,20 @@
             <div class="caseActions">
               <button type="submit" class="btn primary">刷新</button>
             </div>
-            <div class="hint span2" id="inboxHint">统一信箱聚合各案卷内邮，可按状态筛选并直接标记已读或归档。</div>
+            <div class="hint span2" id="inboxHint">先按状态筛选，再处理案卷消息。</div>
+            <details class="contextHelp span2" id="inboxGuide">
+              <summary>查看信箱说明</summary>
+              <div class="contextHelpBody">
+                <p>统一信箱集中展示各案卷消息，可直接标记已读或归档。</p>
+                <p>处理完成后，可通过顶部返回入口回到原页面继续工作。</p>
+              </div>
+            </details>
           </form>
         </section>
 
         <section class="casePanel casePanelWide">
-          <div class="panelTitle">全局内邮</div>
-          <div id="globalMailList" class="entityList empty">暂无内邮</div>
+          <div class="panelTitle">全局案卷消息</div>
+          <div id="globalMailList" class="entityList empty">暂无案卷消息</div>
         </section>
       </main>
     </div>
