@@ -122,7 +122,10 @@
 
 .caseFormGrid input,
 .caseFormGrid textarea,
-.caseStack input {
+.caseFormGrid select,
+.caseStack input,
+.caseStack textarea,
+.caseStack select {
   width: 100%;
   padding: 12px 14px;
   background: var(--surface-2);
@@ -130,6 +133,19 @@
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font: inherit;
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base), color var(--transition-base);
+}
+
+.caseFormGrid input:focus-visible,
+.caseFormGrid textarea:focus-visible,
+.caseFormGrid select:focus-visible,
+.caseStack input:focus-visible,
+.caseStack textarea:focus-visible,
+.caseStack select:focus-visible {
+  outline: none;
+  background: var(--surface-1);
+  border-color: var(--accent-primary);
+  box-shadow: var(--focus-ring);
 }
 
 .caseFormGrid textarea {

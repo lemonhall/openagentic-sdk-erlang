@@ -20,6 +20,7 @@ const ui = {
   btnActivateTask: el("btnActivateTask"),
   taskGovernanceLink: el("taskGovernanceLink"),
   taskDetailHint: el("taskDetailHint"),
+  taskPrimaryPathHint: el("taskPrimaryPathHint"),
   backToCase: el("backToCase"),
 };
 
@@ -192,6 +193,18 @@ function renderNextAction(action) {
   `;
 }
 
+function taskPrimaryPathHint(detail) {
+  const status = detail?.task?.state?.status || "";
+  const auth = detail?.authorization?.status || status;
+  if (auth === "awaiting_credentials" || auth === "reauthorization_required" || auth === "credential_expired") {
+    return "任务详情优先：先在此页补权并确认授权缺口，处理完再决定是否回治理会话。";
+  }
+  if (auth === "ready_to_activate") {
+    return "任务详情优先：先在此页确认差异与授权已齐备，再执行激活或进入治理。";
+  }
+  return "任务详情优先：先在此页确认状态、差异与授权，再决定是否进入治理会话。";
+}
+
 function taskPageSummary(detail) {
   const status = detail?.task?.state?.status || "";
   const auth = detail?.authorization?.status || status;
@@ -271,6 +284,9 @@ function syncTaskShell(detail) {
   }
   if (ui.taskPageSummary) {
     ui.taskPageSummary.textContent = taskPageSummary(detail);
+  }
+  if (ui.taskPrimaryPathHint) {
+    ui.taskPrimaryPathHint.textContent = taskPrimaryPathHint(detail);
   }
   renderNextAction(deriveNextAction(detail));
 }

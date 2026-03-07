@@ -14,7 +14,7 @@
         <nav class="topnav" aria-label="一级导航">
           <a class="btn" href="/">Workflow</a>
           <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
-          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox <span class="navUnreadBadge" id="inboxUnreadBadge" hidden>0</span></a>
         </nav>
         <div class="subtitle">Cases：从已完成 Workflow 立案，并处理候选与正式任务。</div>
       </header>
@@ -204,5 +204,6 @@
     </div>
 
     <script src="/assets/case-governance.js"></script>
+      <script src="/assets/topbar.js"></script>
   </body>
 </html>

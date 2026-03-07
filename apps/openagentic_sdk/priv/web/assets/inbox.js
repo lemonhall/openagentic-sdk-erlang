@@ -5,7 +5,10 @@ const ui = {
   inboxStatus: el("inboxStatus"),
   globalMailList: el("globalMailList"),
   inboxHint: el("inboxHint"),
+  inboxReturnLink: el("inboxReturnLink"),
 };
+
+const searchParams = new URLSearchParams(window.location.search);
 
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -47,6 +50,43 @@ function setHint(text, isError = false) {
 
 function currentStatus() {
   return (ui.inboxStatus?.value || "all").trim() || "all";
+}
+
+
+function queryValue(...names) {
+  for (const name of names) {
+    const value = searchParams.get(name);
+    if (value && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function safeReturnTarget() {
+  const value = queryValue("return_to");
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "";
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.origin !== window.location.origin) return "";
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "";
+  }
+}
+
+function returnLabel() {
+  return queryValue("return_label") || "上一级";
+}
+
+function syncReturnLink() {
+  if (!ui.inboxReturnLink) return;
+  const href = safeReturnTarget();
+  if (!href) {
+    ui.inboxReturnLink.classList.add("isHidden");
+    return;
+  }
+  ui.inboxReturnLink.href = href;
+  ui.inboxReturnLink.textContent = `返回：${returnLabel()}`;
+  ui.inboxReturnLink.classList.remove("isHidden");
 }
 
 function renderMailList(items) {
@@ -118,4 +158,5 @@ ui.globalMailList?.addEventListener("click", async (event) => {
   }
 });
 
+syncReturnLink();
 void loadInbox();

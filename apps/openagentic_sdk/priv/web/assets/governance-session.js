@@ -1,4 +1,4 @@
-const el = (id) => document.getElementById(id);
+﻿const el = (id) => document.getElementById(id);
 
 const ui = {
   governanceSubtitle: el("governanceSubtitle"),
@@ -437,7 +437,7 @@ function deriveGovernanceNextAction(detail = null) {
       body: "当前任务需要有效授权；先补齐绑定，再回到治理或激活。",
       buttons: [
         { type: "link", href: "#governanceAuthorizationPanel", label: "先补权", primary: true },
-        { type: "link", href: taskDetailHref(), label: "查看任务详情" },
+        { type: "link", href: taskDetailHref(), label: "返回任务详情" },
       ],
     };
   }
@@ -712,6 +712,7 @@ function applyContext() {
   syncGovernanceShell(null);
   if (ui.taskDetailLink) {
     ui.taskDetailLink.href = taskDetailHref();
+    ui.taskDetailLink.textContent = "\u8fd4\u56de\u4efb\u52a1\u8be6\u60c5";
   }
   if (taskId) {
     setRevisionEnabled(true);
@@ -891,3 +892,5 @@ async function init() {
 }
 
 void init();
+
+

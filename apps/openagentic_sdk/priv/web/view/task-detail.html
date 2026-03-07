@@ -14,7 +14,7 @@
         <nav class="topnav" aria-label="一级导航">
           <a class="btn" href="/">Workflow</a>
           <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
-          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox <span class="navUnreadBadge" id="inboxUnreadBadge" hidden>0</span></a>
         </nav>
         <div class="subtitle">任务详情：看清当前状态、版本差异与授权结果，再决定下一步。</div>
         <a class="btn" id="backToCase" href="/view/cases.html">返回当前案卷</a>
@@ -31,6 +31,7 @@
                 此页的主任务是判断当前任务状态：先看版本差异和授权结果，再决定是补权、激活，还是继续治理。
               </div>
               <div class="hint" id="taskDetailHint">请先加载任务详情，再按页面提示处理当前任务。</div>
+              <div class="hint" id="taskPrimaryPathHint">任务详情优先：先在此页确认状态、差异与授权，再决定是否进入治理会话。</div>
             </div>
             <aside class="caseActionCard" id="taskNextAction">
               <div class="caseActionLabel">下一步</div>
@@ -155,5 +156,7 @@
     </div>
 
     <script src="/assets/task-detail.js"></script>
+      <script src="/assets/topbar.js"></script>
   </body>
 </html>
+

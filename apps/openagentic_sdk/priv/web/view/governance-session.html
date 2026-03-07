@@ -14,7 +14,7 @@
         <nav class="topnav" aria-label="一级导航">
           <a class="btn" href="/">Workflow</a>
           <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
-          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox <span class="navUnreadBadge" id="inboxUnreadBadge" hidden>0</span></a>
         </nav>
         <div class="subtitle" id="governanceSubtitle">治理会话：围绕当前候选或正式任务继续对话、修订与补权。</div>
         <a class="btn" id="backToCase" href="/view/cases.html">返回当前案卷</a>
@@ -97,7 +97,7 @@
             </label>
             <div class="caseActions span2">
               <button type="submit" class="btn primary">创建新版本</button>
-              <a class="btn" id="taskDetailLink" href="/view/task-detail.html">查看任务详情</a>
+              <a class="btn" id="taskDetailLink" href="/view/task-detail.html">返回任务详情</a>
             </div>
             <div class="hint span2" id="governanceRevisionHint">正式任务治理可在同一条治理会话里沉淀新版本；如需补权，也可继续在本页完成。</div>
           </form>
@@ -168,5 +168,7 @@
     </div>
 
     <script src="/assets/governance-session.js"></script>
+      <script src="/assets/topbar.js"></script>
   </body>
 </html>
+

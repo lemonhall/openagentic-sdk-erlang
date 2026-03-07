@@ -284,7 +284,7 @@ function casePageSummary(data) {
     return "当前主任务：先处理候选审议，再决定哪些任务转正进入长期治理。";
   }
   if (tasks.length) {
-    return "当前主任务：围绕正式任务继续治理，并留意版本差异、授权状态和激活进度。";
+    return "当前主任务：先看任务详情确认状态、差异与授权，再决定是否进入治理会话。";
   }
   if (state.current_summary) {
     return state.current_summary;
@@ -328,11 +328,11 @@ function deriveNextAction(data) {
   const activeTask = tasks[0] || null;
   if (activeTask) {
     return {
-      title: "继续治理",
-      body: "已有正式任务；继续沿用同一条治理线推进。",
+      title: "\u5148\u770b\u4efb\u52a1\u8be6\u60c5",
+      body: "\u5df2\u6709\u6b63\u5f0f\u4efb\u52a1\uff1b\u5148\u786e\u8ba4\u72b6\u6001\u3001\u5dee\u5f02\u4e0e\u6388\u6743\uff0c\u518d\u4ece\u8be6\u60c5\u9875\u8fdb\u5165\u6cbb\u7406\u3002",
       buttons: [
-        { type: "link", href: taskSessionHref(activeTask), label: "继续治理", primary: true },
-        { type: "link", href: taskDetailHref(activeTask), label: "任务详情" },
+        { type: "link", href: taskDetailHref(activeTask), label: "\u5148\u770b\u4efb\u52a1\u8be6\u60c5", primary: true },
+        { type: "link", href: taskSessionHref(activeTask), label: "\u7ee7\u7eed\u6cbb\u7406" },
       ],
     };
   }
@@ -476,18 +476,14 @@ function renderTaskList(tasks) {
       const detailHref = taskDetailHref(task);
       const needsAuthorization = status === "awaiting_credentials" || status === "reauthorization_required" || status === "credential_expired";
       const readyToActivate = status === "ready_to_activate";
+      const primaryLabel = needsAuthorization
+        ? "\u5148\u8865\u6743"
+        : readyToActivate
+          ? "\u6fc0\u6d3b\u524d\u68c0\u67e5"
+          : "\u5148\u770b\u4efb\u52a1\u8be6\u60c5";
       const actions = [
-        needsAuthorization && detailHref
-          ? `<a class="btn primary" href="${escapeHtml(detailHref)}">先补权</a>`
-          : readyToActivate && detailHref
-            ? `<a class="btn primary" href="${escapeHtml(detailHref)}">激活前检查</a>`
-            : sessionHref
-              ? `<a class="btn primary" href="${escapeHtml(sessionHref)}">继续治理</a>`
-              : detailHref
-                ? `<a class="btn primary" href="${escapeHtml(detailHref)}">查看任务详情</a>`
-                : "",
-        sessionHref ? `<a class="btn" href="${escapeHtml(sessionHref)}">打开治理</a>` : "",
-        detailHref ? `<a class="btn" href="${escapeHtml(detailHref)}">任务详情</a>` : "",
+        detailHref ? `<a class="btn primary" href="${escapeHtml(detailHref)}">${escapeHtml(primaryLabel)}</a>` : "",
+        sessionHref ? `<a class="btn" href="${escapeHtml(sessionHref)}">\u7ee7\u7eed\u6cbb\u7406</a>` : "",
       ]
         .filter(Boolean)
         .join("");
@@ -802,3 +798,4 @@ ui.templateList?.addEventListener("click", async (event) => {
 });
 
 void initCasePage();
+

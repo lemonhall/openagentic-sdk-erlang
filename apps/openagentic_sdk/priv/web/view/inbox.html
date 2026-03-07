@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -14,9 +14,10 @@
         <nav class="topnav" aria-label="一级导航">
           <a class="btn" href="/">Workflow</a>
           <a class="btn" href="/view/cases.html">Cases</a>
-          <a class="btn" href="/view/inbox.html" aria-current="page">Inbox</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html" aria-current="page">Inbox <span class="navUnreadBadge" id="inboxUnreadBadge" hidden>0</span></a>
         </nav>
         <div class="subtitle">统一信箱：集中查看全站案卷内邮，并按状态处理。</div>
+        <a class="btn isHidden" id="inboxReturnLink" href="/view/cases.html">返回上一级</a>
       </header>
 
       <main class="caseMain">
@@ -47,5 +48,7 @@
     </div>
 
     <script src="/assets/inbox.js"></script>
+      <script src="/assets/topbar.js"></script>
   </body>
 </html>
+

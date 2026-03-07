@@ -59,6 +59,8 @@
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  --focus-ring: 0 0 0 3px rgba(59, 130, 246, 0.16);
+  --focus-ring-danger: 0 0 0 3px rgba(239, 68, 68, 0.18);
 }
 
 /* ==================== 鍏ㄥ眬鏍峰紡 ==================== */
@@ -79,6 +81,26 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+
+:where(input, textarea, select, .btn):focus-visible {
+  outline: none;
+  border-color: var(--accent-primary);
+  box-shadow: var(--focus-ring);
+}
+
+:where(input, textarea, select):focus-visible {
+  background: var(--surface-1);
+}
+
+.btn:focus-visible {
+  color: var(--text-primary);
+}
+
+.btn.danger:focus-visible {
+  border-color: var(--error);
+  box-shadow: var(--focus-ring-danger);
 }
 
 /* ==================== 甯冨眬 ==================== */
@@ -114,6 +136,32 @@ body {
   border-color: var(--accent-primary);
   color: var(--text-primary);
   box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.12);
+}
+
+.topnav .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.navUnreadBadge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.36);
+  color: #fca5a5;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.navUnreadBadge[hidden] {
+  display: none !important;
 }
 
 .brand {
@@ -211,7 +259,7 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  transition: all var(--transition-base);
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base), transform var(--transition-base);
   cursor: default;
 }
 
@@ -272,7 +320,7 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  transition: all var(--transition-base);
+  transition: background-color var(--transition-base), border-color var(--transition-base), color var(--transition-base), box-shadow var(--transition-base);
 }
 
 .badge[data-badge*="pending"] {
@@ -346,7 +394,7 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  transition: all var(--transition-base);
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
   animation: slideIn 0.3s ease-out;
 }
 
@@ -416,7 +464,7 @@ body {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
 }
 
 .btn:hover {
@@ -476,10 +524,10 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   outline: none;
-  transition: all var(--transition-base);
+  transition: background-color var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base), color var(--transition-base);
 }
 
-.composer input:focus {
+.composer input:focus-visible {
   background: var(--surface-1);
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);

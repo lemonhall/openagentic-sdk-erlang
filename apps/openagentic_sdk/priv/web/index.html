@@ -13,7 +13,7 @@
         <nav class="topnav" aria-label="一级导航">
           <a class="btn" href="/" aria-current="page">Workflow</a>
           <a class="btn" id="navCasesLink" href="/view/cases.html" title="前往 Cases，处理案卷与任务">Cases</a>
-          <a class="btn" href="/view/inbox.html">Inbox</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox <span class="navUnreadBadge" id="inboxUnreadBadge" hidden>0</span></a>
         </nav>
         <div class="subtitle">Workflow 主界面：运行三省六部流程；案卷治理请前往 Cases。</div>
         <div class="status" id="overallStatus">idle</div>
@@ -145,5 +145,6 @@
     </div>
 
     <script src="/assets/app.js"></script>
+      <script src="/assets/topbar.js"></script>
   </body>
 </html>
