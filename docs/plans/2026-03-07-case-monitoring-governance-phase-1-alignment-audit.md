@@ -122,6 +122,28 @@
 
 **Phase 1 核心骨架已实现，但仍需一轮明确的补齐式对齐。**
 
+### 4.3 这份审计结论在施工层面到底意味着什么
+为避免下一轮继续先“补齐审计认知”再开始编码，这里把结论直接翻译成施工语言：
+
+- 已经可以视为“地基已成”的部分：
+  - `workflow_session -> case -> round -> candidate -> task -> task_version` 主链路
+  - 候选抽取、approve/discard、首版任务落盘、任务 workspace 初始化
+  - `review_session_id -> governance_session_id` 直接转正逻辑
+  - 案卷页、治理页、任务详情页这三张基础页面
+  - 第一版 `credential_binding` 对象与任务激活前授权检查
+
+- 下一轮必须围绕现有结构“长出来”的部分：
+  - 治理会话里的版本修订闭环
+  - 模板库 / 模板起草 / 模板实例化审计链
+  - 授权重接驳、轮换与更细粒度审计
+  - 统一信箱模型
+  - `history.jsonl` / 对象注册表 / 乐观并发
+
+- 下一轮不该误判的部分：
+  - 不要把 Phase 2/3/4 的运行、检察、复议能力混入本轮缺口
+  - 不要把“已有字段占位”误判为“制度已经落地”
+  - 不要把“已有页面入口”误判为“完整产品闭环已经完成”
+
 ---
 
 ## 5. Phase 1 DoD 对齐检查
@@ -286,6 +308,21 @@
   - 当前没有显式对象类型注册表。
   - 当前虽然有 `revision` 字段和原子替换写盘，但没有实现设计稿要求的乐观并发校验语义。
 
+### 6.7 当前已经形成的“主真相路径”
+这条路径已经可以当作下一轮施工时的默认认知，不需要再重新梳理：
+
+1. `workflow_session` 作为立案来源真相
+2. `case` 作为长期治理主对象
+3. `deliberation_round` 作为正式朝议与触发来源归档
+4. `monitoring_candidate` 作为候选任务待审对象，并拥有独立 `review_session_id`
+5. `monitoring_task` 作为长期任务真相对象，并沿用 `governance_session_id`
+6. `task_version` 作为冻结版执行定义
+7. `workspaces/<task_id>/TASK.md` 作为任务私有实例工作区起点
+8. `credential_bindings/` 作为任务级授权接驳对象目录
+9. `meta/mail/` 与 `meta/indexes/` 作为第一版通知与派生索引层
+
+下一轮如果需要加新能力，应优先判断“这项能力应该挂到这条真相路径的哪一层”，而不是先新造平行对象。
+
 ---
 
 ## 7. Web 与治理体验对齐情况
@@ -330,6 +367,19 @@
   - 现已新增 `view/task-detail.html`
   - 现已新增 `GET /api/cases/:case_id/tasks/:task_id/detail`
   - 页面已能展示任务定义、版本历史、运行记录空态、交付物空态、授权状态与治理入口
+
+### 7.5 当前 Web 体验的真实边界线
+为了防止下一轮误把“已有页面”理解为“页面能力已经闭环”，这里明确边界：
+
+- 已经具备：
+  - `cases.html`：立案、总览、候选审批、任务入口、案卷内邮
+  - `governance-session.html`：围绕既有 session 继续发治理指令并观察事件流
+  - `task-detail.html`：查看任务定义、版本列表、授权状态、治理入口、运行/交付物空态
+
+- 仍未具备：
+  - 全站统一信箱入口与右上角未读提醒
+  - 在治理页内直接发起“生成新版本 / 版本差异对比 / 整改后再激活”的一体化流转
+  - 真实非空的运行记录、交付物列表与基于它们触发的进一步治理动作
 
 ---
 
@@ -394,6 +444,16 @@
   - 无对象类型注册表
   - 无乐观并发校验协议
 
+### 8.6 明确不应误记为“已经实现”的语义
+以下项目在下一轮讨论时，必须明确视为“尚未完整落地”，避免无效争论：
+
+- `template_ref` 已存在，不等于模板库、模板起草流程、模板实例化制度已存在。
+- `mail-unread.json` 已存在，不等于统一信箱模型、已读归档、全站提醒已存在。
+- `governance-session.html` 已存在，不等于围绕同一治理线的版本修订闭环已存在。
+- `task-detail.html` 已存在，不等于真实运行历史、真实交付物治理链已经存在。
+- `revision` 已存在，不等于乐观并发写入协议已经存在。
+- `credential_binding` 已存在，不等于轮换、失效补录、重授权全流程已经存在。
+
 ---
 
 ## 9. 当前实现可直接复用、不要重做的部分
@@ -440,6 +500,45 @@
 - 补 `已读 / 归档 / 筛选`
 - 为后续异常督办、急报、可复议通知预留统一模型
 
+### 10.6 下一轮直接文件落点（按缺口分组）
+为避免下一轮先花时间重新定位代码入口，这里直接给出推荐落点：
+
+- 治理会话闭环：
+  - 重点先看 `apps/openagentic_sdk/src/openagentic_case_store.erl`
+  - Web 路由与 handler 主要看 `apps/openagentic_sdk/src/openagentic_web.erl`、`apps/openagentic_sdk/src/openagentic_web_api_sessions_query.erl`
+  - 页面与交互主要看 `apps/openagentic_sdk/priv/web/view/governance-session.html`、`apps/openagentic_sdk/priv/web/assets/governance-session.js`、`apps/openagentic_sdk/priv/web/view/task-detail.html`、`apps/openagentic_sdk/priv/web/assets/task-detail.js`
+  - 回归测试主要加在 `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
+
+- 模板制度：
+  - 现阶段模板相关字段都从 `apps/openagentic_sdk/src/openagentic_case_store.erl` 进入对象图
+  - 若需把模板库做成独立对象，应新增同家族存储模块，不要把模板制度直接堆进 Web handler
+  - 回归测试仍应以 `apps/openagentic_sdk/test/openagentic_case_store_test.erl` 为主入口
+
+- 授权接驳分轨：
+  - 重点文件是 `apps/openagentic_sdk/src/openagentic_case_store.erl`
+  - Web 层配套是 `apps/openagentic_sdk/src/openagentic_web_api_task_credential_bindings.erl` 与 `apps/openagentic_sdk/src/openagentic_web_api_tasks_activate.erl`
+  - 页面配套是 `apps/openagentic_sdk/priv/web/assets/task-detail.js`
+  - 测试入口是 `apps/openagentic_sdk/test/openagentic_case_store_test.erl` 与 `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
+
+- 统一信箱与消息模型：
+  - 当前案卷页入口在 `apps/openagentic_sdk/priv/web/view/cases.html` 与 `apps/openagentic_sdk/priv/web/assets/case-governance.js`
+  - 路由总入口在 `apps/openagentic_sdk/src/openagentic_web.erl`
+  - 底层消息与索引仍先落在 `apps/openagentic_sdk/src/openagentic_case_store.erl`
+
+- 审计硬化：
+  - 先在 `apps/openagentic_sdk/src/openagentic_case_store.erl` 补 `history.jsonl`、对象注册表、并发写入协议
+  - 再用 `apps/openagentic_sdk/test/openagentic_case_store_test.erl` 做对象级回归
+
+### 10.7 如果下一轮被定义为“Phase 1 对齐收口轮”，完成即停判据
+下一轮不应再以“感觉差不多”收尾；如果目标是把 Phase 1 真正收口，至少应满足以下判据：
+
+1. 能围绕同一条 `governance_session_id` 对正式任务继续治理，并形成新的 `task_version` 或明确的版本修订动作沉淀。
+2. 模板库不再只是 `template_ref` 字段占位，而是具备模板对象、引用关系和实例化审计链。
+3. `credential_binding` 不再只支持首次接驳，还支持至少一版明确的失效补录 / 重授权语义。
+4. Web 侧出现统一信箱入口，而不再仅有案卷页内的 `mailList`。
+5. 底层落盘补上 `history.jsonl`、对象类型注册表与乐观并发校验中的至少最小闭环。
+6. `rebar3 eunit` 继续通过，且新增能力有对应 EUnit / Web API 测试覆盖。
+
 ---
 
 ## 11. 验证结论
@@ -449,6 +548,7 @@
 - 命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit`
 - 时间：2026-03-07
 - 结果：`187 tests, 0 failures`
+- 补充说明：当前命令尾部还会额外打印一段与 `otp_release` eval 相关的噪音输出，但 `LASTEXITCODE = 0`；本次审计按测试结果成功处理，不把这段尾噪误判为 Phase 1 缺口。
 
 这说明当前 Phase 1 已落地骨架在仓内是稳定可测的；但“测试通过”不等于“已完全对齐设计稿”。
 
@@ -471,3 +571,23 @@
   - `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
 
 这样才能避免“以为没做，其实已经做了”和“以为做完了，其实只做了一半”这两种常见返工。
+
+---
+
+## 13. 能力-结论-证据速查表
+
+| 能力项 | 当前判定 | 直接证据 |
+| --- | --- | --- |
+| 从已完成 workflow session 立案 | 已对齐 | `openagentic_case_store.erl`、`openagentic_web_api_cases_create.erl`、`openagentic_case_store_test.erl` |
+| 自动 / 手动抽取候选任务 | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
+| approve / discard 候选 | 已对齐 | `openagentic_web_api_candidates_approve.erl`、`openagentic_web_api_candidates_discard.erl`、相关 EUnit |
+| 候选转正式任务并生成首版 `task_version` | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
+| `review_session_id -> governance_session_id` 转正 | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
+| 聊天式治理页入口 | 部分对齐 | `view/governance-session.html`、`governance-session.js`、`openagentic_web_api_sessions_query.erl` |
+| 任务详情页 | 已对齐 | `view/task-detail.html`、`task-detail.js`、`openagentic_web_api_tasks_detail.erl` |
+| 任务授权接驳第一版 | 部分对齐 | `openagentic_case_store.erl`、`openagentic_web_api_task_credential_bindings.erl`、`openagentic_web_api_tasks_activate.erl` |
+| 模板制度 | 部分对齐 | 仅有 `template_ref` / `derived_from_template_ref` 字段，占位多于制度 |
+| 统一信箱模型 | 未对齐 | 当前仅 `cases.html` 内 `mailList` 与 `mail-unread.json` |
+| 审计硬化 | 未对齐 | 仅有 `revision` 与原子写盘，无 `history.jsonl` / 注册表 / 乐观并发 |
+
+这个表的用处只有一个：下一轮先扫这一节，再决定开工顺序；不要再重复做一轮“到底哪些已经有了”的认知体操。
