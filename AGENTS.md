@@ -166,6 +166,13 @@ Do not read, print, or commit real `.env` contents into the repo, tests, or logs
   - Do instead: ask before `Remove-Item -Recurse -Force`, mass deletes, or directory rewrites.
   - Verify: user confirmation exists in chat history when a destructive action is required.
 
+- Do not rewrite UTF-8 repo files through Windows PowerShell 5.1 text output primitives.
+  - Why: Codex shell invocations can land on `powershell.exe` 5.1 even when PowerShell 7 is installed. In that mode, `Set-Content` writes ACP/ANSI for new files, `>` / `Out-File` write UTF-16LE, and piping text into `python -` is constrained by `$OutputEncoding` (observed `us-ascii`). This corrupts UTF-8 Chinese text and shows up as mojibake, `??`, BOMs, or NUL bytes.
+  - Do instead: prefer `pwsh.exe` for text-writing tasks, or use Python `Path.read_text(..., encoding='utf-8')` and `Path.write_text(..., encoding='utf-8')` with explicit newline handling.
+  - Do instead: keep shell-side scripts ASCII-only when launching Python from PowerShell; use Unicode escapes or a temporary `.py` file instead of piping non-ASCII source text through PowerShell here-strings or pipelines.
+  - Do instead: avoid `Set-Content`, `Add-Content`, `Out-File`, `>`, and `>>` for source, HTML/CSS/JS, Markdown, or docs edits unless encoding is explicitly controlled and then verified.
+  - Verify: inspect `git diff --text -- <file>` and, if needed, raw bytes to confirm there is no UTF-16 BOM, no NUL bytes, and no unexpected `?` replacements.
+
 - Do not claim behavior is implemented just because a plan or docs mention it.
   - Why: this repo contains forward-looking plans under `docs/plans/` that can drift ahead of code.
   - Do instead: scan `apps/openagentic_sdk/src/`, `apps/openagentic_sdk/test/`, and run at least `rebar3 eunit` before updating docs.
