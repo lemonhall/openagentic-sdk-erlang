@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenAgentic - 治理会话</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" href="/assets/case-governance.css" />
+  </head>
+  <body>
+    <div class="app caseApp">
+      <header class="topbar">
+        <div class="brand">OpenAgentic</div>
+        <div class="subtitle" id="governanceSubtitle">聊天式治理 / 审议会话</div>
+        <a class="btn" id="backToCase" href="/view/cases.html">返回案卷</a>
+        <a class="btn" href="/">Workflow</a>
+      </header>
+
+      <main class="caseMain">
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">会话上下文</div>
+          <div class="caseStack">
+            <div class="overviewMeta">Session ID：<code id="governanceSessionId"></code></div>
+            <div class="overviewMeta">对象定位：<span id="governanceObjectRef">未指定</span></div>
+            <div class="hint" id="governanceContextHint">
+              这里承接候选任务审议与正式任务治理。若候选已转正，应继续沿用同一条治理会话，而不是重新开新线。
+            </div>
+          </div>
+        </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">聊天式治理</div>
+          <div id="governanceTranscript" class="entityList empty">暂无治理会话事件，可直接发起治理指令。</div>
+        </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">发起治理指令</div>
+          <form id="governanceSessionForm" class="caseFormGrid">
+            <label class="span2">
+              <span>治理指令</span>
+              <textarea id="governancePrompt" rows="4" placeholder="例如：请复盘当前任务定义，并指出是否需要调整目标、频率或报告结构。" required></textarea>
+            </label>
+            <div class="caseActions span2">
+              <button type="submit" class="btn primary">继续对话</button>
+            </div>
+            <div class="hint span2" id="governanceStatusHint">请输入治理指令，围绕当前候选或正式任务继续讨论。</div>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/governance-session.js"></script>
+  </body>
+</html>

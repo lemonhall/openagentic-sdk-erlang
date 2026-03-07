@@ -64,6 +64,57 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function governanceSessionHref({ sid, caseId, candidateId, taskId, title, mode }) {
+  if (!sid) return "";
+  const params = new URLSearchParams();
+  params.set("sid", sid);
+  if (caseId) params.set("case_id", caseId);
+  if (candidateId) params.set("candidate_id", candidateId);
+  if (taskId) params.set("task_id", taskId);
+  if (title) params.set("title", title);
+  if (mode) params.set("mode", mode);
+  return `/view/governance-session.html?${params.toString()}`;
+}
+
+function sessionMetaLine(label, sid) {
+  if (!sid) return "";
+  return `<div class="entityMeta">${escapeHtml(label)}：<code>${escapeHtml(sid)}</code></div>`;
+}
+
+function candidateSessionButton(candidate) {
+  const header = candidate?.header || {};
+  const links = candidate?.links || {};
+  const state = candidate?.state || {};
+  const sid = links.review_session_id || "";
+  const caseId = ui.caseIdInput.value.trim() || links.case_id || "";
+  const href = governanceSessionHref({
+    sid,
+    caseId,
+    candidateId: header.id || "",
+    title: (candidate?.spec?.title || header.id || "候选任务") + " / 审议会话",
+    mode: state.status === "approved" ? "governance" : "candidate_review",
+  });
+  if (!href) return "";
+  const label = state.status === "approved" ? "继续治理" : "进入审议";
+  return `<a class="btn" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+}
+
+function taskSessionButton(task) {
+  const header = task?.header || {};
+  const links = task?.links || {};
+  const sid = links.governance_session_id || "";
+  const caseId = ui.caseIdInput.value.trim() || links.case_id || "";
+  const href = governanceSessionHref({
+    sid,
+    caseId,
+    taskId: header.id || "",
+    title: (task?.spec?.title || header.id || "正式任务") + " / 治理会话",
+    mode: "governance",
+  });
+  if (!href) return "";
+  return `<a class="btn" href="${escapeHtml(href)}">打开治理</a>`;
+}
+
 function renderOverview(data) {
   const caseObj = data?.case || null;
   if (!caseObj) {
@@ -88,9 +139,13 @@ function renderOverview(data) {
 function actionButtons(candidate) {
   const id = candidate?.header?.id || "";
   const status = candidate?.state?.status || "";
-  if (!id || status === "approved" || status === "discarded") return "";
+  const sessionButton = candidateSessionButton(candidate);
+  if (!id || status === "approved" || status === "discarded") {
+    return sessionButton ? `<div class="entityActions">${sessionButton}</div>` : "";
+  }
   return `
     <div class="entityActions">
+      ${sessionButton}
       <button class="btn primary" data-action="approve" data-id="${escapeHtml(id)}">生效</button>
       <button class="btn danger" data-action="discard" data-id="${escapeHtml(id)}">废弃</button>
     </div>
@@ -107,6 +162,7 @@ function renderCandidateList(candidates) {
   ui.candidateList.innerHTML = candidates
     .map((candidate) => {
       const header = candidate.header || {};
+      const links = candidate.links || {};
       const spec = candidate.spec || {};
       const state = candidate.state || {};
       return `
@@ -115,6 +171,7 @@ function renderCandidateList(candidates) {
             <div>
               <div class="entityTitle">${escapeHtml(spec.title || header.id || "未命名候选任务")}</div>
               <div class="entityMeta">${escapeHtml(header.id || "")}</div>
+              ${sessionMetaLine("审议会话", links.review_session_id || "")}
             </div>
             <span class="statusChip">${escapeHtml(state.status || "")}</span>
           </div>
@@ -136,6 +193,7 @@ function renderTaskList(tasks) {
   ui.taskList.innerHTML = tasks
     .map((task) => {
       const header = task.header || {};
+      const links = task.links || {};
       const spec = task.spec || {};
       const state = task.state || {};
       return `
@@ -144,10 +202,12 @@ function renderTaskList(tasks) {
             <div>
               <div class="entityTitle">${escapeHtml(spec.title || header.id || "未命名正式任务")}</div>
               <div class="entityMeta">${escapeHtml(header.id || "")}</div>
+              ${sessionMetaLine("治理会话", links.governance_session_id || "")}
             </div>
             <span class="statusChip">${escapeHtml(state.status || "")}</span>
           </div>
           <div class="entityBody">${escapeHtml(spec.mission_statement || spec.objective || "")}</div>
+          <div class="entityActions">${taskSessionButton(task)}</div>
         </article>
       `;
     })

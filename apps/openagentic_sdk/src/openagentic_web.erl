@@ -53,6 +53,7 @@ start(Opts0) ->
         {"/api/workflows/cancel", openagentic_web_api_workflows_cancel, State},
         {"/api/workspace/read", openagentic_web_api_workspace_read, State},
         {"/api/questions/answer", openagentic_web_api_questions_answer, State},
+        {"/api/sessions/:sid/query", openagentic_web_api_sessions_query, State},
         {"/api/sessions/:sid/events", openagentic_web_api_sse, State},
         {"/api/health", openagentic_web_api_health, State},
         {"/view/[...]", openagentic_web_static, State}

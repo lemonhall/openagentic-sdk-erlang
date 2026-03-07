@@ -22,7 +22,7 @@ As of **March 7, 2026**, this repository already includes these working pieces:
 - **Subagent task tool** with built-in `explore` and `research` agents
 - **Workflow engine** driven by JSON DSL, including guards, output contracts, per-step tool policies, fanout/join, retry policy, and resumable step sessions
 - **Workflow manager** with queued continue, cancel, watchdog stall detection, and `resumed_from_stalled` status
-- **Web UI / local control plane** with workflow start/continue/cancel APIs, question answering, workspace read, health check, and SSE event streaming
+- **Web UI / local control plane** with workflow start/continue/cancel APIs, question answering, workspace read, session chat continuation, health check, and SSE event streaming
 - **Hooks and tool output artifacts** (`hook.event`, `HookBlocked`, overflow-to-artifact wrapper)
 - **WebFetch safety rules**: blocks localhost/private-style targets and normalizes output as markdown / text / clean HTML
 - **WebSearch backends**: Tavily when configured, DuckDuckGo HTML fallback otherwise
@@ -30,7 +30,7 @@ As of **March 7, 2026**, this repository already includes these working pieces:
 
 Fresh local verification from this workspace:
 
-- `rebar3 eunit` -> **175 tests, 0 failures** on **March 7, 2026**
+- `rebar3 eunit` -> **185 tests, 0 failures** on **March 7, 2026**
 
 ## Repo layout
 
@@ -229,12 +229,15 @@ Current local web server routes:
 - `POST /api/workflows/cancel`
 - `POST /api/workspace/read`
 - `POST /api/questions/answer`
+- `POST /api/sessions/:sid/query` -> continue an existing governance/runtime session in place
 - `GET /api/sessions/:sid/events` -> SSE session tailing
 - `GET /api/health`
 
 The web UI is intentionally local-first and reads from session files rather than a separate database.
 
 Phase 1 case governance metadata is persisted under `cases/<case_id>/...`, while transcripts continue to live under `sessions/<session_id>/...`.
+
+The case governance view now exposes a chat-style governance entry for both `review_session_id` and `governance_session_id` via `view/governance-session.html`, so candidate review can continue on the same long-lived session after promotion.
 
 ## Tools and safety behavior
 

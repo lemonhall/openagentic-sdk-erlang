@@ -22,7 +22,7 @@
 - **子 agent 工具**：`Task` 已内置 `explore` / `research` 两个 subagent
 - **Workflow engine**：JSON DSL 驱动，支持 guards、output contracts、每步 tool policy、fanout/join、retry policy、step session 恢复
 - **Workflow manager**：支持 continue 排队、cancel、watchdog 检测 stalled、`resumed_from_stalled`
-- **本地 Web 控制面**：支持 workflow start/continue/cancel、问题回答、workspace 读取、健康检查、SSE 事件流
+- **本地 Web 控制面**：支持 workflow start/continue/cancel、问题回答、workspace 读取、会话原地续聊、健康检查、SSE 事件流
 - **Hooks 与 tool output artifacts**：支持 `hook.event`、`HookBlocked`、大输出外置 artifact
 - **WebFetch 安全策略**：阻断 localhost / 私网风格目标，并输出 `markdown` / `text` / `clean_html`
 - **WebSearch 后端**：优先 Tavily；没配 key 时回退到 DuckDuckGo HTML 抓取
@@ -30,7 +30,7 @@
 
 本地刚跑过的验证结果：
 
-- `rebar3 eunit` -> **175 tests, 0 failures**（验证时间：**2026-03-07**）
+- `rebar3 eunit` -> **185 tests, 0 failures**（验证时间：**2026-03-07**）
 
 ## 仓库结构
 
@@ -229,12 +229,15 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 - `POST /api/workflows/cancel`
 - `POST /api/workspace/read`
 - `POST /api/questions/answer`
+- `POST /api/sessions/:sid/query` -> 围绕既有治理 / runtime session 原地继续对话
 - `GET /api/sessions/:sid/events` -> SSE 追踪 session 事件
 - `GET /api/health`
 
 这套 Web UI 是 local-first 的，不依赖额外数据库，而是直接基于 session 文件工作。
 
 本次 Phase 1 新增的治理元数据落在 `cases/<case_id>/...`，而会话 transcript 仍继续保留在 `sessions/<session_id>/...`。
+
+现在案卷治理页已经把 `review_session_id` / `governance_session_id` 接成可打开的聊天式治理入口：通过 `view/governance-session.html` 可以继续围绕同一条治理线审议候选、跟进生效后的正式任务。
 
 ## 工具与安全行为
 
