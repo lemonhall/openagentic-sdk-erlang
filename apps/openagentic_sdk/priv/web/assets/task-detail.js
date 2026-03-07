@@ -1,6 +1,10 @@
 const el = (id) => document.getElementById(id);
 
 const ui = {
+  taskBreadcrumb: el("taskBreadcrumb"),
+  taskPageTitle: el("taskPageTitle"),
+  taskPageSummary: el("taskPageSummary"),
+  taskNextAction: el("taskNextAction"),
   taskSummary: el("taskSummary"),
   taskVersions: el("taskVersions"),
   taskVersionDiff: el("taskVersionDiff"),
@@ -83,28 +87,233 @@ function governanceHref(task) {
   return `/view/governance-session.html?${search.toString()}`;
 }
 
+function actionItemsMarkup(actions = []) {
+  return (Array.isArray(actions) ? actions : [])
+    .filter(Boolean)
+    .map((action) => {
+      const klass = action.primary ? "btn primary" : "btn";
+      if (action.type === "button") {
+        return `<button type="button" class="${klass}" data-task-action="${escapeHtml(action.action || "")}">${escapeHtml(action.label || "Open")}</button>`;
+      }
+      return `<a class="${klass}" href="${escapeHtml(action.href || "#")}">${escapeHtml(action.label || "Open")}</a>`;
+    })
+    .join("");
+}
+
+function emptyStateMarkup({ label = "Empty", title = "No Content", body = "", actions = [] } = {}) {
+  const actionsHtml = actionItemsMarkup(actions);
+  return `
+    <div class="emptyState">
+      <div class="emptyStateLabel">${escapeHtml(label)}</div>
+      <div class="emptyStateTitle">${escapeHtml(title)}</div>
+      <div class="emptyStateBody">${escapeHtml(body)}</div>
+      ${actionsHtml ? `<div class="emptyStateActions">${actionsHtml}</div>` : ""}
+    </div>
+  `;
+}
+
+function setEmptyState(target, { layout = "entityList empty", label = "Empty", title = "No Content", body = "", actions = [] } = {}) {
+  if (!target) return;
+  target.className = layout;
+  target.innerHTML = emptyStateMarkup({ label, title, body, actions });
+}
+
+function summaryMetaMarkup(items = []) {
+  const validItems = (Array.isArray(items) ? items : []).filter((item) => item && item.label && item.value);
+  if (!validItems.length) return "";
+  return `
+    <dl class="objectSummaryMeta">
+      ${validItems
+        .map(
+          (item) => `
+            <div class="objectSummaryMetaItem">
+              <dt>${escapeHtml(item.label)}</dt>
+              <dd>${escapeHtml(item.value)}</dd>
+            </div>
+          `
+        )
+        .join("")}
+    </dl>
+  `;
+}
+
+function summaryCardMarkup({ title = "Untitled", status = "", summary = "", actions = "", meta = [], compact = true } = {}) {
+  const compactClass = compact ? " compact" : "";
+  return `
+    <article class="entityCard objectSummaryCard${compactClass}">
+      <div class="entityHeader">
+        <div class="entityTitle">${escapeHtml(title)}</div>
+        ${status ? `<span class="statusChip">${escapeHtml(status)}</span>` : ""}
+      </div>
+      <div class="objectSummarySummary">${escapeHtml(summary || "No summary")}</div>
+      ${actions ? `<div class="entityActions">${actions}</div>` : ""}
+      ${summaryMetaMarkup(meta)}
+    </article>
+  `;
+}
+
+function overviewFactsMarkup(items = []) {
+  const validItems = (Array.isArray(items) ? items : []).filter((item) => item && item.label && item.value != null && item.value !== "");
+  if (!validItems.length) return "";
+  return `
+    <div class="overviewFacts">
+      ${validItems
+        .map(
+          (item) => `
+            <div class="overviewFact">
+              <div class="overviewFactLabel">${escapeHtml(item.label)}</div>
+              <div class="overviewFactValue">${escapeHtml(String(item.value))}</div>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderNextAction(action) {
+  if (!ui.taskNextAction) return;
+  const buttons = Array.isArray(action?.buttons) ? action.buttons : [];
+  ui.taskNextAction.innerHTML = `
+    <div class="caseActionLabel">下一步</div>
+    <div class="caseActionTitle">${escapeHtml(action?.title || "先查看任务状态")}</div>
+    <div class="caseActionBody">${escapeHtml(action?.body || "先看当前任务状态，再决定下一步。")}</div>
+    <div class="caseActionButtons">
+      ${buttons
+        .map((button) => {
+          const klass = button.primary ? "btn primary" : "btn";
+          if (button.type === "button") {
+            return `<button type="button" class="${klass}" data-task-action="${escapeHtml(button.action || "")}">${escapeHtml(button.label || "操作")}</button>`;
+          }
+          return `<a class="${klass}" href="${escapeHtml(button.href || "#")}">${escapeHtml(button.label || "查看")}</a>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function taskPageSummary(detail) {
+  const status = detail?.task?.state?.status || "";
+  const auth = detail?.authorization?.status || status;
+  const diff = detail?.latest_version_diff || {};
+  if (auth === "awaiting_credentials" || auth === "reauthorization_required" || auth === "credential_expired") {
+    return "当前主任务：先补齐授权，再回来确认任务是否具备重新激活条件。";
+  }
+  if (auth === "ready_to_activate") {
+    return "当前主任务：先看清差异与授权结果，再激活任务。";
+  }
+  if (diff.to_version_id) {
+    return "当前主任务：先看最新版本差异与授权影响，再决定是否继续治理。";
+  }
+  return "当前主任务：看清当前状态、版本差异与授权结果，再决定是否进入治理。";
+}
+
+function deriveNextAction(detail) {
+  const task = detail?.task || {};
+  const status = task?.state?.status || "";
+  const auth = detail?.authorization?.status || status;
+  const diff = detail?.latest_version_diff || {};
+  const governance = governanceHref(task);
+
+  if (auth === "awaiting_credentials" || auth === "reauthorization_required" || auth === "credential_expired") {
+    return {
+      title: "先补权",
+      body: "当前任务缺少有效授权；先在本页补齐绑定，再决定是否重新激活。",
+      buttons: [
+        { type: "link", href: "#taskBindingPanel", label: "先补权", primary: true },
+        { type: "link", href: "#taskVersionDiffPanel", label: "查看差异" },
+      ],
+    };
+  }
+
+  if (auth === "ready_to_activate") {
+    return {
+      title: "激活任务",
+      body: "授权材料已齐备；确认差异无误后，可以直接激活任务。",
+      buttons: [
+        { type: "button", action: "activate-task", label: "激活任务", primary: true },
+        { type: "link", href: "#taskVersionDiffPanel", label: "查看差异" },
+      ],
+    };
+  }
+
+  if (diff.to_version_id) {
+    return {
+      title: "先看版本差异",
+      body: "当前任务已有最新修订；先确认差异，再决定是否继续治理。",
+      buttons: [
+        { type: "link", href: "#taskVersionDiffPanel", label: "查看差异", primary: true },
+        ...(governance ? [{ type: "link", href: governance, label: "打开治理" }] : []),
+      ],
+    };
+  }
+
+  return {
+    title: "查看状态结果",
+    body: "当前任务已可正常查看；先看状态和授权结果，再决定是否进入治理。",
+    buttons: [
+      { type: "link", href: "#taskSummaryPanel", label: "查看状态", primary: true },
+      ...(governance ? [{ type: "link", href: governance, label: "打开治理" }] : []),
+    ],
+  };
+}
+
+function syncTaskShell(detail) {
+  const task = detail?.task || {};
+  const header = task.header || {};
+  const spec = task.spec || {};
+  const title = spec.title || header.id || "未命名任务";
+  if (ui.taskBreadcrumb) {
+    ui.taskBreadcrumb.textContent = `Cases / ${caseId() || "Case"} / ${title}`;
+  }
+  if (ui.taskPageTitle) {
+    ui.taskPageTitle.textContent = title;
+  }
+  if (ui.taskPageSummary) {
+    ui.taskPageSummary.textContent = taskPageSummary(detail);
+  }
+  renderNextAction(deriveNextAction(detail));
+}
+
 function renderSummary(detail) {
   const task = detail?.task || {};
   const header = task.header || {};
   const spec = task.spec || {};
   const state = task.state || {};
+  if (!header.id && !spec.title) {
+    setEmptyState(ui.taskSummary, {
+      layout: "overviewCard empty",
+      label: "任务状态",
+      title: "暂无任务上下文",
+      body: "请返回案卷工作台重新选择任务。",
+    });
+    syncTaskShell(detail);
+    return;
+  }
   ui.taskSummary.className = "overviewCard";
   ui.taskSummary.innerHTML = `
     <div class="overviewTitle">${escapeHtml(spec.title || header.id || "未命名任务")}</div>
-    <div class="overviewMeta">任务 ID：<code>${escapeHtml(header.id || "")}</code></div>
-    <div class="overviewMeta">状态：${escapeHtml(state.status || "")}</div>
-    <div class="overviewMeta">健康：${escapeHtml(state.health || "")}</div>
-    <div class="overviewMeta">治理会话：<code>${escapeHtml(task?.links?.governance_session_id || "")}</code></div>
-    <div class="overviewSummary">${escapeHtml(spec.mission_statement || "")}</div>
+    ${overviewFactsMarkup([
+      { label: "任务 ID", value: header.id || "" },
+      { label: "状态", value: state.status || "" },
+      { label: "健康", value: state.health || "" },
+      { label: "治理会话", value: task?.links?.governance_session_id || "" },
+    ])}
+    <div class="overviewSummary">${escapeHtml(spec.mission_statement || spec.objective || "暂无任务摘要")}</div>
   `;
   ui.taskGovernanceLink.href = governanceHref(task);
   ui.backToCase.href = `/view/cases.html?case_id=${encodeURIComponent(caseId())}`;
+  syncTaskShell(detail);
 }
 
-function renderList(target, items, emptyText, renderer) {
+function renderList(target, items, emptyState, renderer) {
   if (!Array.isArray(items) || !items.length) {
-    target.className = "entityList empty";
-    target.textContent = emptyText;
+    setEmptyState(target, {
+      label: emptyState?.label || "Empty",
+      title: emptyState?.title || "No Content",
+      body: emptyState?.body || "",
+      actions: emptyState?.actions || [],
+    });
     return;
   }
   target.className = "entityList";
@@ -112,23 +321,26 @@ function renderList(target, items, emptyText, renderer) {
 }
 
 function renderVersions(detail) {
-  renderList(ui.taskVersions, detail?.versions || [], "暂无版本历史", (version) => {
-    const header = version.header || {};
-    const state = version.state || {};
-    const spec = version.spec || {};
-    return `
-      <article class="entityCard compact">
-        <div class="entityHeader">
-          <div>
-            <div class="entityTitle">${escapeHtml(header.id || "版本")}</div>
-            <div class="entityMeta">状态：${escapeHtml(state.status || "")}</div>
-          </div>
-          <span class="statusChip">${escapeHtml(state.status || "")}</span>
-        </div>
-        <div class="entityBody">${escapeHtml(spec.objective || "")}</div>
-      </article>
-    `;
-  });
+  renderList(
+    ui.taskVersions,
+    detail?.versions || [],
+    {
+      label: "版本历史",
+      title: "暂无版本历史",
+      body: "如需调整任务定义，可回治理页提交修订。",
+    },
+    (version) => {
+      const header = version.header || {};
+      const state = version.state || {};
+      const spec = version.spec || {};
+      return summaryCardMarkup({
+        title: header.id || "版本",
+        status: state.status || "",
+        summary: spec.objective || spec.summary || "暂无版本摘要",
+        meta: [{ label: "版本 ID", value: header.id || "" }],
+      });
+    }
+  );
 }
 
 function formatInline(value) {
@@ -145,47 +357,43 @@ function renderLatestVersionDiff(detail) {
   const diff = detail?.latest_version_diff || {};
   const changedFields = Array.isArray(diff.changed_fields) ? diff.changed_fields : [];
   if (!diff.to_version_id || !changedFields.length) {
-    ui.taskVersionDiff.className = "entityList empty";
-    ui.taskVersionDiff.textContent = "暂无版本差异";
+    setEmptyState(ui.taskVersionDiff, {
+      label: "版本差异",
+      title: "暂无版本差异",
+      body: "当前还没有最新修订差异，可先查看状态或继续治理。",
+      actions: [{ type: "link", href: "#taskSummaryPanel", label: "看状态", primary: true }],
+    });
     return;
   }
   const cards = [
-    `
-      <article class="entityCard compact">
-        <div class="entityHeader">
-          <div>
-            <div class="entityTitle">${escapeHtml(diff.change_summary || "最新版本修订")}</div>
-            <div class="entityMeta">${escapeHtml(diff.from_version_id || "")} → ${escapeHtml(diff.to_version_id || "")}</div>
-          </div>
-          <span class="statusChip">${escapeHtml(String(diff.changed_field_count || changedFields.length))} 项变更</span>
-        </div>
-        <div class="entityBody">${diff.reauthorization_required ? "本次修订引入了新的授权要求，需补齐后再激活。" : "当前修订未引发新的重授权要求。"}</div>
-      </article>
-    `,
-  ];
-  cards.push(
+    summaryCardMarkup({
+      title: diff.change_summary || "最新版本修订",
+      status: `${String(diff.changed_field_count || changedFields.length)} 项变更`,
+      summary: diff.reauthorization_required ? "本次修订引入了新的授权要求，需补齐后再激活。" : "当前修订未引发新的重授权要求。",
+      meta: [
+        { label: "版本范围", value: `${diff.from_version_id || ""} -> ${diff.to_version_id || ""}` },
+        { label: "授权影响", value: diff.reauthorization_required ? "需重授权" : "无额外要求" },
+      ],
+    }),
     ...changedFields.map((item) => {
       const field = item?.field || "field";
-      const fromValue = formatInline(item?.from);
-      const toValue = formatInline(item?.to);
-      return `
-        <article class="entityCard compact">
-          <div class="entityHeader">
-            <div class="entityTitle">${escapeHtml(field)}</div>
-            <span class="statusChip">已变更</span>
-          </div>
-          <div class="entityBody">from: ${escapeHtml(fromValue || "∅")}<br/>to: ${escapeHtml(toValue || "∅")}</div>
-        </article>
-      `;
-    })
-  );
+      const fromValue = formatInline(item?.from) || "?";
+      const toValue = formatInline(item?.to) || "?";
+      return summaryCardMarkup({
+        title: field,
+        status: "已变更",
+        summary: `from: ${fromValue} -> to: ${toValue}`,
+      });
+    }),
+  ];
   if (Array.isArray(diff.newly_required_slots) && diff.newly_required_slots.length) {
-    cards.push(`
-      <article class="entityCard compact">
-        <div class="entityTitle">新增授权槽位</div>
-        <div class="entityBody">${escapeHtml(diff.newly_required_slots.join(", "))}</div>
-      </article>
-    `);
+    cards.push(
+      summaryCardMarkup({
+        title: "新增授权槽位",
+        status: "auth",
+        summary: diff.newly_required_slots.join(", "),
+      })
+    );
   }
   ui.taskVersionDiff.className = "entityList";
   ui.taskVersionDiff.innerHTML = cards.join("");
@@ -197,33 +405,42 @@ function renderAuthorization(detail) {
   const required = Array.isArray(authorization.required_slots) ? authorization.required_slots : [];
   const missing = Array.isArray(authorization.missing_slots) ? authorization.missing_slots : [];
   const expired = Array.isArray(authorization.expired_slots) ? authorization.expired_slots : [];
+  if (!authorization.status && !required.length && !bindings.length) {
+    setEmptyState(ui.taskAuthorization, {
+      label: "授权结果",
+      title: "暂无授权信息",
+      body: "任务详情加载后，这里会展示必需槽位、缺失项和已有绑定。",
+    });
+    return;
+  }
   const lines = [
-    `<article class="entityCard compact"><div class="entityTitle">授权状态：${escapeHtml(authorization.status || "")}</div><div class="entityBody">必需槽位：${escapeHtml(required.join(", ") || "无")}</div></article>`,
+    summaryCardMarkup({
+      title: `授权状态：${authorization.status || "unknown"}`,
+      status: authorization.status || "",
+      summary: required.length ? `必需槽位：${required.join(", ")}` : "当前没有额外授权要求。",
+    }),
   ];
   if (missing.length) {
-    lines.push(`<article class="entityCard compact"><div class="entityTitle">缺失槽位</div><div class="entityBody">${escapeHtml(missing.join(", "))}</div></article>`);
+    lines.push(summaryCardMarkup({ title: "缺失槽位", status: "missing", summary: missing.join(", ") }));
   }
   if (expired.length) {
-    lines.push(`<article class="entityCard compact"><div class="entityTitle">已过期槽位</div><div class="entityBody">${escapeHtml(expired.join(", "))}</div></article>`);
+    lines.push(summaryCardMarkup({ title: "已过期槽位", status: "expired", summary: expired.join(", ") }));
   }
   const diff = detail?.latest_version_diff || {};
   if (diff.reauthorization_required) {
     const slots = Array.isArray(diff.newly_required_slots) ? diff.newly_required_slots : [];
-    lines.push(`<article class="entityCard compact"><div class="entityTitle">修订后需重授权</div><div class="entityBody">最新版本引入了新的授权要求。${escapeHtml(slots.join(", ") || "请查看缺失槽位")} 需要补齐后再激活。</div></article>`);
+    lines.push(summaryCardMarkup({ title: "修订后需重授权", status: "reauthorize", summary: `需先补齐：${slots.join(", ") || "请查看缺失槽位"}` }));
   }
   lines.push(
     ...bindings.map((binding) => {
       const spec = binding.spec || {};
       const state = binding.state || {};
-      return `
-        <article class="entityCard compact">
-          <div class="entityHeader">
-            <div class="entityTitle">${escapeHtml(spec.slot_name || "未命名槽位")}</div>
-            <span class="statusChip">${escapeHtml(state.status || "")}</span>
-          </div>
-          <div class="entityBody">${escapeHtml(spec.binding_type || "")}${spec.provider ? ` / ${escapeHtml(spec.provider)}` : ""}<br/>${escapeHtml(spec.material_ref || "")}</div>
-        </article>
-      `;
+      return summaryCardMarkup({
+        title: spec.slot_name || "未命名槽位",
+        status: state.status || "",
+        summary: `${spec.binding_type || ""}${spec.provider ? ` / ${spec.provider}` : ""}`,
+        meta: spec.material_ref ? [{ label: "material_ref", value: spec.material_ref }] : [],
+      });
     })
   );
   ui.taskAuthorization.className = "entityList";
@@ -234,11 +451,46 @@ function renderAuthorization(detail) {
 }
 
 function renderRuns(detail) {
-  renderList(ui.taskRuns, detail?.runs || [], "暂无运行记录", () => "");
+  renderList(
+    ui.taskRuns,
+    detail?.runs || [],
+    {
+      label: "运行记录",
+      title: "暂无运行记录",
+      body: "如果任务还未激活，先完成补权或激活。",
+    },
+    (run) => {
+      const header = run?.header || {};
+      const state = run?.state || {};
+      return summaryCardMarkup({
+        title: header.id || "运行记录",
+        status: state.status || "",
+        summary: formatInline(run?.spec || run?.output || run || "") || "暂无运行输出",
+      });
+    }
+  );
 }
 
 function renderArtifacts(detail) {
-  renderList(ui.taskArtifacts, detail?.artifacts || [], "暂无交付物", () => "");
+  renderList(
+    ui.taskArtifacts,
+    detail?.artifacts || [],
+    {
+      label: "交付物",
+      title: "暂无交付物",
+      body: "任务运行后的输出会在这里沉淀。",
+    },
+    (artifact) => {
+      const header = artifact?.header || {};
+      const spec = artifact?.spec || {};
+      return summaryCardMarkup({
+        title: spec.title || header.id || "交付物",
+        status: spec.kind || "artifact",
+        summary: spec.summary || spec.path || formatInline(artifact) || "暂无交付摘要",
+        meta: header.id ? [{ label: "artifact_id", value: header.id }] : [],
+      });
+    }
+  );
 }
 
 let currentDetail = null;
@@ -256,6 +508,18 @@ async function loadDetail() {
   const auth = data?.authorization?.status || status;
   setHint(`当前任务状态：${status}；授权状态：${auth}`);
 }
+
+ui.taskNextAction?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-task-action]");
+  if (!button) return;
+  try {
+    if (button.dataset.taskAction === "activate-task") {
+      ui.btnActivateTask?.click();
+    }
+  } catch (error) {
+    setHint(error.message || String(error), true);
+  }
+});
 
 ui.credentialBindingForm?.addEventListener("submit", async (event) => {
   event.preventDefault();

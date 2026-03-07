@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -16,43 +16,113 @@
           <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
           <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
         </nav>
-        <div class="subtitle">任务详情：查看状态、版本差异与授权结果。</div>
+        <div class="subtitle">任务详情：看清当前状态、版本差异与授权结果，再决定下一步。</div>
         <a class="btn" id="backToCase" href="/view/cases.html">返回当前案卷</a>
       </header>
 
       <main class="caseMain" id="taskDetailView">
         <section class="casePanel casePanelWide">
-          <div class="panelTitle">任务概览</div>
-          <div id="taskSummary" class="overviewCard empty">未指定任务。</div>
+          <div class="panelTitle">Cases / 任务详情</div>
+          <div class="caseHero">
+            <div class="caseHeroMain">
+              <div class="caseBreadcrumb" id="taskBreadcrumb">Cases / Task</div>
+              <div class="caseHeroTitle" id="taskPageTitle">任务详情</div>
+              <div class="caseHeroSummary" id="taskPageSummary">
+                此页的主任务是判断当前任务状态：先看版本差异和授权结果，再决定是补权、激活，还是继续治理。
+              </div>
+              <div class="hint" id="taskDetailHint">请先加载任务详情，再按页面提示处理当前任务。</div>
+            </div>
+            <aside class="caseActionCard" id="taskNextAction">
+              <div class="caseActionLabel">下一步</div>
+              <div class="caseActionTitle">先查看任务状态</div>
+              <div class="caseActionBody">加载详情后，这里会根据任务状态给出明确动作。</div>
+              <div class="caseActionButtons">
+                <a class="btn primary" href="#taskSummaryPanel">查看状态</a>
+                <a class="btn" href="#taskVersionDiffPanel">看版本差异</a>
+              </div>
+            </aside>
+          </div>
         </section>
 
-        <section class="casePanel">
+        <section class="casePanel casePanelWide" id="taskSummaryPanel">
+          <div class="panelTitle">当前任务状态</div>
+          <div class="panelLead">先确认任务当前是否健康、是否缺权，以及它承接的是哪一条治理会话。</div>
+          <div id="taskSummary" class="overviewCard empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">任务状态</div>
+              <div class="emptyStateTitle">未指定任务</div>
+              <div class="emptyStateBody">请先从案卷工作台进入具体任务；进入后，这里会展示状态摘要和治理上下文。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="casePanel" id="taskVersionDiffPanel">
+          <div class="panelTitle">版本差异</div>
+          <div class="panelLead">如果任务经过修订，这里只回答一个问题：最新版本改了什么，会不会触发重授权。</div>
+          <div id="taskVersionDiff" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">版本差异</div>
+              <div class="emptyStateTitle">暂无版本差异</div>
+              <div class="emptyStateBody">当前还没有新的修订差异；可先看状态结果，或回治理页继续修订任务定义。</div>
+              <div class="emptyStateActions">
+                <a class="btn primary" href="#taskSummaryPanel">看状态</a>
+                <a class="btn" href="#taskBindingPanel">看补权区</a>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="casePanel" id="taskAuthorizationPanel">
+          <div class="panelTitle">授权结果</div>
+          <div class="panelLead">授权区只告诉你是否缺槽位、是否过期，以及补齐后能不能重新激活。</div>
+          <div id="taskAuthorization" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">授权结果</div>
+              <div class="emptyStateTitle">暂无授权信息</div>
+              <div class="emptyStateBody">任务详情加载后，这里会展示必需槽位、缺失项和已有绑定结果。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="casePanel" id="taskVersionsPanel">
           <div class="panelTitle">版本历史</div>
-          <div id="taskVersions" class="entityList empty">暂无版本历史</div>
+          <div class="panelLead">版本历史用于回看任务定义如何演进，不应抢占“当前状态”和“下一步动作”的主线。</div>
+          <div id="taskVersions" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">版本历史</div>
+              <div class="emptyStateTitle">暂无版本历史</div>
+              <div class="emptyStateBody">当前还没有更多历史版本；如需调整任务目标，可回治理页提交修订。</div>
+            </div>
+          </div>
         </section>
 
-        <section class="casePanel">
-          <div class="panelTitle">最新修订差异</div>
-          <div id="taskVersionDiff" class="entityList empty">暂无版本差异</div>
-        </section>
-
-        <section class="casePanel">
-          <div class="panelTitle">授权状态</div>
-          <div id="taskAuthorization" class="entityList empty">暂无授权信息</div>
-        </section>
-
-        <section class="casePanel">
+        <section class="casePanel" id="taskRunsPanel">
           <div class="panelTitle">运行记录</div>
-          <div id="taskRuns" class="entityList empty">暂无运行记录</div>
+          <div class="panelLead">运行记录是结果区，不是主入口；只有任务被激活并执行后，这里才会逐步累积。</div>
+          <div id="taskRuns" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">运行记录</div>
+              <div class="emptyStateTitle">暂无运行记录</div>
+              <div class="emptyStateBody">若任务尚未激活，先完成补权或激活；运行后，记录会自动出现在这里。</div>
+            </div>
+          </div>
         </section>
 
-        <section class="casePanel">
+        <section class="casePanel" id="taskArtifactsPanel">
           <div class="panelTitle">交付物</div>
-          <div id="taskArtifacts" class="entityList empty">暂无交付物</div>
+          <div class="panelLead">交付物用于回看实际产出；它应跟随运行结果出现，而不是在页面初始时占据视觉主位。</div>
+          <div id="taskArtifacts" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">交付物</div>
+              <div class="emptyStateTitle">暂无交付物</div>
+              <div class="emptyStateBody">任务产生运行结果后，交付物会在这里沉淀；现在先把状态、差异和授权理顺。</div>
+            </div>
+          </div>
         </section>
 
-        <section class="casePanel casePanelWide">
-          <div class="panelTitle">授权接驳</div>
+        <section class="casePanel casePanelWide" id="taskBindingPanel">
+          <div class="panelTitle">补权与激活</div>
+          <div class="panelLead">补权是次级流程，但当任务缺权或待重授权时，它会成为当前唯一需要优先处理的动作。</div>
           <form id="credentialBindingForm" class="caseFormGrid">
             <label>
               <span>槽位名</span>
@@ -77,9 +147,8 @@
             <div class="caseActions span2">
               <button type="submit" class="btn primary">保存授权绑定</button>
               <button type="button" class="btn" id="btnActivateTask">激活任务</button>
-              <a class="btn" id="taskGovernanceLink" href="/view/cases.html">打开治理</a>
+              <a class="btn" id="taskGovernanceLink" href="/view/governance-session.html">进入治理会话</a>
             </div>
-            <div class="hint span2" id="taskDetailHint">先补齐授权绑定，再将任务激活进入正式监测。</div>
           </form>
         </section>
       </main>

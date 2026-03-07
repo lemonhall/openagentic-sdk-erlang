@@ -52,38 +52,38 @@
 
 ## 2. P1：信息架构问题（优先级很高）
 
-- [ ] **P1-01：拆分“案卷页”角色，不再让单页同时承担创建 / 定位 / 详情 / 模板 / 内邮**
-  - 状态：进行中（2026-03-07）
-  - 进度：`cases.html` 已拆出“案卷入口”和“案卷工作台”两层；创建案卷、进入既有案卷、工作台未激活空态已分开。治理页 / 任务详情页还未继续拆。
-  - 现状：`cases.html` 同时塞了立案、定位、案卷总览、候选任务、正式任务、模板库、内邮。
-  - 影响：页面像后台拼盘，不像产品页面；用户看不到主线。
+- [x] **P1-01：拆分“案卷页”角色，不再让单页同时承担创建 / 定位 / 详情 / 模板 / 内邮**
+  - 状态：已完成（2026-03-07）
+  - 进度：`cases.html` 已拆成“案卷入口 + 案卷工作台”，`task-detail.html`、`governance-session.html` 也已从案卷页抽出；创建案卷、进入既有案卷、任务详情、治理会话不再混在同一视觉主线。
+  - 现状：`cases.html` 只负责进入案卷与查看工作台；任务详情和治理会话已有独立页面承接。
+  - 影响：页面主线已从“后台拼盘”收敛成“入口 -> 工作台 -> 详情 / 治理”。
   - DoD：明确 `案卷列表/入口页` 与 `案卷详情/工作台页` 的边界；至少把“创建案卷”和“处理既有案卷”区分开。
-  - 落点：`apps/openagentic_sdk/priv/web/view/cases.html`、`apps/openagentic_sdk/priv/web/assets/case-governance.js`。
+  - 落点：`apps/openagentic_sdk/priv/web/view/cases.html`、`apps/openagentic_sdk/priv/web/view/task-detail.html`、`apps/openagentic_sdk/priv/web/view/governance-session.html`、`apps/openagentic_sdk/priv/web/assets/case-governance.js`。
 
-- [ ] **P1-02：为每个页面定义单一主任务**
-  - 状态：进行中（2026-03-07）
-  - 进度：`cases.html` 已明确当前主任务是“进入案卷”，并根据案卷状态给出唯一主 CTA；`governance-session.html`、`task-detail.html` 仍需继续收敛主任务。
-  - 现状：治理页既有聊天、又有修订、又有补权、又有再激活；任务详情页又有版本、授权、运行、交付、补权。
-  - 影响：没有“主操作”，全是并列模块。
+- [x] **P1-02：为每个页面定义单一主任务**
+  - 状态：已完成（2026-03-07）
+  - 进度：`cases.html` 主任务 = 进入案卷；`task-detail.html` 主任务 = 看状态 / 差异 / 授权结果；`governance-session.html` 主任务 = 继续治理对话，修订与补权降为次级流程。
+  - 现状：三张页面都已有 hero 摘要、主任务描述和面向当前状态的唯一主 CTA。
+  - 影响：用户不再需要自己在并列模块里猜“这页先做什么”。
   - DoD：每个页面只允许一个主任务，其它内容降级成辅助区或二级入口。
   - 建议：
     - 治理页主任务 = 治理对话 + 修订提交
     - 任务详情页主任务 = 看任务状态 + 看版本/授权结果
     - 补权/再激活可独立成次级流程区或抽屉
 
-- [ ] **P1-03：补“我现在在哪”的层级导航**
-  - 状态：进行中（2026-03-07）
-  - 进度：`cases.html` 已补 `Cases / 当前案卷` breadcrumb；`task-detail.html`、`governance-session.html` 还未补到位。
-  - 现状：页面缺 breadcrumb、缺对象标题、缺层级关系。
-  - 影响：用户不知道当前对象是 case、candidate、task 还是 governance session。
+- [x] **P1-03：补“我现在在哪”的层级导航**
+  - 状态：已完成（2026-03-07）
+  - 进度：`cases.html`、`task-detail.html`、`governance-session.html` 均已补齐 breadcrumb、对象标题与页面摘要；静态页测试已覆盖 `caseBreadcrumb`、`taskBreadcrumb`、`governanceBreadcrumb`。
+  - 现状：页面顶部已稳定给出对象层级与当前页语义。
+  - 影响：用户可以区分自己当前处于 case、task 还是 governance session。
   - DoD：页面顶部稳定出现对象层级，例如：`Cases / Case / Task / Governance Session`。
   - 落点：`cases.html`、`task-detail.html`、`governance-session.html`。
 
-- [ ] **P1-04：补“下一步建议动作”而不是只堆模块**
-  - 状态：进行中（2026-03-07）
-  - 进度：`cases.html` 已按对象状态给出 CTA：`进入审议`、`先补权`、`查看任务详情`、`继续治理`、`重新抽取`；治理页 / 任务详情页还未补完。
-  - 现状：页面告诉你有很多东西，但不告诉你当前应该先干什么。
-  - 影响：用户只能自己猜主线。
+- [x] **P1-04：补“下一步建议动作”而不是只堆模块**
+  - 状态：已完成（2026-03-07）
+  - 进度：`cases.html`、`task-detail.html`、`governance-session.html` 均已按对象状态输出下一步 CTA；静态页测试已覆盖 `caseNextAction`、`taskNextAction`、`governanceNextAction`。
+  - 现状：候选待审、正式任务缺权、待激活、继续治理等状态都已有明确动作建议。
+  - 影响：页面开始真正承担“引导下一步”职责，而不是只展示模块列表。
   - DoD：根据对象状态给出明确 CTA，例如：
     - 候选待审 -> `进入审议`
     - 正式任务缺权 -> `先补权`
@@ -94,20 +94,28 @@
 
 ## 3. P1：页面可读性与内容展示问题
 
-- [ ] **P1-05：卡片内容不能再被固定高度与并列网格压缩**
-  - 现状：双栏 + 多 panel + 最小高度 + 裁切，长文本和状态说明挤压严重。
+- [x] **P1-05：卡片内容不能再被固定高度与并列网格压缩**
+  - 状态：已完成（2026-03-07）
+  - 进度：`case-governance.css` 已统一为单栏阅读流，移除了双栏固定压缩结构；`openagentic_web_case_governance_test` 继续校验不再出现 `repeat(2, minmax(0, 1fr))` 和固定最小高度。
+  - 现状：案卷 / 任务 / 治理页面都按纵向阅读顺序展开，长摘要与状态说明可完整展示。
   - DoD：长文本默认完整可读；卡片不因并列布局被压扁；必要时改成单栏纵向阅读流。
 
-- [ ] **P1-06：减少“panelTitle + 空卡片”的后台感**
-  - 现状：大量页面就是一堆 panel 标题 + 空态框，像接口调试台。
+- [x] **P1-06：减少“panelTitle + 空卡片”的后台感**
+  - 状态：已完成（2026-03-07）
+  - 进度：三张页面已补 `panelLead`、hero 摘要、`overviewFacts` 和 `objectSummaryCard`；核心信息先以摘要卡呈现，空态退为说明性模块。
+  - 现状：页面不再是纯“panelTitle + 空白容器”，而是先给任务摘要、状态摘要和主线说明。
   - DoD：核心信息先以摘要卡/状态条呈现，次级信息再进入分区；空态不应占据页面主要视觉面积。
 
-- [ ] **P1-07：统一空态文案和空态策略**
-  - 现状：空态很多，但多数只是“暂无 xxx”，没有下一步。
+- [x] **P1-07：统一空态文案和空态策略**
+  - 状态：已完成（2026-03-07）
+  - 进度：案卷、任务详情、治理会话均已切到统一 `emptyState` 组件；空态文案已补“为什么为空”与“下一步动作”。
+  - 现状：候选、正式任务、版本差异、授权结果、内邮等空态都带有行动建议，不再只有“暂无 xxx”。
   - DoD：空态必须带动作建议，如“先立案”“先进入治理”“先补授权”“还没有版本差异”。
 
-- [ ] **P1-08：统一对象摘要卡格式**
-  - 现状：candidate / task / mail / template 的卡片结构不统一，用户难以扫读。
+- [x] **P1-08：统一对象摘要卡格式**
+  - 状态：已完成（2026-03-07）
+  - 进度：`case-governance.js`、`task-detail.js`、`governance-session.js` 已统一到 `objectSummaryCard` / `objectSummaryMeta` 渲染；candidate / task / template / mail / version / authorization binding 的卡片顺序已对齐。
+  - 现状：对象卡统一为“标题 -> 状态 -> 关键摘要 -> 下一步动作 -> 辅助元信息”。
   - DoD：统一字段顺序：标题 -> 状态 -> 关键摘要 -> 下一步动作 -> 辅助链接。
 
 ---
@@ -188,4 +196,5 @@
   - 改了哪些文件
   - 解决了哪条 backlog
   - 还剩哪些未动
+
 

@@ -45,6 +45,7 @@
 
         <section class="casePanel">
           <div class="panelTitle">新建案卷</div>
+          <div class="panelLead">先把一轮已完成的 Workflow 固化成长期案卷；立案完成后，系统才会展开候选抽取与后续治理链路。</div>
           <form id="caseCreateForm" class="caseFormGrid">
             <label>
               <span>已完成朝议 Workflow Session ID</span>
@@ -73,6 +74,7 @@
 
         <section class="casePanel">
           <div class="panelTitle">进入既有案卷</div>
+          <div class="panelLead">已有 Case ID 时，主操作是进入案卷工作台；重新抽取候选任务是次级动作，不应盖过主线。</div>
           <div class="caseStack">
             <label>
               <span>Case ID</span>
@@ -92,35 +94,67 @@
 
         <section class="casePanel casePanelWide" id="caseWorkspaceGuide">
           <div class="panelTitle">案卷工作台未激活</div>
+          <div class="panelLead">先进入具体案卷，再处理候选审议、正式任务、模板和内邮。</div>
           <div class="caseStack">
-            <div class="overviewTitle">还没有进入具体案卷</div>
-            <div class="overviewSummary">先立案或输入 Case ID，工作台才会展示案卷摘要、候选任务、正式任务、模板和内邮。</div>
+            <div class="emptyState">
+              <div class="emptyStateLabel">工作台未激活</div>
+              <div class="emptyStateTitle">还没有进入具体案卷</div>
+              <div class="emptyStateBody">先立案或输入 Case ID，工作台才会展示案卷摘要、候选任务、正式任务、模板和内邮。</div>
+              <div class="emptyStateActions">
+                <a class="btn primary" href="#caseCreateForm">先立案</a>
+                <a class="btn" href="#caseIdInput">输入 Case ID</a>
+              </div>
+            </div>
           </div>
         </section>
 
         <section class="casePanel isHidden" id="caseOverviewPanel" data-case-workspace>
           <div class="panelTitle">当前案卷摘要</div>
-          <div id="caseOverview" class="overviewCard empty">暂无案卷数据</div>
+          <div class="panelLead">先看案卷阶段、当前状态和正在承接的治理主线，再决定是否进入候选或正式任务。</div>
+          <div id="caseOverview" class="overviewCard empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">案卷摘要</div>
+              <div class="emptyStateTitle">暂无案卷数据</div>
+              <div class="emptyStateBody">请先输入 Case ID 并进入工作台，系统才会加载当前案卷状态。</div>
+            </div>
+          </div>
         </section>
 
         <section class="casePanel isHidden" id="candidateSection" data-case-workspace>
           <div class="panelTitle">待审候选任务</div>
-          <div class="hint" style="padding: 0 16px 12px 16px;">
-            每个候选都带一条专属审议会话；候选转正后，应继续沿用同一条治理线，不另起炉灶。
+          <div class="panelLead">候选阶段只解决一件事：判断要不要转正，并沿用同一条审议会话继续往下走。</div>
+          <div id="candidateList" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">候选任务</div>
+              <div class="emptyStateTitle">暂无候选任务</div>
+              <div class="emptyStateBody">可先重新抽取候选任务，或回看当前案卷摘要确认本轮是否已经进入正式治理。</div>
+              <div class="emptyStateActions">
+                <a class="btn primary" href="#btnExtractCandidates">重新抽取</a>
+                <a class="btn" href="#caseOverviewPanel">看案卷摘要</a>
+              </div>
+            </div>
           </div>
-          <div id="candidateList" class="entityList empty">暂无候选任务</div>
         </section>
 
         <section class="casePanel isHidden" id="taskSection" data-case-workspace>
           <div class="panelTitle">正式任务</div>
-          <div class="hint" style="padding: 0 16px 12px 16px;">
-            正式任务可直接打开聊天式治理入口，继续围绕当前任务定义、整改与版本修订对话。
+          <div class="panelLead">正式任务卡统一展示状态摘要与下一步动作：继续治理、先补权，或进入任务详情看差异与授权结果。</div>
+          <div id="taskList" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">正式任务</div>
+              <div class="emptyStateTitle">暂无正式任务</div>
+              <div class="emptyStateBody">候选尚未转正时，先去完成候选审议；如果已经形成结论，可重新抽取或补齐来源。</div>
+              <div class="emptyStateActions">
+                <a class="btn primary" href="#candidateSection">看候选任务</a>
+                <a class="btn" href="#btnExtractCandidates">重新抽取</a>
+              </div>
+            </div>
           </div>
-          <div id="taskList" class="entityList empty">暂无正式任务</div>
         </section>
 
         <section class="casePanel casePanelWide isHidden" id="templateSection" data-case-workspace>
           <div class="panelTitle">模板库</div>
+          <div class="panelLead">模板只用于起草和参考实现，不直接承载正式执行体；优先先确认当前治理线，再决定是否沉淀模板。</div>
           <form id="templateCreateForm" class="caseFormGrid">
             <label>
               <span>模板标题</span>
@@ -143,12 +177,28 @@
             </div>
             <div class="hint span2">模板仅用于起草与参考实现，不共享正式执行体。</div>
           </form>
-          <div id="templateList" class="entityList empty">暂无模板</div>
+          <div id="templateList" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">模板库</div>
+              <div class="emptyStateTitle">暂无模板</div>
+              <div class="emptyStateBody">等当前案卷进入稳定治理后，再把成熟做法沉淀成模板会更清晰。</div>
+            </div>
+          </div>
         </section>
 
         <section class="casePanel isHidden" id="mailSection" data-case-workspace>
           <div class="panelTitle">内邮</div>
-          <div id="mailList" class="entityList empty">暂无内邮</div>
+          <div class="panelLead">内邮是治理过程中的通知流，不应抢占主任务；只有需要回看提醒或投递结果时再进入。</div>
+          <div id="mailList" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">内邮</div>
+              <div class="emptyStateTitle">暂无内邮</div>
+              <div class="emptyStateBody">候选抽取、转正或版本修订产生通知后，会回流到这里；也可以去统一信箱查看全站消息。</div>
+              <div class="emptyStateActions">
+                <a class="btn" href="/view/inbox.html">打开统一信箱</a>
+              </div>
+            </div>
+          </div>
         </section>
       </main>
     </div>

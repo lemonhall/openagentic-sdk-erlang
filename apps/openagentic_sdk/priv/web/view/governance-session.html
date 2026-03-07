@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
@@ -16,29 +16,49 @@
           <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
           <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
         </nav>
-        <div class="subtitle" id="governanceSubtitle">治理会话：继续审议、提交修订，并在必要时补权再激活。</div>
+        <div class="subtitle" id="governanceSubtitle">治理会话：围绕当前候选或正式任务继续对话、修订与补权。</div>
         <a class="btn" id="backToCase" href="/view/cases.html">返回当前案卷</a>
       </header>
 
-      <main class="caseMain">
+      <main class="caseMain" id="governanceView">
         <section class="casePanel casePanelWide">
-          <div class="panelTitle">会话上下文</div>
-          <div class="caseStack">
-            <div class="overviewMeta">Session ID：<code id="governanceSessionId"></code></div>
-            <div class="overviewMeta">对象定位：<span id="governanceObjectRef">未指定</span></div>
-            <div class="hint" id="governanceContextHint">
-              这里承接候选任务审议与正式任务治理。若候选已转正，应继续沿用同一条治理会话，而不是重新开新线。
+          <div class="panelTitle">Cases / Governance Session</div>
+          <div class="caseHero">
+            <div class="caseHeroMain">
+              <div class="caseBreadcrumb" id="governanceBreadcrumb">Cases / Governance Session</div>
+              <div class="caseHeroTitle" id="governancePageTitle">治理会话</div>
+              <div class="caseHeroSummary" id="governancePageSummary">
+                此页的主任务是继续治理对话；如需调整任务定义，再提交版本修订。补权与激活是次级流程，只在需要时进入。
+              </div>
+              <div class="hint" id="governanceContextHint">会话加载后，这里会同步当前对象引用、任务状态和授权状态。</div>
+              <div class="hint">Session：<code id="governanceSessionId"></code> ｜ 对象：<code id="governanceObjectRef">未指定</code></div>
             </div>
+            <aside class="caseActionCard" id="governanceNextAction">
+              <div class="caseActionLabel">下一步</div>
+              <div class="caseActionTitle">继续治理</div>
+              <div class="caseActionBody">加载上下文后，这里会根据当前对象状态给出建议动作。</div>
+              <div class="caseActionButtons">
+                <a class="btn primary" href="#governanceSessionForm">继续治理</a>
+                <a class="btn" href="#governanceRevisionForm">查看修订区</a>
+              </div>
+            </aside>
           </div>
         </section>
 
-        <section class="casePanel casePanelWide">
-          <div class="panelTitle">聊天式治理</div>
-          <div id="governanceTranscript" class="entityList empty">暂无治理会话事件，可直接发起治理指令。</div>
-        </section>
-
-        <section class="casePanel casePanelWide">
-          <div class="panelTitle">发起治理指令</div>
+        <section class="casePanel casePanelWide" id="governanceConversationPanel">
+          <div class="panelTitle">主任务：继续治理对话</div>
+          <div class="panelLead">这一屏只做治理对话和结论收敛；如果确认需要修改任务定义，再转入下面的修订区。</div>
+          <div id="governanceTranscript" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">治理会话</div>
+              <div class="emptyStateTitle">暂无治理会话事件</div>
+              <div class="emptyStateBody">可直接输入治理指令，从当前候选审议或正式任务治理继续往下推进。</div>
+              <div class="emptyStateActions">
+                <a class="btn primary" href="#governanceSessionForm">开始对话</a>
+                <a class="btn" href="#governanceRevisionPanel">查看修订区</a>
+              </div>
+            </div>
+          </div>
           <form id="governanceSessionForm" class="caseFormGrid">
             <label class="span2">
               <span>治理指令</span>
@@ -51,15 +71,16 @@
           </form>
         </section>
 
-        <section class="casePanel casePanelWide">
-          <div class="panelTitle">版本修订</div>
+        <section class="casePanel casePanelWide" id="governanceRevisionPanel">
+          <div class="panelTitle">次级流程：提交版本修订</div>
+          <div class="panelLead">只有当治理结论已经收敛、确认需要修改任务定义时，才进入这一块生成新版本。</div>
           <form id="governanceRevisionForm" class="caseFormGrid">
             <label class="span2">
               <span>变更摘要</span>
               <input id="revisionChangeSummary" placeholder="例如：缩小观察范围，聚焦升级风险" />
             </label>
             <label class="span2">
-              <span>新 Objective</span>
+              <span>新的 Objective</span>
               <textarea id="revisionObjective" rows="4" placeholder="例如：Track diplomatic statement shifts with emphasis on escalation risk."></textarea>
             </label>
             <label>
@@ -78,23 +99,44 @@
               <button type="submit" class="btn primary">创建新版本</button>
               <a class="btn" id="taskDetailLink" href="/view/task-detail.html">查看任务详情</a>
             </div>
-            <div class="hint span2" id="governanceRevisionHint">正式任务治理可在同一条治理会话里沉淀新版本；若修订引入新授权要求，也可在本页直接补权并重新激活。</div>
+            <div class="hint span2" id="governanceRevisionHint">正式任务治理可在同一条治理会话里沉淀新版本；如需补权，也可继续在本页完成。</div>
           </form>
         </section>
 
-        <section class="casePanel">
+        <section class="casePanel" id="governanceTaskSummaryPanel">
           <div class="panelTitle">当前任务状态</div>
-          <div id="governanceTaskSummary" class="overviewCard empty">暂无正式任务上下文。</div>
+          <div class="panelLead">这里用摘要卡说明当前正式任务是否存在、状态如何，以及当前授权条件是否允许继续执行。</div>
+          <div id="governanceTaskSummary" class="overviewCard empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">任务状态</div>
+              <div class="emptyStateTitle">暂无正式任务上下文</div>
+              <div class="emptyStateBody">如果当前仍处于候选审议态，这是正常的；先继续对话形成正式结论。</div>
+            </div>
+          </div>
         </section>
 
-        <section class="casePanel">
-          <div class="panelTitle">最新修订差异</div>
-          <div id="governanceVersionDiff" class="entityList empty">暂无版本差异</div>
+        <section class="casePanel" id="governanceVersionDiffPanel">
+          <div class="panelTitle">最新版本差异</div>
+          <div class="panelLead">版本差异只回答最近一次修订改了什么，以及它是否引入新的授权影响。</div>
+          <div id="governanceVersionDiff" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">版本差异</div>
+              <div class="emptyStateTitle">暂无版本差异</div>
+              <div class="emptyStateBody">当前还没有新的任务修订；如有必要，可继续治理后再提交版本变更。</div>
+            </div>
+          </div>
         </section>
 
-        <section class="casePanel casePanelWide">
-          <div class="panelTitle">整改后再激活</div>
-          <div id="governanceAuthorization" class="entityList empty">暂无授权信息</div>
+        <section class="casePanel casePanelWide" id="governanceAuthorizationPanel">
+          <div class="panelTitle">补权与重新激活</div>
+          <div class="panelLead">当修订触发重授权、或当前绑定已经过期时，才进入这一块补权并重新激活任务。</div>
+          <div id="governanceAuthorization" class="entityList empty">
+            <div class="emptyState">
+              <div class="emptyStateLabel">补权与激活</div>
+              <div class="emptyStateTitle">暂无授权信息</div>
+              <div class="emptyStateBody">正式任务加载后，这里会展示缺失槽位、已有绑定与是否可以重新激活。</div>
+            </div>
+          </div>
           <form id="governanceCredentialBindingForm" class="caseFormGrid">
             <label>
               <span>槽位名</span>

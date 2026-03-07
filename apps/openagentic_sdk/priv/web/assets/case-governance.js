@@ -87,6 +87,90 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function actionItemsMarkup(actions = []) {
+  return (Array.isArray(actions) ? actions : [])
+    .filter(Boolean)
+    .map((action) => {
+      const klass = action.primary ? "btn primary" : "btn";
+      if (action.type === "button") {
+        return `<button type="button" class="${klass}" data-case-action="${escapeHtml(action.action || "")}">${escapeHtml(action.label || "Open")}</button>`;
+      }
+      return `<a class="${klass}" href="${escapeHtml(action.href || "#")}">${escapeHtml(action.label || "Open")}</a>`;
+    })
+    .join("");
+}
+
+function emptyStateMarkup({ label = "Empty", title = "No Content", body = "", actions = [] } = {}) {
+  const actionsHtml = actionItemsMarkup(actions);
+  return `
+    <div class="emptyState">
+      <div class="emptyStateLabel">${escapeHtml(label)}</div>
+      <div class="emptyStateTitle">${escapeHtml(title)}</div>
+      <div class="emptyStateBody">${escapeHtml(body)}</div>
+      ${actionsHtml ? `<div class="emptyStateActions">${actionsHtml}</div>` : ""}
+    </div>
+  `;
+}
+
+function setEmptyState(target, { layout = "entityList empty", label = "Empty", title = "No Content", body = "", actions = [] } = {}) {
+  if (!target) return;
+  target.className = layout;
+  target.innerHTML = emptyStateMarkup({ label, title, body, actions });
+}
+
+function summaryMetaMarkup(items = []) {
+  const validItems = (Array.isArray(items) ? items : []).filter((item) => item && item.label && item.value);
+  if (!validItems.length) return "";
+  return `
+    <dl class="objectSummaryMeta">
+      ${validItems
+        .map(
+          (item) => `
+            <div class="objectSummaryMetaItem">
+              <dt>${escapeHtml(item.label)}</dt>
+              <dd>${escapeHtml(item.value)}</dd>
+            </div>
+          `
+        )
+        .join("")}
+    </dl>
+  `;
+}
+
+function summaryCardMarkup({ title = "Untitled", status = "", summary = "", actions = "", meta = [], compact = false } = {}) {
+  const compactClass = compact ? " compact" : "";
+  return `
+    <article class="entityCard objectSummaryCard${compactClass}">
+      <div class="entityHeader">
+        <div class="entityTitle">${escapeHtml(title)}</div>
+        ${status ? `<span class="statusChip">${escapeHtml(status)}</span>` : ""}
+      </div>
+      <div class="objectSummarySummary">${escapeHtml(summary || "No summary")}</div>
+      ${actions ? `<div class="entityActions">${actions}</div>` : ""}
+      ${summaryMetaMarkup(meta)}
+    </article>
+  `;
+}
+
+function overviewFactsMarkup(items = []) {
+  const validItems = (Array.isArray(items) ? items : []).filter((item) => item && item.label && item.value != null && item.value !== "");
+  if (!validItems.length) return "";
+  return `
+    <div class="overviewFacts">
+      ${validItems
+        .map(
+          (item) => `
+            <div class="overviewFact">
+              <div class="overviewFactLabel">${escapeHtml(item.label)}</div>
+              <div class="overviewFactValue">${escapeHtml(String(item.value))}</div>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function governanceSessionHref({ sid, caseId, candidateId, taskId, title, mode }) {
   if (!sid) return "";
   const params = new URLSearchParams();
@@ -293,8 +377,16 @@ function syncCaseShell(data) {
 function renderOverview(data) {
   const caseObj = data?.case || null;
   if (!caseObj) {
-    ui.caseOverview.className = "overviewCard empty";
-    ui.caseOverview.textContent = "暂无案卷数据";
+    setEmptyState(ui.caseOverview, {
+      layout: "overviewCard empty",
+      label: "案卷摘要",
+      title: "暂无案卷数据",
+      body: "请先立案或输入 Case ID 进入工作台。",
+      actions: [
+        { type: "link", href: "#caseCreateForm", label: "先立案", primary: true },
+        { type: "link", href: "#caseIdInput", label: "输入 Case ID" },
+      ],
+    });
     return;
   }
   const spec = caseObj.spec || {};
@@ -303,11 +395,13 @@ function renderOverview(data) {
   ui.caseOverview.className = "overviewCard";
   ui.caseOverview.innerHTML = `
     <div class="overviewTitle">${escapeHtml(spec.title || "未命名案卷")}</div>
-    <div class="overviewMeta">案卷 ID：<code>${escapeHtml(header.id || "")}</code></div>
-    <div class="overviewMeta">阶段：${escapeHtml(state.phase || "")}</div>
-    <div class="overviewMeta">状态：${escapeHtml(state.status || "")}</div>
-    <div class="overviewMeta">生效任务数：${escapeHtml(state.active_task_count ?? 0)}</div>
-    <div class="overviewSummary">${escapeHtml(state.current_summary || spec.opening_brief || "")}</div>
+    ${overviewFactsMarkup([
+      { label: "案卷 ID", value: header.id || "" },
+      { label: "阶段", value: state.phase || "" },
+      { label: "状态", value: state.status || "" },
+      { label: "生效任务数", value: state.active_task_count ?? 0 },
+    ])}
+    <div class="overviewSummary">${escapeHtml(state.current_summary || spec.opening_brief || "暂无摘要")}</div>
   `;
 }
 
@@ -315,22 +409,25 @@ function actionButtons(candidate) {
   const id = candidate?.header?.id || "";
   const status = candidate?.state?.status || "";
   const sessionButton = candidateSessionButton(candidate);
-  if (!id || status === "approved" || status === "discarded") {
-    return sessionButton ? `<div class="entityActions">${sessionButton}</div>` : "";
+  const buttons = [sessionButton];
+  if (id && status !== "approved" && status !== "discarded") {
+    buttons.push(`<button class="btn primary" data-action="approve" data-id="${escapeHtml(id)}">生效</button>`);
+    buttons.push(`<button class="btn danger" data-action="discard" data-id="${escapeHtml(id)}">废弃</button>`);
   }
-  return `
-    <div class="entityActions">
-      ${sessionButton}
-      <button class="btn primary" data-action="approve" data-id="${escapeHtml(id)}">生效</button>
-      <button class="btn danger" data-action="discard" data-id="${escapeHtml(id)}">废弃</button>
-    </div>
-  `;
+  return buttons.filter(Boolean).join("");
 }
 
 function renderCandidateList(candidates) {
   if (!Array.isArray(candidates) || !candidates.length) {
-    ui.candidateList.className = "entityList empty";
-    ui.candidateList.textContent = "暂无候选任务";
+    setEmptyState(ui.candidateList, {
+      label: "候选任务",
+      title: "暂无候选任务",
+      body: "可先重新抽取候选任务，或回看案卷摘要确认当前节奏。",
+      actions: [
+        { type: "link", href: "#btnExtractCandidates", label: "重新抽取", primary: true },
+        { type: "link", href: "#caseOverviewPanel", label: "看案卷摘要" },
+      ],
+    });
     return;
   }
   ui.candidateList.className = "entityList";
@@ -340,28 +437,31 @@ function renderCandidateList(candidates) {
       const links = candidate.links || {};
       const spec = candidate.spec || {};
       const state = candidate.state || {};
-      return `
-        <article class="entityCard">
-          <div class="entityHeader">
-            <div>
-              <div class="entityTitle">${escapeHtml(spec.title || header.id || "未命名候选任务")}</div>
-              <div class="entityMeta">${escapeHtml(header.id || "")}</div>
-              ${sessionMetaLine("审议会话", links.review_session_id || "")}
-            </div>
-            <span class="statusChip">${escapeHtml(state.status || "")}</span>
-          </div>
-          <div class="entityBody">${escapeHtml(spec.objective || spec.mission_statement || "")}</div>
-          ${actionButtons(candidate)}
-        </article>
-      `;
+      return summaryCardMarkup({
+        title: spec.title || header.id || "未命名候选任务",
+        status: state.status || "",
+        summary: spec.objective || spec.mission_statement || "暂无候选摘要",
+        actions: actionButtons(candidate),
+        meta: [
+          { label: "候选 ID", value: header.id || "" },
+          { label: "审议会话", value: links.review_session_id || "待生成" },
+        ],
+      });
     })
     .join("");
 }
 
 function renderTaskList(tasks) {
   if (!Array.isArray(tasks) || !tasks.length) {
-    ui.taskList.className = "entityList empty";
-    ui.taskList.textContent = "暂无正式任务";
+    setEmptyState(ui.taskList, {
+      label: "正式任务",
+      title: "暂无正式任务",
+      body: "候选尚未转正，先去完成候选审议。",
+      actions: [
+        { type: "link", href: "#candidateSection", label: "看候选任务", primary: true },
+        { type: "link", href: "#btnExtractCandidates", label: "重新抽取" },
+      ],
+    });
     return;
   }
   ui.taskList.className = "entityList";
@@ -371,20 +471,37 @@ function renderTaskList(tasks) {
       const links = task.links || {};
       const spec = task.spec || {};
       const state = task.state || {};
-      return `
-        <article class="entityCard compact">
-          <div class="entityHeader">
-            <div>
-              <div class="entityTitle">${escapeHtml(spec.title || header.id || "未命名正式任务")}</div>
-              <div class="entityMeta">${escapeHtml(header.id || "")}</div>
-              ${sessionMetaLine("治理会话", links.governance_session_id || "")}
-            </div>
-            <span class="statusChip">${escapeHtml(state.status || "")}</span>
-          </div>
-          <div class="entityBody">${escapeHtml(spec.mission_statement || spec.objective || "")}</div>
-          <div class="entityActions">${taskSessionButton(task)}${taskDetailButton(task)}</div>
-        </article>
-      `;
+      const status = state.status || "";
+      const sessionHref = taskSessionHref(task);
+      const detailHref = taskDetailHref(task);
+      const needsAuthorization = status === "awaiting_credentials" || status === "reauthorization_required" || status === "credential_expired";
+      const readyToActivate = status === "ready_to_activate";
+      const actions = [
+        needsAuthorization && detailHref
+          ? `<a class="btn primary" href="${escapeHtml(detailHref)}">先补权</a>`
+          : readyToActivate && detailHref
+            ? `<a class="btn primary" href="${escapeHtml(detailHref)}">激活前检查</a>`
+            : sessionHref
+              ? `<a class="btn primary" href="${escapeHtml(sessionHref)}">继续治理</a>`
+              : detailHref
+                ? `<a class="btn primary" href="${escapeHtml(detailHref)}">查看任务详情</a>`
+                : "",
+        sessionHref ? `<a class="btn" href="${escapeHtml(sessionHref)}">打开治理</a>` : "",
+        detailHref ? `<a class="btn" href="${escapeHtml(detailHref)}">任务详情</a>` : "",
+      ]
+        .filter(Boolean)
+        .join("");
+      return summaryCardMarkup({
+        title: spec.title || header.id || "未命名正式任务",
+        status,
+        summary: spec.mission_statement || spec.objective || "暂无任务摘要",
+        actions,
+        meta: [
+          { label: "任务 ID", value: header.id || "" },
+          { label: "治理会话", value: links.governance_session_id || "待创建" },
+        ],
+        compact: true,
+      });
     })
     .join("");
 }
@@ -392,8 +509,11 @@ function renderTaskList(tasks) {
 function renderTemplateList(templates) {
   if (!ui.templateList) return;
   if (!Array.isArray(templates) || !templates.length) {
-    ui.templateList.className = "entityList empty";
-    ui.templateList.textContent = "暂无模板";
+    setEmptyState(ui.templateList, {
+      label: "模板库",
+      title: "暂无模板",
+      body: "等治理方式稳定之后，再把成熟做法沉淀成模板。",
+    });
     return;
   }
   ui.templateList.className = "entityList";
@@ -401,42 +521,42 @@ function renderTemplateList(templates) {
     .map((item) => {
       const header = item.header || {};
       const spec = item.spec || {};
-      return `
-        <article class="entityCard compact">
-          <div class="entityHeader">
-            <div>
-              <div class="entityTitle">${escapeHtml(spec.title || header.id || "模板")}</div>
-              <div class="entityMeta">模板 ID：<code>${escapeHtml(header.id || "")}</code></div>
-            </div>
-            <button type="button" class="btn" data-action="instantiate-template" data-id="${escapeHtml(header.id || "")}">实例化候选</button>
-          </div>
-          <div class="entityBody">${escapeHtml(spec.summary || spec.objective || "")}</div>
-        </article>
-      `;
+      return summaryCardMarkup({
+        title: spec.title || header.id || "模板",
+        status: "template",
+        summary: spec.summary || spec.objective || "暂无模板摘要",
+        actions: `<button type="button" class="btn primary" data-action="instantiate-template" data-id="${escapeHtml(header.id || "")}">实例化候选</button>`,
+        meta: [{ label: "模板 ID", value: header.id || "" }],
+        compact: true,
+      });
     })
     .join("");
 }
 
 function renderMailList(mailItems) {
   if (!Array.isArray(mailItems) || !mailItems.length) {
-    ui.mailList.className = "entityList empty";
-    ui.mailList.textContent = "暂无内邮";
+    setEmptyState(ui.mailList, {
+      label: "内邮",
+      title: "暂无内邮",
+      body: "候选抽取、转正或修订通知会沉淀在这里。",
+      actions: [{ type: "link", href: "/view/inbox.html", label: "打开统一信箱" }],
+    });
     return;
   }
   ui.mailList.className = "entityList";
   ui.mailList.innerHTML = mailItems
     .map((item) => {
+      const header = item.header || {};
       const spec = item.spec || {};
       const state = item.state || {};
-      return `
-        <article class="entityCard compact">
-          <div class="entityHeader">
-            <div class="entityTitle">${escapeHtml(spec.title || "内邮")}</div>
-            <span class="statusChip">${escapeHtml(state.status || "")}</span>
-          </div>
-          <div class="entityBody">${escapeHtml(spec.summary || "")}</div>
-        </article>
-      `;
+      return summaryCardMarkup({
+        title: spec.title || "内邮",
+        status: state.status || "",
+        summary: spec.summary || "暂无摘要",
+        actions: `<a class="btn" href="/view/inbox.html">打开统一信箱</a>`,
+        meta: header.id ? [{ label: "邮件 ID", value: header.id }] : [],
+        compact: true,
+      });
     })
     .join("");
 }
