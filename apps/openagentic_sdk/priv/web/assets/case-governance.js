@@ -115,6 +115,16 @@ function taskSessionButton(task) {
   return `<a class="btn" href="${escapeHtml(href)}">打开治理</a>`;
 }
 
+function taskDetailButton(task) {
+  const header = task?.header || {};
+  const links = task?.links || {};
+  const caseId = ui.caseIdInput.value.trim() || links.case_id || "";
+  const taskId = header.id || "";
+  if (!caseId || !taskId) return "";
+  const params = new URLSearchParams({ case_id: caseId, task_id: taskId });
+  return `<a class="btn" href="/view/task-detail.html?${params.toString()}">任务详情</a>`;
+}
+
 function renderOverview(data) {
   const caseObj = data?.case || null;
   if (!caseObj) {
@@ -207,7 +217,7 @@ function renderTaskList(tasks) {
             <span class="statusChip">${escapeHtml(state.status || "")}</span>
           </div>
           <div class="entityBody">${escapeHtml(spec.mission_statement || spec.objective || "")}</div>
-          <div class="entityActions">${taskSessionButton(task)}</div>
+          <div class="entityActions">${taskSessionButton(task)}${taskDetailButton(task)}</div>
         </article>
       `;
     })

@@ -112,9 +112,9 @@
 - 候选审议会话直接转正为 `governance_session_id`
 
 但如果按设计稿原文要求继续审：
-- “聊天式审议”还没有真正实现为治理会话体验
+- “聊天式审议”已具备治理页、任务详情页与同会话延续，但版本修订闭环仍未完整落地
 - “模板库 / 模板起草流程”还没有落地
-- “授权接驳分轨 / credential_binding 一等对象”还没有落地
+- “授权接驳分轨 / credential_binding 一等对象”已补上第一版，但仍未覆盖更完整的重授权机制
 - “内邮系统”还只是候选待审通知的第一版，不是完整信箱模型
 - “历史日志 / 对象注册表 / 乐观并发校验”还没有达到设计稿要求的硬化程度
 
@@ -323,12 +323,13 @@
   - 还没有右上角提醒与全局跳转体验
 
 ### 7.4 任务详情页
-- 判定：`未对齐`
+- 判定：`已对齐`
 - 设计要求：
   - 至少包含任务定义、版本历史、运行记录、交付物、授权状态、治理入口
 - 当前现状：
-  - 当前没有独立任务详情页
-  - 任务对象只能在 overview 中被动展示
+  - 现已新增 `view/task-detail.html`
+  - 现已新增 `GET /api/cases/:case_id/tasks/:task_id/detail`
+  - 页面已能展示任务定义、版本历史、运行记录空态、交付物空态、授权状态与治理入口
 
 ---
 
@@ -345,17 +346,17 @@
   - 目前只是数据字段占位，不足以称为“模板制度落地”
 
 ### 8.2 授权接驳分轨与 `credential_binding`
-- 判定：`未对齐`
+- 判定：`部分对齐`
 - 已有部分：
   - `credential_requirements`
-  - `credential_binding_refs` 占位
-- 缺失部分：
-  - 没有独立 `credential_binding` 一等对象
-  - 没有 `material_ref` 指向敏感材料本体的机制
-  - 没有“聊天式任务讨论”与“敏感授权接驳流程”分轨
-  - 没有 `awaiting_credentials`、`ready_to_activate`、`credential_expired` 等状态流
-- 额外说明：
-  - 当前候选一旦 approve，任务直接进入 `active`，这比设计稿要求更粗。
+  - `credential_binding_refs`
+  - 独立 `credential_binding` 对象
+  - `material_ref` 指向敏感材料本体的引用机制
+  - `awaiting_credentials`、`ready_to_activate`、`credential_expired` 状态流
+  - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` 与 `POST /api/cases/:case_id/tasks/:task_id/activate`
+- 仍待补齐：
+  - 更完整的 `reauthorization_required` / 轮换补录机制
+  - 真正受控的敏感材料安全区与更细粒度接驳审计
 
 ### 8.3 候选任务治理会话沉淀
 - 判定：`部分对齐`
@@ -363,9 +364,9 @@
   - 有 `review_session_id`
   - 有“候选转正即沿用会话”的元数据逻辑
   - 现已可围绕该 session 直接打开 Web 治理页并继续对话
+  - 现已可通过任务详情页查看版本历史、授权状态并回到同一条治理会话
 - 缺失部分：
   - 没有“继续围绕同一条长期治理线修订版本”的产品体验闭环
-  - 没有独立任务详情页来承接版本历史、运行记录、交付物与授权状态
 
 ### 8.4 内邮系统
 - 判定：`部分对齐`
@@ -421,9 +422,8 @@
 - 把“聊天式审议”从设计语义变成产品语义
 
 ### 10.2 第二优先级：授权接驳分轨
-- 引入 `credential_binding` 一等对象
-- 增加任务授权状态流
-- 让敏感接驳不再和普通任务定义混在一起
+- 已补上第一版 `credential_binding` 一等对象与任务授权状态流
+- 下一步聚焦重授权、轮换与更强审计边界
 
 ### 10.3 第三优先级：模板制度补齐
 - 引入模板库与模板引用关系
@@ -448,13 +448,13 @@
 
 - 命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit`
 - 时间：2026-03-07
-- 结果：`185 tests, 0 failures`
+- 结果：`187 tests, 0 failures`
 
 这说明当前 Phase 1 已落地骨架在仓内是稳定可测的；但“测试通过”不等于“已完全对齐设计稿”。
 
 本文件的结论仍然是：
 
-**当前实现已经具备 Phase 1 主干，但仍需一轮针对治理体验、授权接驳、模板制度与审计硬化的补齐式对齐。**
+**当前实现已经具备 Phase 1 主干，且已补上任务详情页与第一版授权接驳分轨；剩余主要缺口集中在模板制度、信箱统一模型与审计硬化。**
 
 ---
 

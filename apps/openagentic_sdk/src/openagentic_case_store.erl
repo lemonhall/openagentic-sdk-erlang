@@ -5,7 +5,10 @@
   extract_candidates/2,
   approve_candidate/2,
   discard_candidate/2,
-  get_case_overview/2
+  get_case_overview/2,
+  get_task_detail/3,
+  upsert_credential_binding/2,
+  activate_task/2
 ]).
 
 create_case_from_round(RootDir0, Input0) ->
@@ -176,6 +179,30 @@ approve_candidate(RootDir0, Input0) ->
         ),
       TemplateRef = get_bin(Input, [template_ref, templateRef], get_in_map(Candidate0, [spec, template_ref], undefined)),
       CaseSnapshot = read_json(case_file(CaseDir)),
+      SchedulePolicy =
+        choose_map(
+          Input,
+          [schedule_policy, schedulePolicy],
+          get_in_map(Candidate0, [spec, schedule_policy], default_schedule_policy(default_timezone(CaseSnapshot)))
+        ),
+      ReportContract =
+        choose_map(
+          Input,
+          [report_contract, reportContract],
+          get_in_map(Candidate0, [spec, report_contract], default_report_contract())
+        ),
+      AlertRules = choose_map(Input, [alert_rules, alertRules], get_in_map(Candidate0, [spec, alert_rules], #{})),
+      SourceStrategy = choose_map(Input, [source_strategy, sourceStrategy], get_in_map(Candidate0, [spec, source_strategy], #{})),
+      ToolProfile = choose_map(Input, [tool_profile, toolProfile], get_in_map(Candidate0, [spec, tool_profile], #{})),
+      CredentialRequirements =
+        choose_map(
+          Input,
+          [credential_requirements, credentialRequirements],
+          get_in_map(Candidate0, [spec, credential_requirements], #{})
+        ),
+      AutonomyPolicy = choose_map(Input, [autonomy_policy, autonomyPolicy], get_in_map(Candidate0, [spec, autonomy_policy], #{})),
+      PromotionPolicy = choose_map(Input, [promotion_policy, promotionPolicy], get_in_map(Candidate0, [spec, promotion_policy], #{})),
+      TaskStatus = initial_task_status(CredentialRequirements),
       TaskObj =
         #{
           header => header(TaskId, <<"monitoring_task">>, Now),
@@ -205,8 +232,8 @@ approve_candidate(RootDir0, Input0) ->
             ),
           state =>
             #{
-              status => <<"active">>,
-              health => <<"ok">>,
+              status => TaskStatus,
+              health => task_health_for_status(TaskStatus),
               latest_run_id => undefined,
               latest_successful_run_id => undefined,
               last_report_at => undefined
@@ -237,14 +264,14 @@ approve_candidate(RootDir0, Input0) ->
             compact_map(
               #{
                 objective => get_bin(Input, [objective], get_in_map(Candidate0, [spec, objective], MissionStatement)),
-                schedule_policy => choose_map(Input, [schedule_policy, schedulePolicy], get_in_map(Candidate0, [spec, schedule_policy], default_schedule_policy(default_timezone(CaseSnapshot)))),
-                report_contract => choose_map(Input, [report_contract, reportContract], get_in_map(Candidate0, [spec, report_contract], default_report_contract())),
-                alert_rules => choose_map(Input, [alert_rules, alertRules], get_in_map(Candidate0, [spec, alert_rules], #{})),
-                source_strategy => choose_map(Input, [source_strategy, sourceStrategy], get_in_map(Candidate0, [spec, source_strategy], #{})),
-                tool_profile => choose_map(Input, [tool_profile, toolProfile], get_in_map(Candidate0, [spec, tool_profile], #{})),
-                credential_requirements => choose_map(Input, [credential_requirements, credentialRequirements], get_in_map(Candidate0, [spec, credential_requirements], #{})),
-                autonomy_policy => choose_map(Input, [autonomy_policy, autonomyPolicy], get_in_map(Candidate0, [spec, autonomy_policy], #{})),
-                promotion_policy => choose_map(Input, [promotion_policy, promotionPolicy], get_in_map(Candidate0, [spec, promotion_policy], #{}))
+                schedule_policy => SchedulePolicy,
+                report_contract => ReportContract,
+                alert_rules => AlertRules,
+                source_strategy => SourceStrategy,
+                tool_profile => ToolProfile,
+                credential_requirements => CredentialRequirements,
+                autonomy_policy => AutonomyPolicy,
+                promotion_policy => PromotionPolicy
               }
             ),
           state => #{status => <<"active">>, activated_at => Now, superseded_at => undefined},
@@ -330,6 +357,130 @@ get_case_overview(RootDir0, CaseId0) ->
   case load_case(RootDir, CaseId) of
     {ok, _CaseObj, _CaseDir} -> {ok, get_case_overview_map(RootDir, CaseId)};
     {error, Reason} -> {error, Reason}
+  end.
+
+get_task_detail(RootDir0, CaseId0, TaskId0) ->
+  RootDir = ensure_list(RootDir0),
+  CaseId = to_bin(CaseId0),
+  TaskId = to_bin(TaskId0),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      TaskPath = task_file(CaseDir, TaskId),
+      case filelib:is_file(TaskPath) of
+        false -> {error, not_found};
+        true ->
+          Task = read_json(TaskPath),
+          Versions = read_task_versions(CaseDir, TaskId),
+          CredentialBindings = read_task_credential_bindings(CaseDir, TaskId),
+          Authorization = build_task_authorization(Task, Versions, CredentialBindings),
+          {ok,
+           #{
+             task => Task,
+             versions => Versions,
+             credential_bindings => CredentialBindings,
+             authorization => Authorization,
+             runs => [],
+             artifacts => []
+           }}
+      end
+  end.
+
+upsert_credential_binding(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TaskId = required_bin(Input, [task_id, taskId]),
+  SlotName = required_bin(Input, [slot_name, slotName]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      TaskPath = task_file(CaseDir, TaskId),
+      case filelib:is_file(TaskPath) of
+        false -> {error, not_found};
+        true ->
+          Now = now_ts(),
+          Task0 = read_json(TaskPath),
+          ExistingBindings = read_task_credential_bindings(CaseDir, TaskId),
+          BindingId = resolve_credential_binding_id(Input, ExistingBindings),
+          BindingPath = credential_binding_file(CaseDir, TaskId, BindingId),
+          Binding1 =
+            case filelib:is_file(BindingPath) of
+              true ->
+                update_credential_binding(read_json(BindingPath), Input, SlotName, Now);
+              false ->
+                build_credential_binding(CaseId, TaskId, BindingId, Input, SlotName, Now)
+            end,
+          ok = write_json(BindingPath, Binding1),
+          {Task1, Authorization} = sync_task_authorization(CaseDir, Task0, Now),
+          ok = refresh_case_state(RootDir, CaseId),
+          ok = rebuild_indexes(RootDir, CaseId),
+          {ok,
+           #{
+             credential_binding => Binding1,
+             credential_bindings => read_task_credential_bindings(CaseDir, TaskId),
+             task => Task1,
+             authorization => Authorization,
+             overview => get_case_overview_map(RootDir, CaseId)
+           }}
+      end
+  end.
+
+activate_task(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TaskId = required_bin(Input, [task_id, taskId]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      TaskPath = task_file(CaseDir, TaskId),
+      case filelib:is_file(TaskPath) of
+        false -> {error, not_found};
+        true ->
+          Now = now_ts(),
+          Task0 = read_json(TaskPath),
+          Versions = read_task_versions(CaseDir, TaskId),
+          CredentialBindings = read_task_credential_bindings(CaseDir, TaskId),
+          Authorization = build_task_authorization(Task0, Versions, CredentialBindings),
+          case activation_error(Authorization) of
+            undefined ->
+              Task1 =
+                update_object(
+                  Task0,
+                  Now,
+                  fun (Obj) ->
+                    Obj#{
+                      state =>
+                        maps:merge(
+                          maps:get(state, Obj, #{}),
+                          #{status => <<"active">>, health => task_health_for_status(<<"active">>)}
+                        ),
+                      audit =>
+                        maps:merge(
+                          maps:get(audit, Obj, #{}),
+                          compact_map(
+                            #{
+                              activated_at => Now,
+                              activated_by_op_id => get_bin(Input, [activated_by_op_id, activatedByOpId], undefined)
+                            }
+                          )
+                        )
+                    }
+                  end
+                ),
+              ok = write_json(TaskPath, Task1),
+              ok = refresh_case_state(RootDir, CaseId),
+              ok = rebuild_indexes(RootDir, CaseId),
+              {ok,
+               #{
+                 task => Task1,
+                 authorization => Authorization#{status => <<"active">>},
+                 overview => get_case_overview_map(RootDir, CaseId)
+               }};
+            Error -> {error, Error}
+          end
+      end
   end.
 create_candidates_and_mail(_RootDir, _CaseDir, _CaseId, _RoundId, _WorkflowSessionId, [], _Now) -> {[], []};
 create_candidates_and_mail(RootDir, CaseDir, CaseId, RoundId, WorkflowSessionId, [Spec | Rest], Now) ->
@@ -661,6 +812,14 @@ read_task_objects(TaskRoot) ->
     TaskDirs
   ).
 
+read_task_versions(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "versions"]))).
+
+read_task_credential_bindings(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "credential_bindings"]))).
+
 read_objects_in_dir(Dir) ->
   [read_json(Path) || Path <- json_files(Dir)].
 
@@ -709,6 +868,11 @@ task_version_file(CaseDir, TaskId0, VersionId0) ->
   TaskId = ensure_list(TaskId0),
   VersionId = ensure_list(VersionId0),
   filename:join([CaseDir, "meta", "tasks", TaskId, "versions", VersionId ++ ".json"]).
+
+credential_binding_file(CaseDir, TaskId0, BindingId0) ->
+  TaskId = ensure_list(TaskId0),
+  BindingId = ensure_list(BindingId0),
+  filename:join([CaseDir, "meta", "tasks", TaskId, "credential_bindings", BindingId ++ ".json"]).
 
 mail_file(CaseDir, MailId0) ->
   MailId = ensure_list(MailId0),
@@ -786,6 +950,220 @@ id_of(Obj) -> get_in_map(Obj, [header, id], <<>>).
 default_timezone(CaseObj) -> get_in_map(CaseObj, [spec, default_timezone], <<"Asia/Shanghai">>).
 
 compact_map(Map) -> maps:filter(fun (_K, V) -> V =/= undefined end, ensure_map(Map)).
+
+initial_task_status(CredentialRequirements) ->
+  case required_credential_slots(CredentialRequirements) of
+    [] -> <<"active">>;
+    _ -> <<"awaiting_credentials">>
+  end.
+
+task_health_for_status(<<"active">>) -> <<"ok">>;
+task_health_for_status(<<"ready_to_activate">>) -> <<"pending_activation">>;
+task_health_for_status(<<"awaiting_credentials">>) -> <<"authorization_pending">>;
+task_health_for_status(<<"credential_expired">>) -> <<"credential_expired">>;
+task_health_for_status(<<"reauthorization_required">>) -> <<"reauthorization_required">>;
+task_health_for_status(_) -> <<"ok">>.
+
+build_credential_binding(CaseId, TaskId, BindingId, Input, SlotName, Now) ->
+  #{
+    header => header(BindingId, <<"credential_binding">>, Now),
+    links => compact_map(#{case_id => CaseId, task_id => TaskId}),
+    spec =>
+      compact_map(
+        #{
+          slot_name => SlotName,
+          binding_type => get_bin(Input, [binding_type, bindingType], undefined),
+          provider => get_bin(Input, [provider], undefined),
+          material_ref => get_bin(Input, [material_ref, materialRef], undefined)
+        }
+      ),
+    state =>
+      compact_map(
+        #{
+          status => get_bin(Input, [status], <<"validated">>),
+          validated_at => resolve_validated_at(Input, Now),
+          expires_at => get_number(Input, [expires_at, expiresAt], undefined)
+        }
+      ),
+    audit =>
+      compact_map(
+        #{
+          created_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined),
+          note => get_bin(Input, [note], undefined)
+        }
+      ),
+    ext => #{}
+  }.
+
+update_credential_binding(Binding0, Input, SlotName, Now) ->
+  update_object(
+    Binding0,
+    Now,
+    fun (Obj) ->
+      Obj#{
+        spec =>
+          maps:merge(
+            maps:get(spec, Obj, #{}),
+            compact_map(
+              #{
+                slot_name => SlotName,
+                binding_type => get_bin(Input, [binding_type, bindingType], get_in_map(Obj, [spec, binding_type], undefined)),
+                provider => get_bin(Input, [provider], get_in_map(Obj, [spec, provider], undefined)),
+                material_ref => get_bin(Input, [material_ref, materialRef], get_in_map(Obj, [spec, material_ref], undefined))
+              }
+            )
+          ),
+        state =>
+          maps:merge(
+            maps:get(state, Obj, #{}),
+            compact_map(
+              #{
+                status => get_bin(Input, [status], get_in_map(Obj, [state, status], <<"validated">>)),
+                validated_at => resolve_validated_at(Input, Now, Obj),
+                expires_at => get_number(Input, [expires_at, expiresAt], get_in_map(Obj, [state, expires_at], undefined))
+              }
+            )
+          ),
+        audit =>
+          maps:merge(
+            maps:get(audit, Obj, #{}),
+            compact_map(
+              #{
+                updated_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined),
+                note => get_bin(Input, [note], undefined)
+              }
+            )
+          )
+      }
+    end
+  ).
+
+resolve_credential_binding_id(Input, ExistingBindings) ->
+  case get_bin(Input, [credential_binding_id, credentialBindingId], undefined) of
+    undefined ->
+      SlotName = get_bin(Input, [slot_name, slotName], <<>>),
+      Provider = get_bin(Input, [provider], <<>>),
+      BindingType = get_bin(Input, [binding_type, bindingType], <<>>),
+      case lists:filter(
+             fun (Binding) ->
+               get_in_map(Binding, [spec, slot_name], <<>>) =:= SlotName andalso
+                 get_in_map(Binding, [spec, provider], <<>>) =:= Provider andalso
+                 get_in_map(Binding, [spec, binding_type], <<>>) =:= BindingType
+             end,
+             ExistingBindings
+           ) of
+        [Binding | _] -> id_of(Binding);
+        [] -> new_id(<<"binding">>)
+      end;
+    BindingId -> BindingId
+  end.
+
+resolve_validated_at(Input, Now) ->
+  resolve_validated_at(Input, Now, #{}).
+
+resolve_validated_at(Input, Now, Existing) ->
+  case get_number(Input, [validated_at, validatedAt], undefined) of
+    undefined ->
+      case get_bin(Input, [status], get_in_map(Existing, [state, status], <<"validated">>)) of
+        <<"validated">> ->
+          case get_in_map(Existing, [state, validated_at], undefined) of
+            undefined -> Now;
+            Value -> Value
+          end;
+        _ -> get_in_map(Existing, [state, validated_at], undefined)
+      end;
+    Value -> Value
+  end.
+
+sync_task_authorization(CaseDir, Task0, Now) ->
+  TaskId = get_in_map(Task0, [header, id], <<>>),
+  Versions = read_task_versions(CaseDir, TaskId),
+  CredentialBindings = read_task_credential_bindings(CaseDir, TaskId),
+  Authorization0 = build_task_authorization(Task0, Versions, CredentialBindings),
+  Status0 = get_in_map(Task0, [state, status], <<"active">>),
+  NextStatus =
+    case maps:get(status, Authorization0, <<"active">>) of
+      <<"ready_to_activate">> when Status0 =:= <<"active">> -> <<"active">>;
+      Value -> Value
+    end,
+  NextRefs = [id_of(Binding) || Binding <- CredentialBindings],
+  Task1 =
+    update_object(
+      Task0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          spec => maps:merge(maps:get(spec, Obj, #{}), #{credential_binding_refs => NextRefs}),
+          state => maps:merge(maps:get(state, Obj, #{}), #{status => NextStatus, health => task_health_for_status(NextStatus)})
+        }
+      end
+    ),
+  ok = write_json(task_file(CaseDir, TaskId), Task1),
+  {Task1, Authorization0#{status => NextStatus}}.
+
+build_task_authorization(Task, Versions, CredentialBindings) ->
+  RequiredSlots = required_credential_slots_from_versions(Versions),
+  ValidSlots =
+    unique_binaries(
+      [get_in_map(Binding, [spec, slot_name], <<>>) || Binding <- CredentialBindings, binding_status_valid(Binding)]
+    ),
+  ExpiredSlots =
+    unique_binaries(
+      [get_in_map(Binding, [spec, slot_name], <<>>) || Binding <- CredentialBindings, binding_status_expired(Binding)]
+    ),
+  MissingSlots = [Slot || Slot <- RequiredSlots, not lists:member(Slot, ValidSlots)],
+  CurrentStatus = get_in_map(Task, [state, status], <<"active">>),
+  Status =
+    case RequiredSlots of
+      [] -> <<"active">>;
+      _ when ExpiredSlots =/= [] -> <<"credential_expired">>;
+      _ when MissingSlots =/= [] -> <<"awaiting_credentials">>;
+      _ when CurrentStatus =:= <<"active">> -> <<"active">>;
+      _ -> <<"ready_to_activate">>
+    end,
+  #{required_slots => RequiredSlots, valid_slots => ValidSlots, missing_slots => MissingSlots, expired_slots => ExpiredSlots, status => Status}.
+
+required_credential_slots_from_versions(Versions) ->
+  case lists:reverse(Versions) of
+    [Version | _] -> required_credential_slots(get_in_map(Version, [spec, credential_requirements], #{}));
+    [] -> []
+  end.
+
+required_credential_slots(Requirements0) ->
+  Requirements = ensure_map(Requirements0),
+  case get_bin(Requirements, [slot_name, slotName], undefined) of
+    undefined ->
+      RawSlots =
+        case find_any(Requirements, [required_slots, requiredSlots, slots]) of
+          undefined -> [];
+          Value when is_list(Value) -> Value;
+          Value -> [Value]
+        end,
+      unique_binaries([slot_name_from_requirement(Item) || Item <- RawSlots, slot_name_from_requirement(Item) =/= <<>>]);
+    SlotName -> [SlotName]
+  end.
+
+slot_name_from_requirement(Item) when is_binary(Item) -> trim_bin(Item);
+slot_name_from_requirement(Item) when is_list(Item) -> trim_bin(to_bin(Item));
+slot_name_from_requirement(Item0) ->
+  Item = ensure_map(Item0),
+  get_bin(Item, [slot_name, slotName, name], <<>>).
+
+binding_status_valid(Binding) ->
+  lists:member(get_in_map(Binding, [state, status], <<>>), [<<"validated">>, <<"active">>, <<"ready">>, <<"bound">>]).
+
+binding_status_expired(Binding) ->
+  get_in_map(Binding, [state, status], <<>>) =:= <<"expired">>.
+
+activation_error(Authorization) ->
+  case maps:get(status, Authorization, <<"active">>) of
+    <<"awaiting_credentials">> -> awaiting_credentials;
+    <<"credential_expired">> -> credential_expired;
+    _ -> undefined
+  end.
+
+unique_binaries(List0) ->
+  lists:usort([Item || Item <- List0, is_binary(Item), Item =/= <<>>]).
 
 normalize_candidate_specs([]) -> [];
 normalize_candidate_specs(Items) when is_list(Items) -> [ensure_map(Item) || Item <- Items];

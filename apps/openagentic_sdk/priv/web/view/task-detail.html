@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenAgentic - 任务详情</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" href="/assets/case-governance.css" />
+  </head>
+  <body>
+    <div class="app caseApp">
+      <header class="topbar">
+        <div class="brand">OpenAgentic</div>
+        <div class="subtitle">任务详情 / 授权接驳</div>
+        <a class="btn" id="backToCase" href="/view/cases.html">返回案卷</a>
+        <a class="btn" href="/">Workflow</a>
+      </header>
+
+      <main class="caseMain" id="taskDetailView">
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">任务概览</div>
+          <div id="taskSummary" class="overviewCard empty">未指定任务。</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">版本历史</div>
+          <div id="taskVersions" class="entityList empty">暂无版本历史</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">授权状态</div>
+          <div id="taskAuthorization" class="entityList empty">暂无授权信息</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">运行记录</div>
+          <div id="taskRuns" class="entityList empty">暂无运行记录</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">交付物</div>
+          <div id="taskArtifacts" class="entityList empty">暂无交付物</div>
+        </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">授权接驳</div>
+          <form id="credentialBindingForm" class="caseFormGrid">
+            <label>
+              <span>槽位名</span>
+              <input id="bindingSlotName" placeholder="例如：x_session" required />
+            </label>
+            <label>
+              <span>绑定类型</span>
+              <input id="bindingType" placeholder="例如：cookie / api_key" required />
+            </label>
+            <label>
+              <span>Provider</span>
+              <input id="bindingProvider" placeholder="例如：x / openai" />
+            </label>
+            <label>
+              <span>状态</span>
+              <input id="bindingStatus" value="validated" />
+            </label>
+            <label class="span2">
+              <span>材料引用</span>
+              <input id="bindingMaterialRef" placeholder="例如：secure://materials/x-session-cookie" required />
+            </label>
+            <div class="caseActions span2">
+              <button type="submit" class="btn primary">保存授权绑定</button>
+              <button type="button" class="btn" id="btnActivateTask">激活任务</button>
+              <a class="btn" id="taskGovernanceLink" href="/view/cases.html">打开治理</a>
+            </div>
+            <div class="hint span2" id="taskDetailHint">先补齐授权绑定，再将任务激活进入正式监测。</div>
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/task-detail.js"></script>
+  </body>
+</html>

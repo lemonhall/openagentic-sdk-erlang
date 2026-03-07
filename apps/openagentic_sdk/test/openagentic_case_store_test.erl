@@ -152,6 +152,80 @@ approve_candidate_promotes_review_session_to_governance_session_test() ->
   ?assert(lists:any(fun (Item) -> id_of(Item) =:= TaskId end, maps:get(tasks, Overview))),
   ok.
 
+approve_candidate_with_credential_requirements_enters_authorization_flow_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+  CandidateId = id_of(Candidate),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => CandidateId,
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"Approve pending credentials">>,
+        objective => <<"Track diplomatic statement frequency, wording, and topic shifts">>,
+        credential_requirements =>
+          #{
+            required_slots =>
+              [
+                #{slot_name => <<"x_session">>, binding_type => <<"cookie">>, provider => <<"x">>}
+              ]
+          }
+      }
+    ),
+
+  Task0 = maps:get(task, Approved),
+  TaskId = id_of(Task0),
+  Overview0 = maps:get(overview, Approved),
+  OverviewCase0 = maps:get('case', Overview0),
+  ?assertEqual(<<"awaiting_credentials">>, deep_get(Task0, [state, status])),
+  ?assertEqual([], deep_get(Task0, [spec, credential_binding_refs])),
+  ?assertEqual(0, maps:get(active_task_count, maps:get(state, OverviewCase0))),
+
+  {ok, Bound} =
+    openagentic_case_store:upsert_credential_binding(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        slot_name => <<"x_session">>,
+        binding_type => <<"cookie">>,
+        provider => <<"x">>,
+        material_ref => <<"secure://materials/x-session-cookie">>,
+        status => <<"validated">>
+      }
+    ),
+
+  Binding = maps:get(credential_binding, Bound),
+  Task1 = maps:get(task, Bound),
+  ?assertEqual(<<"ready_to_activate">>, deep_get(Task1, [state, status])),
+  ?assert(lists:member(id_of(Binding), deep_get(Task1, [spec, credential_binding_refs]))),
+  ?assertEqual(1, length(maps:get(credential_bindings, Bound))),
+
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  Auth = maps:get(authorization, Detail),
+  ?assertEqual([<<"x_session">>], maps:get(required_slots, Auth)),
+  ?assertEqual([], maps:get(missing_slots, Auth)),
+  ?assertEqual(1, length(maps:get(versions, Detail))),
+  ?assertEqual(1, length(maps:get(credential_bindings, Detail))),
+
+  {ok, Activated} =
+    openagentic_case_store:activate_task(
+      Root,
+      #{case_id => CaseId, task_id => TaskId, activated_by_op_id => <<"lemon">>}
+    ),
+
+  Task2 = maps:get(task, Activated),
+  Overview1 = maps:get(overview, Activated),
+  OverviewCase1 = maps:get('case', Overview1),
+  ?assertEqual(<<"active">>, deep_get(Task2, [state, status])),
+  ?assertEqual(1, maps:get(active_task_count, maps:get(state, OverviewCase1))),
+  ok.
+
 discard_candidate_marks_candidate_discarded_test() ->
   Root = tmp_root(),
   {CaseId, RoundId, _Sid} = create_case_fixture(Root),
