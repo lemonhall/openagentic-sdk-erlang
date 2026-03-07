@@ -46,6 +46,25 @@
             <div class="hint span2" id="governanceStatusHint">请输入治理指令，围绕当前候选或正式任务继续讨论。</div>
           </form>
         </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">版本修订</div>
+          <form id="governanceRevisionForm" class="caseFormGrid">
+            <label class="span2">
+              <span>变更摘要</span>
+              <input id="revisionChangeSummary" placeholder="例如：缩小观察范围，聚焦升级风险" />
+            </label>
+            <label class="span2">
+              <span>新 Objective</span>
+              <textarea id="revisionObjective" rows="4" placeholder="例如：Track diplomatic statement shifts with emphasis on escalation risk."></textarea>
+            </label>
+            <div class="caseActions span2">
+              <button type="submit" class="btn primary">创建新版本</button>
+              <a class="btn" id="taskDetailLink" href="/view/task-detail.html">查看任务详情</a>
+            </div>
+            <div class="hint span2" id="governanceRevisionHint">正式任务治理可在同一条治理会话里沉淀新版本；候选审议态不会显示真实修订动作。</div>
+          </form>
+        </section>
       </main>
     </div>
 

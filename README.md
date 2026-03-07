@@ -225,6 +225,7 @@ Current local web server routes:
 - `POST /api/cases/:case_id/candidates/:candidate_id/approve` -> promote a candidate into `monitoring_task` + first `task_version`
 - `POST /api/cases/:case_id/candidates/:candidate_id/discard` -> discard a candidate in review
 - `GET /api/cases/:case_id/tasks/:task_id/detail` -> load one task with versions, authorization state, and credential bindings
+- `POST /api/cases/:case_id/tasks/:task_id/revise` -> create a new `task_version` on the same `governance_session_id`, supersede the old active version, and keep governance on one long-lived line
 - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` -> upsert one task-level `credential_binding`
 - `POST /api/cases/:case_id/tasks/:task_id/activate` -> activate a task after required bindings are satisfied
 - `POST /api/workflows/start`
@@ -240,9 +241,9 @@ The web UI is intentionally local-first and reads from session files rather than
 
 Phase 1 case governance metadata is persisted under `cases/<case_id>/...`, while transcripts continue to live under `sessions/<session_id>/...`.
 
-The case governance view now exposes a chat-style governance entry for both `review_session_id` and `governance_session_id` via `view/governance-session.html`, so candidate review can continue on the same long-lived session after promotion.
+The case governance view now exposes a chat-style governance entry for both `review_session_id` and `governance_session_id` via `view/governance-session.html`, so candidate review can continue on the same long-lived session after promotion. For formal tasks, the same governance view can also create a new `task_version` in place, keeping version revision on the same governance line instead of forcing a parallel flow.
 
-Phase 1 also now includes `view/task-detail.html`, which surfaces task definition, version history, empty-state run/artifact sections, authorization status, and a dedicated credential-binding flow that keeps `material_ref` separate from task JSON snapshots.
+Phase 1 also now includes `view/task-detail.html`, which surfaces task definition, version history, latest revision diff, reauthorization hints when a revision introduces new credential requirements, empty-state run/artifact sections, authorization status, and a dedicated credential-binding flow that keeps `material_ref` separate from task JSON snapshots.
 
 ## Tools and safety behavior
 

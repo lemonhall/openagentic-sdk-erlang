@@ -3,6 +3,7 @@ const el = (id) => document.getElementById(id);
 const ui = {
   taskSummary: el("taskSummary"),
   taskVersions: el("taskVersions"),
+  taskVersionDiff: el("taskVersionDiff"),
   taskAuthorization: el("taskAuthorization"),
   taskRuns: el("taskRuns"),
   taskArtifacts: el("taskArtifacts"),
@@ -130,6 +131,66 @@ function renderVersions(detail) {
   });
 }
 
+function formatInline(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function renderLatestVersionDiff(detail) {
+  const diff = detail?.latest_version_diff || {};
+  const changedFields = Array.isArray(diff.changed_fields) ? diff.changed_fields : [];
+  if (!diff.to_version_id || !changedFields.length) {
+    ui.taskVersionDiff.className = "entityList empty";
+    ui.taskVersionDiff.textContent = "暂无版本差异";
+    return;
+  }
+  const cards = [
+    `
+      <article class="entityCard compact">
+        <div class="entityHeader">
+          <div>
+            <div class="entityTitle">${escapeHtml(diff.change_summary || "最新版本修订")}</div>
+            <div class="entityMeta">${escapeHtml(diff.from_version_id || "")} → ${escapeHtml(diff.to_version_id || "")}</div>
+          </div>
+          <span class="statusChip">${escapeHtml(String(diff.changed_field_count || changedFields.length))} 项变更</span>
+        </div>
+        <div class="entityBody">${diff.reauthorization_required ? "本次修订引入了新的授权要求，需补齐后再激活。" : "当前修订未引发新的重授权要求。"}</div>
+      </article>
+    `,
+  ];
+  cards.push(
+    ...changedFields.map((item) => {
+      const field = item?.field || "field";
+      const fromValue = formatInline(item?.from);
+      const toValue = formatInline(item?.to);
+      return `
+        <article class="entityCard compact">
+          <div class="entityHeader">
+            <div class="entityTitle">${escapeHtml(field)}</div>
+            <span class="statusChip">已变更</span>
+          </div>
+          <div class="entityBody">from: ${escapeHtml(fromValue || "∅")}<br/>to: ${escapeHtml(toValue || "∅")}</div>
+        </article>
+      `;
+    })
+  );
+  if (Array.isArray(diff.newly_required_slots) && diff.newly_required_slots.length) {
+    cards.push(`
+      <article class="entityCard compact">
+        <div class="entityTitle">新增授权槽位</div>
+        <div class="entityBody">${escapeHtml(diff.newly_required_slots.join(", "))}</div>
+      </article>
+    `);
+  }
+  ui.taskVersionDiff.className = "entityList";
+  ui.taskVersionDiff.innerHTML = cards.join("");
+}
+
 function renderAuthorization(detail) {
   const authorization = detail?.authorization || {};
   const bindings = detail?.credential_bindings || [];
@@ -144,6 +205,11 @@ function renderAuthorization(detail) {
   }
   if (expired.length) {
     lines.push(`<article class="entityCard compact"><div class="entityTitle">已过期槽位</div><div class="entityBody">${escapeHtml(expired.join(", "))}</div></article>`);
+  }
+  const diff = detail?.latest_version_diff || {};
+  if (diff.reauthorization_required) {
+    const slots = Array.isArray(diff.newly_required_slots) ? diff.newly_required_slots : [];
+    lines.push(`<article class="entityCard compact"><div class="entityTitle">修订后需重授权</div><div class="entityBody">最新版本引入了新的授权要求。${escapeHtml(slots.join(", ") || "请查看缺失槽位")} 需要补齐后再激活。</div></article>`);
   }
   lines.push(
     ...bindings.map((binding) => {
@@ -182,6 +248,7 @@ async function loadDetail() {
   currentDetail = data;
   renderSummary(data);
   renderVersions(data);
+  renderLatestVersionDiff(data);
   renderAuthorization(data);
   renderRuns(data);
   renderArtifacts(data);

@@ -225,6 +225,7 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 - `POST /api/cases/:case_id/candidates/:candidate_id/approve` -> 将候选任务生效为 `monitoring_task` 与首个 `task_version`
 - `POST /api/cases/:case_id/candidates/:candidate_id/discard` -> 废弃候选任务
 - `GET /api/cases/:case_id/tasks/:task_id/detail` -> 读取任务详情（定义、版本、授权状态、credential binding）
+- `POST /api/cases/:case_id/tasks/:task_id/revise` -> 在同一条 `governance_session_id` 上创建新的 `task_version`，并把旧活动版本转为 `superseded`
 - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` -> 为任务创建或更新一个 `credential_binding`
 - `POST /api/cases/:case_id/tasks/:task_id/activate` -> 在授权条件满足后激活任务
 - `POST /api/workflows/start`
@@ -240,9 +241,9 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 
 本次 Phase 1 新增的治理元数据落在 `cases/<case_id>/...`，而会话 transcript 仍继续保留在 `sessions/<session_id>/...`。
 
-现在案卷治理页已经把 `review_session_id` / `governance_session_id` 接成可打开的聊天式治理入口：通过 `view/governance-session.html` 可以继续围绕同一条治理线审议候选、跟进生效后的正式任务。
+现在案卷治理页已经把 `review_session_id` / `governance_session_id` 接成可打开的聊天式治理入口：通过 `view/governance-session.html` 可以继续围绕同一条治理线审议候选、跟进生效后的正式任务；对于正式任务，还可以在同一治理页里直接沉淀新的 `task_version`，而不是另开一条平行修订流。
 
-Phase 1 现在也补上了 `view/task-detail.html`：可查看任务定义、版本历史、空态运行/交付物区、授权状态，并通过独立的授权接驳表单维护 `credential_binding`，只保存 `material_ref` 引用而不把敏感材料本体写进任务主 JSON。
+Phase 1 现在也补上了 `view/task-detail.html`：可查看任务定义、版本历史、最新修订差异、修订引入新凭证要求时的重授权提示、空态运行/交付物区、授权状态，并通过独立的授权接驳表单维护 `credential_binding`，只保存 `material_ref` 引用而不把敏感材料本体写进任务主 JSON。
 
 ## 工具与安全行为
 

@@ -226,6 +226,131 @@ approve_candidate_with_credential_requirements_enters_authorization_flow_test() 
   ?assertEqual(1, maps:get(active_task_count, maps:get(state, OverviewCase1))),
   ok.
 
+revise_task_creates_new_active_version_on_same_governance_session_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => id_of(Candidate),
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"Approve as monitoring task">>,
+        objective => <<"Track diplomatic statement frequency and wording shifts">>
+      }
+    ),
+
+  Task0 = maps:get(task, Approved),
+  OldVersion = maps:get(task_version, Approved),
+  TaskId = id_of(Task0),
+  GovernanceSid = deep_get(Task0, [links, governance_session_id]),
+  OldVersionId = id_of(OldVersion),
+
+  {ok, Revised} =
+    openagentic_case_store:revise_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        governance_session_id => GovernanceSid,
+        revised_by_op_id => <<"lemon">>,
+        change_summary => <<"Narrow focus to escalation risk">>,
+        objective => <<"Track diplomatic statement shifts with emphasis on escalation risk">>
+      }
+    ),
+
+  Task1 = maps:get(task, Revised),
+  Version1 = maps:get(task_version, Revised),
+  Version1Id = id_of(Version1),
+  ?assert(Version1Id =/= OldVersionId),
+  ?assertEqual(OldVersionId, deep_get(Version1, [links, previous_version_id])),
+  ?assertEqual(Version1Id, deep_get(Task1, [links, active_version_id])),
+  ?assertEqual(<<"active">>, deep_get(Version1, [state, status])),
+  ?assertEqual(<<"Track diplomatic statement shifts with emphasis on escalation risk">>, deep_get(Version1, [spec, objective])),
+  ?assertEqual(<<"Narrow focus to escalation risk">>, deep_get(Version1, [audit, change_summary])),
+
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  Versions = maps:get(versions, Detail),
+  ?assertEqual(2, length(Versions)),
+  [Version0After, Version1After] = Versions,
+  ?assertEqual(OldVersionId, id_of(Version0After)),
+  ?assertEqual(<<"superseded">>, deep_get(Version0After, [state, status])),
+  ?assertEqual(Version1Id, id_of(Version1After)),
+  ?assertEqual(<<"active">>, deep_get(Version1After, [state, status])),
+  ok.
+
+revise_task_with_new_credentials_requires_reauthorization_and_exposes_diff_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => id_of(Candidate),
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"Approve as monitoring task">>,
+        objective => <<"Track diplomatic statement frequency and wording shifts">>
+      }
+    ),
+
+  Task0 = maps:get(task, Approved),
+  TaskId = id_of(Task0),
+  GovernanceSid = deep_get(Task0, [links, governance_session_id]),
+
+  {ok, Revised} =
+    openagentic_case_store:revise_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        governance_session_id => GovernanceSid,
+        revised_by_op_id => <<"lemon">>,
+        change_summary => <<"Add credential-gated source access">>,
+        objective => <<"Track diplomatic statement shifts with credential-gated source access">>,
+        credential_requirements =>
+          #{
+            required_slots =>
+              [
+                #{slot_name => <<"x_session">>, binding_type => <<"cookie">>, provider => <<"x">>}
+              ]
+          }
+      }
+    ),
+
+  Task1 = maps:get(task, Revised),
+  Auth1 = maps:get(authorization, Revised),
+  ?assertEqual(<<"awaiting_credentials">>, deep_get(Task1, [state, status])),
+  ?assertEqual([<<"x_session">>], maps:get(missing_slots, Auth1)),
+
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  Diff = maps:get(latest_version_diff, Detail),
+  ChangedFields = maps:get(changed_fields, Diff),
+  ?assertEqual(true, maps:get(credential_requirements_changed, Diff)),
+  ?assertEqual(true, maps:get(reauthorization_required, Diff)),
+  ?assertEqual([<<"x_session">>], maps:get(newly_required_slots, Diff)),
+  ?assertEqual(<<"awaiting_credentials">>, maps:get(authorization_status, Diff)),
+  ?assert(
+    lists:any(
+      fun (Item) -> maps:get(field, Item) =:= <<"objective">> end,
+      ChangedFields
+    )
+  ),
+  ?assert(
+    lists:any(
+      fun (Item) -> maps:get(field, Item) =:= <<"credential_requirements">> end,
+      ChangedFields
+    )
+  ),
+  ok.
+
 discard_candidate_marks_candidate_discarded_test() ->
   Root = tmp_root(),
   {CaseId, RoundId, _Sid} = create_case_fixture(Root),

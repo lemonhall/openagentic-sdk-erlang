@@ -163,7 +163,28 @@ governance_session_page_and_query_api_test() ->
         #{message => <<"Continue governance on the same task.">>}
       ),
     ?assertEqual(GovernanceSid, maps:get(<<"session_id">>, QueryResp2)),
-    ?assertEqual(<<"OK">>, maps:get(<<"final_text">>, QueryResp2))
+    ?assertEqual(<<"OK">>, maps:get(<<"final_text">>, QueryResp2)),
+
+    {201, Revised} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(deep_get_bin(maps:get(<<"task">>, Approved), [<<"header">>, <<"id">>])) ++ "/revise",
+        #{
+          governance_session_id => GovernanceSid,
+          revised_by_op_id => <<"lemon">>,
+          change_summary => <<"Narrow focus to escalation risk">>,
+          objective => <<"Track diplomatic statement shifts with emphasis on escalation risk">>
+        }
+      ),
+    RevisedVersion = maps:get(<<"task_version">>, Revised),
+    ?assertEqual(<<"active">>, deep_get_bin(RevisedVersion, [<<"state">>, <<"status">>])),
+
+    ReviewEvents2 = openagentic_session_store:read_events(Root, ensure_list(GovernanceSid)),
+    ?assert(
+      lists:any(
+        fun (Ev) -> maps:get(<<"type">>, Ev, <<>>) =:= <<"governance.task_version.created">> end,
+        ReviewEvents2
+      )
+    )
   after
     reset_web_runtime(),
     process_flag(trap_exit, PrevTrap)
@@ -260,6 +281,166 @@ task_detail_and_credential_binding_api_test() ->
   end,
   ok.
 
+task_revision_api_updates_task_detail_versions_test() ->
+  Root = tmp_root(),
+  Port = pick_port(),
+  PrevTrap = process_flag(trap_exit, true),
+  ensure_httpc_started(),
+  try
+    {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+    ok =
+      append_round_result(
+        Root,
+        Sid,
+        <<"## Suggested Monitoring Items\n",
+          "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+          "- Track US sanctions policy and enforcement cadence\n">>
+      ),
+    {ok, _} = openagentic_web:start(#{project_dir => Root, session_root => Root, web_bind => "127.0.0.1", web_port => Port}),
+    Base = ensure_list(openagentic_web:base_url(#{bind => "127.0.0.1", port => Port})),
+
+    {201, Created} =
+      http_post_json(
+        Base ++ "api/cases",
+        #{
+          workflow_session_id => to_bin(Sid),
+          title => <<"Iran Situation">>,
+          opening_brief => <<"Create a long-running governance case around Iran">>,
+          current_summary => <<"Deliberation completed; waiting for candidate extraction">>
+        }
+      ),
+    CaseId = deep_get_bin(maps:get(<<"case">>, Created), [<<"header">>, <<"id">>]),
+    [Candidate | _] = maps:get(<<"candidates">>, Created),
+    CandidateId = deep_get_bin(Candidate, [<<"header">>, <<"id">>]),
+
+    {201, Approved} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/candidates/" ++ ensure_list(CandidateId) ++ "/approve",
+        #{
+          approved_by_op_id => <<"lemon">>,
+          approval_summary => <<"Approve as monitoring task">>,
+          objective => <<"Track diplomatic statement frequency and wording shifts">>
+        }
+      ),
+    Task = maps:get(<<"task">>, Approved),
+    TaskId = deep_get_bin(Task, [<<"header">>, <<"id">>]),
+    GovernanceSid = deep_get_bin(Task, [<<"links">>, <<"governance_session_id">>]),
+
+    {201, Revised} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/revise",
+        #{
+          governance_session_id => GovernanceSid,
+          revised_by_op_id => <<"lemon">>,
+          change_summary => <<"Narrow focus to escalation risk">>,
+          objective => <<"Track diplomatic statement shifts with emphasis on escalation risk">>
+        }
+      ),
+    NewVersionId = deep_get_bin(maps:get(<<"task_version">>, Revised), [<<"header">>, <<"id">>]),
+
+    {200, Detail} = http_get_json(Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/detail"),
+    Versions = maps:get(<<"versions">>, Detail),
+    ?assertEqual(2, length(Versions)),
+    ?assertEqual(NewVersionId, deep_get_bin(maps:get(<<"task">>, Detail), [<<"links">>, <<"active_version_id">>])),
+    ?assertEqual(<<"superseded">>, deep_get_bin(lists:nth(1, Versions), [<<"state">>, <<"status">>])),
+    ?assertEqual(<<"active">>, deep_get_bin(lists:nth(2, Versions), [<<"state">>, <<"status">>])),
+    Diff0 = maps:get(<<"latest_version_diff">>, Detail),
+    ?assertEqual(<<"Narrow focus to escalation risk">>, maps:get(<<"change_summary">>, Diff0)),
+    ?assertEqual(false, maps:get(<<"reauthorization_required">>, Diff0))
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
+  end,
+  ok.
+
+task_detail_api_exposes_reauthorization_hint_after_revision_test() ->
+  Root = tmp_root(),
+  Port = pick_port(),
+  PrevTrap = process_flag(trap_exit, true),
+  ensure_httpc_started(),
+  try
+    {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+    ok =
+      append_round_result(
+        Root,
+        Sid,
+        <<"## Suggested Monitoring Items\n",
+          "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+          "- Track US sanctions policy and enforcement cadence\n">>
+      ),
+    {ok, _} =
+      openagentic_web:start(
+        #{
+          project_dir => Root,
+          session_root => Root,
+          web_bind => "127.0.0.1",
+          web_port => Port,
+          provider_mod => openagentic_testing_provider,
+          tools => [openagentic_tool_echo],
+          permission_mode_override => bypass,
+          api_key => <<"x">>,
+          model => <<"x">>
+        }
+      ),
+    Base = ensure_list(openagentic_web:base_url(#{bind => "127.0.0.1", port => Port})),
+
+    {201, Created} =
+      http_post_json(
+        Base ++ "api/cases",
+        #{
+          workflow_session_id => to_bin(Sid),
+          title => <<"Iran Situation">>,
+          opening_brief => <<"Create a long-running governance case around Iran">>,
+          current_summary => <<"Deliberation completed; waiting for candidate extraction">>
+        }
+      ),
+    CaseId = deep_get_bin(maps:get(<<"case">>, Created), [<<"header">>, <<"id">>]),
+    [Candidate | _] = maps:get(<<"candidates">>, Created),
+    CandidateId = deep_get_bin(Candidate, [<<"header">>, <<"id">>]),
+
+    {201, Approved} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/candidates/" ++ ensure_list(CandidateId) ++ "/approve",
+        #{
+          approved_by_op_id => <<"lemon">>,
+          approval_summary => <<"Approve as monitoring task">>,
+          objective => <<"Track diplomatic statement frequency and wording shifts">>
+        }
+      ),
+    Task = maps:get(<<"task">>, Approved),
+    TaskId = deep_get_bin(Task, [<<"header">>, <<"id">>]),
+    GovernanceSid = deep_get_bin(Task, [<<"links">>, <<"governance_session_id">>]),
+
+    {201, _Revised} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/revise",
+        #{
+          governance_session_id => GovernanceSid,
+          revised_by_op_id => <<"lemon">>,
+          change_summary => <<"Add credential-gated source access">>,
+          objective => <<"Track diplomatic statement shifts with credential-gated source access">>,
+          credential_requirements =>
+            #{
+              required_slots =>
+                [
+                  #{slot_name => <<"x_session">>, binding_type => <<"cookie">>, provider => <<"x">>}
+                ]
+            }
+        }
+      ),
+
+    {200, Detail} = http_get_json(Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/detail"),
+    Diff = maps:get(<<"latest_version_diff">>, Detail),
+    ?assertEqual(<<"awaiting_credentials">>, deep_get_bin(Detail, [<<"task">>, <<"state">>, <<"status">>])),
+    ?assertEqual(true, maps:get(<<"reauthorization_required">>, Diff)),
+    ?assertEqual([<<"x_session">>], maps:get(<<"newly_required_slots">>, Diff)),
+    ?assertEqual(<<"awaiting_credentials">>, maps:get(<<"authorization_status">>, Diff))
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
+  end,
+  ok.
+
 case_create_api_requires_completed_workflow_test() ->
   Root = tmp_root(),
   Port = pick_port(),
@@ -303,8 +484,10 @@ case_governance_static_page_test() ->
     ?assert(string:find(Html, "candidateList") =/= nomatch),
     ?assert(string:find(Html, "/assets/case-governance.js") =/= nomatch),
     ?assert(string:find(GovernanceHtml, "governanceSessionForm") =/= nomatch),
+    ?assert(string:find(GovernanceHtml, "governanceRevisionForm") =/= nomatch),
     ?assert(string:find(GovernanceHtml, "/assets/governance-session.js") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "taskDetailView") =/= nomatch),
+    ?assert(string:find(TaskDetailHtml, "taskVersionDiff") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "/assets/task-detail.js") =/= nomatch),
     ?assert(string:find(IndexHtml, "/view/cases.html") =/= nomatch),
     ?assert(string:find(IndexHtml, "btnFileCase") =/= nomatch),

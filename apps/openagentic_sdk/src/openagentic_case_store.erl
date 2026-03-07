@@ -7,6 +7,7 @@
   discard_candidate/2,
   get_case_overview/2,
   get_task_detail/3,
+  revise_task/2,
   upsert_credential_binding/2,
   activate_task/2
 ]).
@@ -376,13 +377,37 @@ get_task_detail(RootDir0, CaseId0, TaskId0) ->
           Authorization = build_task_authorization(Task, Versions, CredentialBindings),
           {ok,
            #{
-             task => Task,
-             versions => Versions,
-             credential_bindings => CredentialBindings,
-             authorization => Authorization,
-             runs => [],
-             artifacts => []
-           }}
+              task => Task,
+              versions => Versions,
+              credential_bindings => CredentialBindings,
+              authorization => Authorization,
+              latest_version_diff => build_latest_version_diff(Versions, Authorization),
+              runs => [],
+              artifacts => []
+            }}
+      end
+  end.
+
+revise_task(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TaskId = required_bin(Input, [task_id, taskId]),
+  GovernanceSessionId = required_bin(Input, [governance_session_id, governanceSessionId]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      TaskPath = task_file(CaseDir, TaskId),
+      case filelib:is_file(TaskPath) of
+        false -> {error, not_found};
+        true ->
+          Task0 = read_json(TaskPath),
+          case get_in_map(Task0, [links, governance_session_id], <<>>) of
+            <<>> -> {error, governance_session_missing};
+            GovernanceSessionId ->
+              revise_task_with_session(RootDir, CaseId, CaseDir, Task0, Input, GovernanceSessionId);
+            _ -> {error, governance_session_mismatch}
+          end
       end
   end.
 
@@ -481,6 +506,134 @@ activate_task(RootDir0, Input0) ->
             Error -> {error, Error}
           end
       end
+  end.
+
+revise_task_with_session(RootDir, CaseId, CaseDir, Task0, Input, GovernanceSessionId) ->
+  TaskId = get_in_map(Task0, [header, id], <<>>),
+  case lists:reverse(read_task_versions(CaseDir, TaskId)) of
+    [] ->
+      {error, no_task_version};
+    [CurrentVersion0 | _] ->
+      Now = now_ts(),
+      CurrentVersionId = id_of(CurrentVersion0),
+      NextVersionId = new_id(<<"version">>),
+      CurrentVersion1 =
+        update_object(
+          CurrentVersion0,
+          Now,
+          fun (Obj) ->
+            Obj#{
+              state => maps:merge(maps:get(state, Obj, #{}), #{status => <<"superseded">>, superseded_at => Now})
+            }
+          end
+        ),
+      NextVersion = build_revised_task_version(CaseId, TaskId, NextVersionId, CurrentVersion0, Input, GovernanceSessionId, Now),
+      ok = write_json(task_version_file(CaseDir, TaskId, CurrentVersionId), CurrentVersion1),
+      ok = write_json(task_version_file(CaseDir, TaskId, NextVersionId), NextVersion),
+      Task1Base =
+        update_object(
+          Task0,
+          Now,
+          fun (Obj) ->
+            Obj#{
+              links => maps:merge(maps:get(links, Obj, #{}), #{active_version_id => NextVersionId}),
+              audit =>
+                maps:merge(
+                  maps:get(audit, Obj, #{}),
+                  compact_map(
+                    #{
+                      revised_at => Now,
+                      revised_by_op_id => get_bin(Input, [revised_by_op_id, revisedByOpId], undefined),
+                      latest_governance_session_id => GovernanceSessionId,
+                      latest_change_summary => get_bin(Input, [change_summary, changeSummary], undefined)
+                    }
+                  )
+                )
+            }
+          end
+        ),
+      {Task1, Authorization} = sync_task_authorization(CaseDir, Task1Base, Now),
+      ok = refresh_case_state(RootDir, CaseId),
+      ok = rebuild_indexes(RootDir, CaseId),
+      ok = append_governance_revision_event(RootDir, GovernanceSessionId, CaseId, TaskId, CurrentVersionId, NextVersionId, Input),
+      {ok,
+       #{
+         task => Task1,
+         task_version => NextVersion,
+         authorization => Authorization,
+         latest_version_diff => build_latest_version_diff(read_task_versions(CaseDir, TaskId), Authorization),
+         overview => get_case_overview_map(RootDir, CaseId)
+       }}
+  end.
+
+build_revised_task_version(CaseId, TaskId, VersionId, CurrentVersion0, Input, GovernanceSessionId, Now) ->
+  CurrentVersion = ensure_map(CurrentVersion0),
+  CurrentLinks = ensure_map(maps:get(links, CurrentVersion, #{})),
+  CurrentSpec = ensure_map(maps:get(spec, CurrentVersion, #{})),
+  #{
+    header => header(VersionId, <<"task_version">>, Now),
+    links =>
+      compact_map(
+        #{
+          case_id => CaseId,
+          task_id => TaskId,
+          previous_version_id => id_of(CurrentVersion),
+          derived_from_template_ref =>
+            get_bin(Input, [derived_from_template_ref, derivedFromTemplateRef], get_in_map(CurrentLinks, [derived_from_template_ref], undefined)),
+          approved_by_op_id =>
+            get_bin(
+              Input,
+              [approved_by_op_id, approvedByOpId],
+              get_bin(Input, [revised_by_op_id, revisedByOpId], get_in_map(CurrentLinks, [approved_by_op_id], undefined))
+            )
+        }
+      ),
+    spec =>
+      compact_map(
+        #{
+          objective => get_bin(Input, [objective], get_in_map(CurrentSpec, [objective], <<>>)),
+          schedule_policy => choose_map(Input, [schedule_policy, schedulePolicy], get_in_map(CurrentSpec, [schedule_policy], #{})),
+          report_contract => choose_map(Input, [report_contract, reportContract], get_in_map(CurrentSpec, [report_contract], #{})),
+          alert_rules => choose_map(Input, [alert_rules, alertRules], get_in_map(CurrentSpec, [alert_rules], #{})),
+          source_strategy => choose_map(Input, [source_strategy, sourceStrategy], get_in_map(CurrentSpec, [source_strategy], #{})),
+          tool_profile => choose_map(Input, [tool_profile, toolProfile], get_in_map(CurrentSpec, [tool_profile], #{})),
+          credential_requirements =>
+            choose_map(Input, [credential_requirements, credentialRequirements], get_in_map(CurrentSpec, [credential_requirements], #{})),
+          autonomy_policy => choose_map(Input, [autonomy_policy, autonomyPolicy], get_in_map(CurrentSpec, [autonomy_policy], #{})),
+          promotion_policy => choose_map(Input, [promotion_policy, promotionPolicy], get_in_map(CurrentSpec, [promotion_policy], #{}))
+        }
+      ),
+    state => #{status => <<"active">>, activated_at => Now, superseded_at => undefined},
+    audit =>
+      compact_map(
+        #{
+          change_summary => get_bin(Input, [change_summary, changeSummary], <<"revise task version">>),
+          approval_summary => get_bin(Input, [approval_summary, approvalSummary], undefined),
+          revised_by_op_id => get_bin(Input, [revised_by_op_id, revisedByOpId], undefined),
+          governance_session_id => GovernanceSessionId
+        }
+      ),
+    ext => #{}
+  }.
+
+append_governance_revision_event(RootDir, GovernanceSessionId, CaseId, TaskId, PreviousVersionId, VersionId, Input) ->
+  Event =
+    compact_map(
+      #{
+        type => <<"governance.task_version.created">>,
+        case_id => CaseId,
+        task_id => TaskId,
+        governance_session_id => GovernanceSessionId,
+        previous_version_id => PreviousVersionId,
+        task_version_id => VersionId,
+        revised_by_op_id => get_bin(Input, [revised_by_op_id, revisedByOpId], undefined),
+        change_summary => get_bin(Input, [change_summary, changeSummary], undefined),
+        objective => get_bin(Input, [objective], undefined)
+      }
+    ),
+  case catch openagentic_session_store:append_event(RootDir, ensure_list(GovernanceSessionId), Event) of
+    {ok, _} -> ok;
+    _ -> ok
   end.
 create_candidates_and_mail(_RootDir, _CaseDir, _CaseId, _RoundId, _WorkflowSessionId, [], _Now) -> {[], []};
 create_candidates_and_mail(RootDir, CaseDir, CaseId, RoundId, WorkflowSessionId, [Spec | Rest], Now) ->
@@ -1122,6 +1275,75 @@ build_task_authorization(Task, Versions, CredentialBindings) ->
       _ -> <<"ready_to_activate">>
     end,
   #{required_slots => RequiredSlots, valid_slots => ValidSlots, missing_slots => MissingSlots, expired_slots => ExpiredSlots, status => Status}.
+
+build_latest_version_diff(Versions0, Authorization0) ->
+  Versions = [ensure_map(V) || V <- Versions0],
+  Authorization = ensure_map(Authorization0),
+  case lists:reverse(Versions) of
+    [Current0, Previous0 | _] ->
+      Current = ensure_map(Current0),
+      Previous = ensure_map(Previous0),
+      CurrentSpec = ensure_map(maps:get(spec, Current, #{})),
+      PreviousSpec = ensure_map(maps:get(spec, Previous, #{})),
+      BeforeSlots = required_credential_slots(get_in_map(PreviousSpec, [credential_requirements], #{})),
+      AfterSlots = required_credential_slots(get_in_map(CurrentSpec, [credential_requirements], #{})),
+      NewlyRequired = [Slot || Slot <- AfterSlots, not lists:member(Slot, BeforeSlots)],
+      RemovedSlots = [Slot || Slot <- BeforeSlots, not lists:member(Slot, AfterSlots)],
+      ChangedFields = version_changed_fields(PreviousSpec, CurrentSpec),
+      CredentialRequirementsChanged = BeforeSlots =/= AfterSlots,
+      ReauthorizationRequired =
+        CredentialRequirementsChanged andalso maps:get(status, Authorization, <<"active">>) =/= <<"active">>,
+      #{
+        from_version_id => id_of(Previous),
+        to_version_id => id_of(Current),
+        change_summary => get_in_map(Current, [audit, change_summary], <<>>),
+        changed_fields => ChangedFields,
+        changed_field_count => length(ChangedFields),
+        credential_requirements_changed => CredentialRequirementsChanged,
+        newly_required_slots => NewlyRequired,
+        removed_required_slots => RemovedSlots,
+        reauthorization_required => ReauthorizationRequired,
+        authorization_status => maps:get(status, Authorization, <<"active">>)
+      };
+    _ ->
+      #{}
+  end.
+
+version_changed_fields(PreviousSpec, CurrentSpec) ->
+  Fields =
+    [
+      objective,
+      schedule_policy,
+      report_contract,
+      alert_rules,
+      source_strategy,
+      tool_profile,
+      credential_requirements,
+      autonomy_policy,
+      promotion_policy
+    ],
+  lists:foldl(
+    fun (Field, Acc) ->
+      Prev = maps:get(Field, PreviousSpec, undefined),
+      Curr = maps:get(Field, CurrentSpec, undefined),
+      case Prev =:= Curr of
+        true -> Acc;
+        false ->
+          [
+            compact_map(
+              #{
+                field => atom_to_binary(Field, utf8),
+                from => Prev,
+                to => Curr
+              }
+            )
+            | Acc
+          ]
+      end
+    end,
+    [],
+    Fields
+  ).
 
 required_credential_slots_from_versions(Versions) ->
   case lists:reverse(Versions) of

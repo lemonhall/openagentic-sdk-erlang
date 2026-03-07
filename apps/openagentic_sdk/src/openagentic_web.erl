@@ -49,6 +49,7 @@ start(Opts0) ->
         {"/api/cases/:case_id/candidates/:candidate_id/approve", openagentic_web_api_candidates_approve, State},
         {"/api/cases/:case_id/candidates/:candidate_id/discard", openagentic_web_api_candidates_discard, State},
         {"/api/cases/:case_id/tasks/:task_id/detail", openagentic_web_api_tasks_detail, State},
+        {"/api/cases/:case_id/tasks/:task_id/revise", openagentic_web_api_tasks_revise, State},
         {"/api/cases/:case_id/tasks/:task_id/credential-bindings", openagentic_web_api_task_credential_bindings, State},
         {"/api/cases/:case_id/tasks/:task_id/activate", openagentic_web_api_tasks_activate, State},
         {"/api/workflows/start", openagentic_web_api_workflows_start, State},

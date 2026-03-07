@@ -112,7 +112,7 @@
 - 候选审议会话直接转正为 `governance_session_id`
 
 但如果按设计稿原文要求继续审：
-- “聊天式审议”已具备治理页、任务详情页与同会话延续，但版本修订闭环仍未完整落地
+- “聊天式审议”已具备治理页、任务详情页、同会话延续、第一版版本修订闭环，以及任务详情中的最新版本差异 / 重授权提示；但整改后再激活与更完整治理面仍未收口
 - “模板库 / 模板起草流程”还没有落地
 - “授权接驳分轨 / credential_binding 一等对象”已补上第一版，但仍未覆盖更完整的重授权机制
 - “内邮系统”还只是候选待审通知的第一版，不是完整信箱模型
@@ -130,6 +130,7 @@
   - 候选抽取、approve/discard、首版任务落盘、任务 workspace 初始化
   - `review_session_id -> governance_session_id` 直接转正逻辑
   - 案卷页、治理页、任务详情页这三张基础页面
+  - 在同一条 `governance_session_id` 上直接创建新 `task_version` 的第一版修订闭环
   - 第一版 `credential_binding` 对象与任务激活前授权检查
 
 - 下一轮必须围绕现有结构“长出来”的部分：
@@ -367,18 +368,20 @@
   - 现已新增 `view/task-detail.html`
   - 现已新增 `GET /api/cases/:case_id/tasks/:task_id/detail`
   - 页面已能展示任务定义、版本历史、运行记录空态、交付物空态、授权状态与治理入口
+  - 当前版本历史已能反映“旧版 superseded / 新版 active”的修订结果
+  - 现已可展示最新一次版本修订的字段差异，并在修订引入新凭证需求时给出重授权提示
 
 ### 7.5 当前 Web 体验的真实边界线
 为了防止下一轮误把“已有页面”理解为“页面能力已经闭环”，这里明确边界：
 
 - 已经具备：
   - `cases.html`：立案、总览、候选审批、任务入口、案卷内邮
-  - `governance-session.html`：围绕既有 session 继续发治理指令并观察事件流
-  - `task-detail.html`：查看任务定义、版本列表、授权状态、治理入口、运行/交付物空态
+  - `governance-session.html`：围绕既有 session 继续发治理指令、观察事件流，并在正式任务治理态创建新版本
+  - `task-detail.html`：查看任务定义、版本列表、最新修订差异、授权状态、治理入口、运行/交付物空态
 
 - 仍未具备：
   - 全站统一信箱入口与右上角未读提醒
-  - 在治理页内直接发起“生成新版本 / 版本差异对比 / 整改后再激活”的一体化流转
+  - 在治理页内直接完成“更完整的版本差异对比 / 整改后再激活 / 更强重授权提示”的一体化流转
   - 真实非空的运行记录、交付物列表与基于它们触发的进一步治理动作
 
 ---
@@ -415,8 +418,11 @@
   - 有“候选转正即沿用会话”的元数据逻辑
   - 现已可围绕该 session 直接打开 Web 治理页并继续对话
   - 现已可通过任务详情页查看版本历史、授权状态并回到同一条治理会话
+  - 现已可围绕同一条 `governance_session_id` 直接创建新的 `task_version`
+  - 修订动作会沉淀为同 session 下的治理事件，而不是另开平行治理线
+  - 现已可在任务详情中查看最新修订差异，并在修订引入新授权要求时看到重授权提示
 - 缺失部分：
-  - 没有“继续围绕同一条长期治理线修订版本”的产品体验闭环
+  - 还没有整改闭环、治理页内更完整差异对比与后续再激活的一体化产品体验
 
 ### 8.4 内邮系统
 - 判定：`部分对齐`
@@ -480,6 +486,7 @@
 - 为 candidate/task 增加真正的治理会话入口
 - 让 `review_session_id` / `governance_session_id` 不只是元数据，而是可打开、可继续对话的治理面
 - 把“聊天式审议”从设计语义变成产品语义
+- 当前进度：已完成同会话续聊 + 同会话版本修订；剩余是版本差异展示、整改后再激活与更强重授权提示
 
 ### 10.2 第二优先级：授权接驳分轨
 - 已补上第一版 `credential_binding` 一等对象与任务授权状态流
@@ -532,7 +539,7 @@
 ### 10.7 如果下一轮被定义为“Phase 1 对齐收口轮”，完成即停判据
 下一轮不应再以“感觉差不多”收尾；如果目标是把 Phase 1 真正收口，至少应满足以下判据：
 
-1. 能围绕同一条 `governance_session_id` 对正式任务继续治理，并形成新的 `task_version` 或明确的版本修订动作沉淀。
+1. 能围绕同一条 `governance_session_id` 对正式任务继续治理，并形成新的 `task_version` 或明确的版本修订动作沉淀。`（已达成第一版）`
 2. 模板库不再只是 `template_ref` 字段占位，而是具备模板对象、引用关系和实例化审计链。
 3. `credential_binding` 不再只支持首次接驳，还支持至少一版明确的失效补录 / 重授权语义。
 4. Web 侧出现统一信箱入口，而不再仅有案卷页内的 `mailList`。
@@ -547,7 +554,7 @@
 
 - 命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit`
 - 时间：2026-03-07
-- 结果：`187 tests, 0 failures`
+- 结果：`191 tests, 0 failures`
 - 补充说明：当前命令尾部还会额外打印一段与 `otp_release` eval 相关的噪音输出，但 `LASTEXITCODE = 0`；本次审计按测试结果成功处理，不把这段尾噪误判为 Phase 1 缺口。
 
 这说明当前 Phase 1 已落地骨架在仓内是稳定可测的；但“测试通过”不等于“已完全对齐设计稿”。
@@ -584,7 +591,9 @@
 | 候选转正式任务并生成首版 `task_version` | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
 | `review_session_id -> governance_session_id` 转正 | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
 | 聊天式治理页入口 | 部分对齐 | `view/governance-session.html`、`governance-session.js`、`openagentic_web_api_sessions_query.erl` |
+| 同会话任务版本修订 | 部分对齐 | `openagentic_case_store.erl`、`openagentic_web_api_tasks_revise.erl`、相关 EUnit |
 | 任务详情页 | 已对齐 | `view/task-detail.html`、`task-detail.js`、`openagentic_web_api_tasks_detail.erl` |
+| 最新版本差异 / 重授权提示 | 部分对齐 | `openagentic_case_store.erl`、`task-detail.js`、相关 EUnit |
 | 任务授权接驳第一版 | 部分对齐 | `openagentic_case_store.erl`、`openagentic_web_api_task_credential_bindings.erl`、`openagentic_web_api_tasks_activate.erl` |
 | 模板制度 | 部分对齐 | 仅有 `template_ref` / `derived_from_template_ref` 字段，占位多于制度 |
 | 统一信箱模型 | 未对齐 | 当前仅 `cases.html` 内 `mailList` 与 `mail-unread.json` |

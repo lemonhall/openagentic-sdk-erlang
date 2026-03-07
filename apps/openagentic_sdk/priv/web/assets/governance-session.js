@@ -9,6 +9,11 @@ const ui = {
   governanceSessionForm: el("governanceSessionForm"),
   governancePrompt: el("governancePrompt"),
   governanceStatusHint: el("governanceStatusHint"),
+  governanceRevisionForm: el("governanceRevisionForm"),
+  revisionChangeSummary: el("revisionChangeSummary"),
+  revisionObjective: el("revisionObjective"),
+  governanceRevisionHint: el("governanceRevisionHint"),
+  taskDetailLink: el("taskDetailLink"),
   backToCase: el("backToCase"),
 };
 
@@ -41,6 +46,11 @@ function escapeHtml(value) {
 function setHint(text, isError = false) {
   ui.governanceStatusHint.textContent = text;
   ui.governanceStatusHint.classList.toggle("errorText", isError);
+}
+
+function setRevisionHint(text, isError = false) {
+  ui.governanceRevisionHint.textContent = text;
+  ui.governanceRevisionHint.classList.toggle("errorText", isError);
 }
 
 function formatAny(value) {
@@ -247,18 +257,51 @@ function buildObjectRef() {
   return parts.join(" ; ");
 }
 
+function taskContext() {
+  return {
+    caseId: queryValue("case_id", "caseId"),
+    taskId: queryValue("task_id", "taskId"),
+  };
+}
+
+function taskDetailHref() {
+  const { caseId, taskId } = taskContext();
+  if (!caseId || !taskId) return "/view/cases.html";
+  const search = new URLSearchParams({ case_id: caseId, task_id: taskId });
+  return `/view/task-detail.html?${search.toString()}`;
+}
+
+function setRevisionEnabled(enabled) {
+  if (ui.revisionChangeSummary) ui.revisionChangeSummary.disabled = !enabled;
+  if (ui.revisionObjective) ui.revisionObjective.disabled = !enabled;
+  const button = ui.governanceRevisionForm?.querySelector('button[type="submit"]');
+  if (button) button.disabled = !enabled;
+}
+
 function applyContext() {
   const sid = queryValue("sid", "session_id", "sessionId");
   const title = queryValue("title") || "聊天式治理 / 审议会话";
   const caseId = queryValue("case_id", "caseId");
+  const { taskId } = taskContext();
   state.sid = sid;
   ui.governanceSubtitle.textContent = title;
   ui.governanceSessionId.textContent = sid || "";
   ui.governanceObjectRef.textContent = buildObjectRef() || "未指定";
   ui.backToCase.href = caseId ? `/view/cases.html?case_id=${encodeURIComponent(caseId)}` : "/view/cases.html";
+  if (ui.taskDetailLink) {
+    ui.taskDetailLink.href = taskDetailHref();
+  }
+  if (taskId) {
+    setRevisionEnabled(true);
+    setRevisionHint("当前为正式任务治理，可基于这条治理会话直接创建新版本。", false);
+  } else {
+    setRevisionEnabled(false);
+    setRevisionHint("当前没有 task_id；这通常表示仍处于候选审议态，暂不能创建正式任务版本。", false);
+  }
   if (!sid) {
     setHint("缺少 sid，无法打开治理会话。", true);
     ui.governancePrompt.disabled = true;
+    setRevisionEnabled(false);
     return false;
   }
   return true;
@@ -266,6 +309,16 @@ function applyContext() {
 
 async function continueGovernance(message) {
   return postJson(`/api/sessions/${encodeURIComponent(state.sid)}/query`, { message });
+}
+
+async function createRevision(changeSummary, objective) {
+  const { caseId, taskId } = taskContext();
+  return postJson(`/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}/revise`, {
+    governance_session_id: state.sid,
+    revised_by_op_id: "web_user",
+    change_summary: changeSummary,
+    objective,
+  });
 }
 
 ui.governanceSessionForm?.addEventListener("submit", async (event) => {
@@ -286,6 +339,40 @@ ui.governanceSessionForm?.addEventListener("submit", async (event) => {
   } finally {
     ui.governancePrompt.disabled = false;
     ui.governancePrompt.focus();
+  }
+});
+
+ui.governanceRevisionForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const { taskId } = taskContext();
+  if (!taskId) {
+    setRevisionHint("当前没有正式任务上下文，不能创建版本。", true);
+    return;
+  }
+  const changeSummary = ui.revisionChangeSummary.value.trim();
+  const objective = ui.revisionObjective.value.trim();
+  if (!changeSummary && !objective) {
+    setRevisionHint("请至少填写变更摘要或新的 Objective。", true);
+    return;
+  }
+  try {
+    setRevisionEnabled(false);
+    setRevisionHint("正在创建新版本，请稍候...");
+    const res = await createRevision(changeSummary, objective);
+    const versionId = res?.task_version?.header?.id || "";
+    const auth = res?.authorization?.status || res?.task?.state?.status || "";
+    const missingSlots = Array.isArray(res?.authorization?.missing_slots) ? res.authorization.missing_slots : [];
+    ui.revisionObjective.value = "";
+    if (auth === "awaiting_credentials" || auth === "credential_expired" || auth === "ready_to_activate") {
+      setRevisionHint(`新版本已创建${versionId ? `：${versionId}` : ""}，但当前授权状态为 ${auth}。${missingSlots.length ? `缺失槽位：${missingSlots.join(", ")}。` : ""}请去任务详情补齐绑定后再激活。`, false);
+    } else {
+      setRevisionHint(`新版本已创建${versionId ? `：${versionId}` : ""}。可继续在本页治理，或去任务详情查看版本列表。`, false);
+    }
+  } catch (error) {
+    setRevisionHint(error.message || String(error), true);
+  } finally {
+    const { taskId: nextTaskId } = taskContext();
+    setRevisionEnabled(Boolean(nextTaskId));
   }
 });
 
