@@ -1,0 +1,182 @@
+-module(openagentic_case_store_test).
+
+-include_lib("eunit/include/eunit.hrl").
+
+create_case_from_round_persists_case_and_round_test() ->
+  Root = tmp_root(),
+  {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+  ok = append_round_result(Root, Sid, <<"## Deliberation Summary\n- Keep watching the regional situation\n">>),
+
+  {ok, Res} =
+    openagentic_case_store:create_case_from_round(
+      Root,
+      #{
+        workflow_session_id => to_bin(Sid),
+        title => <<"Iran Situation">>,
+        opening_brief => <<"Create a long-running governance case around Iran">>,
+        current_summary => <<"Deliberation completed; waiting for candidate extraction">>,
+        topic => <<"geopolitics">>,
+        owner => <<"lemon">>,
+        default_timezone => <<"Asia/Shanghai">>
+      }
+    ),
+
+  CaseObj = maps:get('case', Res),
+  RoundObj = maps:get(round, Res),
+  CaseId = id_of(CaseObj),
+  RoundId = id_of(RoundObj),
+  CaseDir = filename:join([Root, "cases", ensure_list(CaseId)]),
+
+  ?assert(filelib:is_dir(filename:join([CaseDir, "meta"]))),
+  ?assert(filelib:is_dir(filename:join([CaseDir, "artifacts"]))),
+  ?assert(filelib:is_dir(filename:join([CaseDir, "workspaces"]))),
+  ?assert(filelib:is_dir(filename:join([CaseDir, "published"]))),
+  ?assert(filelib:is_file(filename:join([CaseDir, "meta", "case.json"]))),
+  ?assert(filelib:is_file(filename:join([CaseDir, "meta", "rounds", ensure_list(<<RoundId/binary, ".json">>)]))),
+  ?assertEqual(to_bin(Sid), deep_get(CaseObj, [links, origin_workflow_session_id])),
+  ?assertEqual(to_bin(Sid), deep_get(RoundObj, [links, workflow_session_id])),
+  ok.
+
+extract_candidates_from_round_creates_inbox_candidates_and_mail_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+
+  {ok, Res} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+
+  Candidates = maps:get(candidates, Res),
+  Mail = maps:get(mail, Res),
+  ?assertEqual(2, length(Candidates)),
+  ?assertEqual(2, length(Mail)),
+  lists:foreach(
+    fun (Candidate) ->
+      ReviewSid = deep_get(Candidate, [links, review_session_id]),
+      ?assertEqual(<<"inbox_pending">>, deep_get(Candidate, [state, status])),
+      ?assert(byte_size(ReviewSid) > 0),
+      ?assert(filelib:is_dir(openagentic_session_store:session_dir(Root, ensure_list(ReviewSid))))
+    end,
+    Candidates
+  ),
+  ok.
+
+approve_candidate_promotes_review_session_to_governance_session_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+  CandidateId = id_of(Candidate),
+  ReviewSid = deep_get(Candidate, [links, review_session_id]),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => CandidateId,
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"Approve as monitoring task">>,
+        objective => <<"Track diplomatic statement frequency, wording, and topic shifts">>,
+        schedule_policy => #{mode => <<"interval">>, interval => #{value => 6, unit => <<"hours">>}},
+        report_contract => #{kind => <<"markdown">>, required_sections => [<<"Summary">>, <<"Facts">>]},
+        alert_rules => #{severity_threshold => <<"high">>},
+        source_strategy => #{primary => [<<"official">>, <<"media">>]},
+        tool_profile => #{allowed_tools => [<<"WebFetch">>, <<"Bash">>]},
+        autonomy_policy => #{mode => <<"unattended">>},
+        promotion_policy => #{publish_to_case => false}
+      }
+    ),
+
+  Task = maps:get(task, Approved),
+  Version = maps:get(task_version, Approved),
+  TaskId = id_of(Task),
+  Overview = maps:get(overview, Approved),
+  WorkspaceRef = deep_get(Task, [links, workspace_ref]),
+  TaskWorkspace = filename:join([Root, "cases", ensure_list(CaseId), ensure_list(WorkspaceRef)]),
+
+  ?assertEqual(ReviewSid, deep_get(Task, [links, governance_session_id])),
+  ?assertEqual(id_of(Version), deep_get(Task, [links, active_version_id])),
+  ?assertEqual(<<"approved">>, deep_get(maps:get(candidate, Approved), [state, status])),
+  ?assertEqual(<<"active">>, deep_get(Task, [state, status])),
+  ?assertEqual(<<"active">>, deep_get(Version, [state, status])),
+  ?assert(filelib:is_dir(TaskWorkspace)),
+  ?assert(filelib:is_file(filename:join([TaskWorkspace, "TASK.md"]))),
+  OverviewCase = maps:get('case', Overview),
+  ?assertEqual(1, maps:get(active_task_count, maps:get(state, OverviewCase))),
+  ?assert(lists:any(fun (Item) -> id_of(Item) =:= TaskId end, maps:get(tasks, Overview))),
+  ok.
+
+discard_candidate_marks_candidate_discarded_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [_First, Candidate] = maps:get(candidates, Extracted),
+
+  {ok, Discarded} =
+    openagentic_case_store:discard_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => id_of(Candidate),
+        reason => <<"Out of scope for this case">>,
+        acted_by_op_id => <<"lemon">>
+      }
+    ),
+
+  ?assertEqual(<<"discarded">>, deep_get(Discarded, [state, status])),
+  ok.
+
+create_case_fixture(Root) ->
+  {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+  ok =
+    append_round_result(
+      Root,
+      Sid,
+      <<"## Suggested Monitoring Items\n",
+        "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+        "- Track US sanctions policy and enforcement cadence\n">>
+    ),
+  {ok, Created} =
+    openagentic_case_store:create_case_from_round(
+      Root,
+      #{
+        workflow_session_id => to_bin(Sid),
+        title => <<"Iran Situation">>,
+        opening_brief => <<"Create a long-running governance case around Iran">>,
+        current_summary => <<"Deliberation completed; waiting for candidate extraction">>,
+        topic => <<"geopolitics">>,
+        owner => <<"lemon">>,
+        default_timezone => <<"Asia/Shanghai">>
+      }
+    ),
+  {id_of(maps:get('case', Created)), id_of(maps:get(round, Created)), Sid}.
+
+append_round_result(Root, Sid, FinalText) ->
+  {ok, _} =
+    openagentic_session_store:append_event(
+      Root,
+      Sid,
+      openagentic_events:workflow_done(<<"wf_case">>, <<"governance">>, <<"completed">>, FinalText, #{})
+    ),
+  ok.
+
+id_of(Obj) -> deep_get(Obj, [header, id]).
+
+deep_get(Obj, [Key]) -> maps:get(Key, Obj);
+deep_get(Obj, [Key | Rest]) -> deep_get(maps:get(Key, Obj), Rest).
+
+tmp_root() ->
+  {ok, Cwd} = file:get_cwd(),
+  Id = lists:flatten(io_lib:format("~p_~p", [erlang:system_time(microsecond), erlang:unique_integer([positive, monotonic])])),
+  Root = filename:join([Cwd, ".tmp", "eunit", "openagentic_case_store_test", Id]),
+  ok = filelib:ensure_dir(filename:join([Root, "x"])),
+  Root.
+
+ensure_list(B) when is_binary(B) -> binary_to_list(B);
+ensure_list(L) when is_list(L) -> L;
+ensure_list(A) when is_atom(A) -> atom_to_list(A);
+ensure_list(Other) -> lists:flatten(io_lib:format("~p", [Other])).
+
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> iolist_to_binary(L);
+to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_bin(I) when is_integer(I) -> integer_to_binary(I);
+to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).

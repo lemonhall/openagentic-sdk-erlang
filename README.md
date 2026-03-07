@@ -219,6 +219,11 @@ Default demo DSL:
 Current local web server routes:
 
 - `GET /` -> static web UI
+- `POST /api/cases` -> create a `case` + origin `deliberation_round` from a completed workflow session
+- `GET /api/cases/:case_id/overview` -> load one case with rounds, candidates, tasks, and internal mail
+- `POST /api/cases/:case_id/candidates/extract` -> extract `monitoring_candidate` items from the origin round transcript
+- `POST /api/cases/:case_id/candidates/:candidate_id/approve` -> promote a candidate into `monitoring_task` + first `task_version`
+- `POST /api/cases/:case_id/candidates/:candidate_id/discard` -> discard a candidate in review
 - `POST /api/workflows/start`
 - `POST /api/workflows/continue`
 - `POST /api/workflows/cancel`
@@ -228,6 +233,8 @@ Current local web server routes:
 - `GET /api/health`
 
 The web UI is intentionally local-first and reads from session files rather than a separate database.
+
+Phase 1 case governance metadata is persisted under `cases/<case_id>/...`, while transcripts continue to live under `sessions/<session_id>/...`.
 
 ## Tools and safety behavior
 

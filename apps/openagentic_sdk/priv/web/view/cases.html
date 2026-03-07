@@ -1,0 +1,85 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenAgentic - 案卷治理</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" href="/assets/case-governance.css" />
+  </head>
+  <body>
+    <div class="app caseApp">
+      <header class="topbar">
+        <div class="brand">OpenAgentic</div>
+        <div class="subtitle">案卷总览 / 候选任务审批</div>
+        <a class="btn" href="/">Workflow</a>
+      </header>
+
+      <main class="caseMain">
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">1. 建案</div>
+          <form id="caseCreateForm" class="caseFormGrid">
+            <label>
+              <span>Workflow Session ID</span>
+              <input id="workflowSessionId" placeholder="例如：893c4994f45790a60a8da221e2cb81ce" required />
+            </label>
+            <label>
+              <span>案卷标题</span>
+              <input id="caseTitle" value="Iran Situation" required />
+            </label>
+            <label class="span2">
+              <span>立案摘要</span>
+              <textarea id="openingBrief" rows="3">Create a long-running governance case around Iran</textarea>
+            </label>
+            <label class="span2">
+              <span>当前摘要</span>
+              <textarea id="currentSummary" rows="2">Deliberation completed; waiting for candidate extraction</textarea>
+            </label>
+            <div class="caseActions span2">
+              <button type="submit" class="btn primary">创建案卷</button>
+              <button type="button" class="btn" id="btnLoadOverview">加载总览</button>
+            </div>
+          </form>
+          <div class="hint" id="caseStatusHint">先输入 workflow session id 建案，或直接填 case id 加载已有案卷。</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">2. 案卷定位</div>
+          <div class="caseStack">
+            <label>
+              <span>Case ID</span>
+              <input id="caseIdInput" placeholder="创建后会自动回填" />
+            </label>
+            <label>
+              <span>Round ID</span>
+              <input id="roundIdInput" placeholder="创建后会自动回填" />
+            </label>
+            <button type="button" class="btn" id="btnExtractCandidates">抽取候选任务</button>
+          </div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">3. 案卷总览</div>
+          <div id="caseOverview" class="overviewCard empty">暂无案卷数据</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">候选任务</div>
+          <div id="candidateList" class="entityList empty">暂无候选任务</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">正式任务</div>
+          <div id="taskList" class="entityList empty">暂无正式任务</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">内邮</div>
+          <div id="mailList" class="entityList empty">暂无内邮</div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/case-governance.js"></script>
+  </body>
+</html>

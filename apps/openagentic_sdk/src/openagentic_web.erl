@@ -43,6 +43,11 @@ start(Opts0) ->
       {'_', [
         {"/", openagentic_web_static, State},
         {"/assets/[...]", openagentic_web_static, State},
+        {"/api/cases", openagentic_web_api_cases_create, State},
+        {"/api/cases/:case_id/overview", openagentic_web_api_cases_overview, State},
+        {"/api/cases/:case_id/candidates/extract", openagentic_web_api_candidates_extract, State},
+        {"/api/cases/:case_id/candidates/:candidate_id/approve", openagentic_web_api_candidates_approve, State},
+        {"/api/cases/:case_id/candidates/:candidate_id/discard", openagentic_web_api_candidates_discard, State},
         {"/api/workflows/start", openagentic_web_api_workflows_start, State},
         {"/api/workflows/continue", openagentic_web_api_workflows_continue, State},
         {"/api/workflows/cancel", openagentic_web_api_workflows_cancel, State},

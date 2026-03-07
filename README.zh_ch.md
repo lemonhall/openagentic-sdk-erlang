@@ -219,6 +219,11 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 当前本地 Web 服务提供这些路由：
 
 - `GET /` -> 静态 Web UI
+- `POST /api/cases` -> 从已完成的 workflow session 创建 `case` 与首个 `deliberation_round`
+- `GET /api/cases/:case_id/overview` -> 读取案卷总览（轮次、候选任务、正式任务、内邮）
+- `POST /api/cases/:case_id/candidates/extract` -> 从该轮朝议 transcript 抽取 `monitoring_candidate`
+- `POST /api/cases/:case_id/candidates/:candidate_id/approve` -> 将候选任务生效为 `monitoring_task` 与首个 `task_version`
+- `POST /api/cases/:case_id/candidates/:candidate_id/discard` -> 废弃候选任务
 - `POST /api/workflows/start`
 - `POST /api/workflows/continue`
 - `POST /api/workflows/cancel`
@@ -228,6 +233,8 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 - `GET /api/health`
 
 这套 Web UI 是 local-first 的，不依赖额外数据库，而是直接基于 session 文件工作。
+
+本次 Phase 1 新增的治理元数据落在 `cases/<case_id>/...`，而会话 transcript 仍继续保留在 `sessions/<session_id>/...`。
 
 ## 工具与安全行为
 
