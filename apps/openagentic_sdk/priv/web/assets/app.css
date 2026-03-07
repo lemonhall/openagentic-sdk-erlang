@@ -456,11 +456,16 @@ body {
 
 /* ==================== 鎸夐挳绯荤粺 ==================== */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 8px 14px;
-  background: var(--surface-2);
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  text-decoration: none;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -484,14 +489,16 @@ body {
 }
 
 .btn.primary {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: var(--accent-primary);
-  color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.24);
+  border-color: rgba(96, 165, 250, 0.82);
+  color: #eff6ff;
+  box-shadow: 0 10px 24px rgba(59, 130, 246, 0.16);
 }
 
 .btn.primary:hover {
-  background: rgba(59, 130, 246, 0.25);
-  box-shadow: 0 0 16px rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.34);
+  border-color: #93c5fd;
+  box-shadow: 0 14px 28px rgba(59, 130, 246, 0.24);
 }
 
 .btn.danger {

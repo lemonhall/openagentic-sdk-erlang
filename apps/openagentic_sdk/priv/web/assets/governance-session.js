@@ -406,6 +406,11 @@ function renderGovernanceNextAction(action) {
   `;
 }
 
+function governanceSubtitleText(title = "") {
+  const base = "\u6cbb\u7406\u4f1a\u8bdd\uff1a\u5148\u7ee7\u7eed\u8ba8\u8bba\u6536\u655b\u7ed3\u8bba\uff0c\u518d\u51b3\u5b9a\u662f\u5426\u63d0\u4ea4\u4fee\u8ba2\u6216\u8865\u6743\u3002";
+  return title ? `${base} \u5f53\u524d\u5bf9\u8c61\uff1a${title}` : base;
+}
+
 function governanceSummaryText(detail = null) {
   const { taskId } = taskContext();
   const authStatus = detail?.authorization?.status || detail?.task?.state?.status || "";
@@ -705,7 +710,7 @@ function applyContext() {
   const caseId = queryValue("case_id", "caseId");
   const { taskId } = taskContext();
   state.sid = sid;
-  ui.governanceSubtitle.textContent = title;
+  ui.governanceSubtitle.textContent = governanceSubtitleText(title);
   ui.governanceSessionId.textContent = sid || "";
   ui.governanceObjectRef.textContent = buildObjectRef() || "未指定";
   ui.backToCase.href = caseId ? `/view/cases.html?case_id=${encodeURIComponent(caseId)}` : "/view/cases.html";
