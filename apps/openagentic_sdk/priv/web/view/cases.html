@@ -12,6 +12,7 @@
       <header class="topbar">
         <div class="brand">OpenAgentic</div>
         <div class="subtitle">案卷总览 / 候选任务审批</div>
+        <a class="btn" id="inboxLink" href="/view/inbox.html">统一信箱</a>
         <a class="btn" href="/">Workflow</a>
       </header>
 
@@ -80,6 +81,33 @@
             正式任务可直接打开聊天式治理入口，继续围绕当前任务定义、整改与版本修订对话。
           </div>
           <div id="taskList" class="entityList empty">暂无正式任务</div>
+        </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">模板库</div>
+          <form id="templateCreateForm" class="caseFormGrid">
+            <label>
+              <span>模板标题</span>
+              <input id="templateTitle" placeholder="例如：外交表态监测模板" required />
+            </label>
+            <label>
+              <span>模板摘要</span>
+              <input id="templateSummary" placeholder="用于起草与参考实现" />
+            </label>
+            <label class="span2">
+              <span>模板目标</span>
+              <textarea id="templateObjective" rows="3" placeholder="例如：Track diplomatic statement shifts with escalation risk emphasis"></textarea>
+            </label>
+            <label class="span2">
+              <span>模板正文</span>
+              <textarea id="templateBody" rows="6" placeholder="# Template&#10;&#10;Reference fetch + parse scaffold"></textarea>
+            </label>
+            <div class="caseActions span2">
+              <button type="submit" class="btn primary">新建模板</button>
+            </div>
+            <div class="hint span2">模板仅用于起草与参考实现，不共享正式执行体。</div>
+          </form>
+          <div id="templateList" class="entityList empty">暂无模板</div>
         </section>
 
         <section class="casePanel">

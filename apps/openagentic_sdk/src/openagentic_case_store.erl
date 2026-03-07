@@ -6,9 +6,15 @@
   approve_candidate/2,
   discard_candidate/2,
   get_case_overview/2,
+  list_templates/2,
+  create_template/2,
+  instantiate_template_candidate/2,
+  list_inbox/2,
+  update_mail_state/2,
   get_task_detail/3,
   revise_task/2,
   upsert_credential_binding/2,
+  invalidate_credential_binding/2,
   activate_task/2
 ]).
 
@@ -102,8 +108,8 @@ create_case_from_round(RootDir0, Input0) ->
         audit => compact_map(#{created_from_session_id => WorkflowSessionId}),
         ext => #{}
       },
-    ok = write_json(case_file(CaseDir), CaseObj),
-    ok = write_json(round_file(CaseDir, RoundId), RoundObj),
+    ok = persist_case_object(CaseDir, case_file(CaseDir), CaseObj),
+    ok = persist_case_object(CaseDir, round_file(CaseDir, RoundId), RoundObj),
     ok = rebuild_indexes(RootDir, CaseId),
     BaseRes = #{'case' => CaseObj, round => RoundObj},
     case get_bool(Input, [auto_extract, autoExtract], true) of
@@ -235,6 +241,11 @@ approve_candidate(RootDir0, Input0) ->
             #{
               status => TaskStatus,
               health => task_health_for_status(TaskStatus),
+              activated_at =>
+                case TaskStatus of
+                  <<"active">> -> Now;
+                  _ -> undefined
+                end,
               latest_run_id => undefined,
               latest_successful_run_id => undefined,
               last_report_at => undefined
@@ -285,8 +296,8 @@ approve_candidate(RootDir0, Input0) ->
             ),
           ext => #{}
         },
-      ok = write_json(task_file(CaseDir, TaskId), TaskObj),
-      ok = write_json(task_version_file(CaseDir, TaskId, VersionId), TaskVersionObj),
+      ok = persist_case_object(CaseDir, task_file(CaseDir, TaskId), TaskObj),
+      ok = persist_case_object(CaseDir, task_version_file(CaseDir, TaskId, VersionId), TaskVersionObj),
       Candidate1 =
         update_object(
           Candidate0,
@@ -309,7 +320,7 @@ approve_candidate(RootDir0, Input0) ->
             }
           end
         ),
-      ok = write_json(CandidatePath, Candidate1),
+      ok = persist_case_object(CaseDir, CandidatePath, Candidate1),
       ok = mark_candidate_mail_acted(CaseDir, CandidateId, <<"approve">>, get_bin(Input, [approved_by_op_id, approvedByOpId], undefined), Now),
       ok = refresh_case_state(RootDir, CaseId),
       ok = rebuild_indexes(RootDir, CaseId),
@@ -346,7 +357,7 @@ discard_candidate(RootDir0, Input0) ->
         }
       end
     ),
-  ok = write_json(CandidatePath, Candidate1),
+  ok = persist_case_object(CaseDir, CandidatePath, Candidate1),
   ok = mark_candidate_mail_acted(CaseDir, CandidateId, <<"discard">>, get_bin(Input, [acted_by_op_id, actedByOpId], undefined), Now),
   ok = refresh_case_state(RootDir, CaseId),
   ok = rebuild_indexes(RootDir, CaseId),
@@ -358,6 +369,179 @@ get_case_overview(RootDir0, CaseId0) ->
   case load_case(RootDir, CaseId) of
     {ok, _CaseObj, _CaseDir} -> {ok, get_case_overview_map(RootDir, CaseId)};
     {error, Reason} -> {error, Reason}
+  end.
+
+list_templates(RootDir0, CaseIdOrInput) ->
+  RootDir = ensure_list(RootDir0),
+  CaseId =
+    case CaseIdOrInput of
+      Map when is_map(Map) -> required_bin(Map, [case_id, caseId]);
+      Value -> to_bin(Value)
+    end,
+  case load_case(RootDir, CaseId) of
+    {ok, _CaseObj, CaseDir} ->
+      {ok, sort_by_created_at(read_template_objects(filename:join([CaseDir, "meta", "templates"])))};
+    {error, Reason} -> {error, Reason}
+  end.
+
+create_template(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, CaseObj, CaseDir} ->
+      Now = now_ts(),
+      TemplateId = new_id(<<"template">>),
+      WorkspaceRef = <<"workspaces/templates/", TemplateId/binary>>,
+      TemplateWorkspaceDir = filename:join([CaseDir, ensure_list(WorkspaceRef)]),
+      ok = filelib:ensure_dir(filename:join([TemplateWorkspaceDir, "x"])),
+      ok = seed_template_workspace(TemplateWorkspaceDir, Input, CaseObj),
+      DefaultTimezone = get_bin(Input, [default_timezone, defaultTimezone], default_timezone(CaseObj)),
+      TemplateObj =
+        #{
+          header => header(TemplateId, <<"task_template">>, Now),
+          links => compact_map(#{case_id => CaseId, workspace_ref => WorkspaceRef}),
+          spec =>
+            compact_map(
+              #{
+                title => get_bin(Input, [title], <<"Untitled Template">>),
+                summary => get_bin(Input, [summary], undefined),
+                objective => get_bin(Input, [objective], undefined),
+                default_timezone => DefaultTimezone,
+                schedule_policy =>
+                  choose_map(
+                    Input,
+                    [schedule_policy, schedulePolicy],
+                    default_schedule_policy(DefaultTimezone)
+                  ),
+                report_contract => choose_map(Input, [report_contract, reportContract], default_report_contract()),
+                alert_rules => choose_map(Input, [alert_rules, alertRules], #{}),
+                source_strategy => choose_map(Input, [source_strategy, sourceStrategy], #{}),
+                tool_profile => choose_map(Input, [tool_profile, toolProfile], #{}),
+                credential_requirements => choose_map(Input, [credential_requirements, credentialRequirements], #{}),
+                autonomy_policy => choose_map(Input, [autonomy_policy, autonomyPolicy], #{}),
+                promotion_policy => choose_map(Input, [promotion_policy, promotionPolicy], #{}),
+                template_body_ref => <<WorkspaceRef/binary, "/TEMPLATE.md">>
+              }
+            ),
+          state => #{status => <<"active">>},
+          audit => compact_map(#{created_by_op_id => get_bin(Input, [created_by_op_id, createdByOpId], undefined)}),
+          ext => #{}
+        },
+      ok = persist_case_object(CaseDir, template_file(CaseDir, TemplateId), TemplateObj),
+      ok = rebuild_indexes(RootDir, CaseId),
+      {ok, #{template => TemplateObj, templates => sort_by_created_at(read_template_objects(filename:join([CaseDir, "meta", "templates"]))), overview => get_case_overview_map(RootDir, CaseId)}}
+  end.
+
+instantiate_template_candidate(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TemplateId = required_bin(Input, [template_id, templateId]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, CaseObj, CaseDir} ->
+      TemplatePath = template_file(CaseDir, TemplateId),
+      case filelib:is_file(TemplatePath) of
+        false -> {error, not_found};
+        true ->
+          Now = now_ts(),
+          TemplateObj = read_json(TemplatePath),
+          RoundId = resolve_round_id(CaseDir, Input, CaseObj),
+          RoundObj = read_json(round_file(CaseDir, RoundId)),
+          WorkflowSessionId = get_in_map(RoundObj, [links, workflow_session_id], undefined),
+          CandidateId = new_id(<<"candidate">>),
+          {ok, ReviewSessionId0} =
+            openagentic_session_store:create_session(
+              RootDir,
+              #{
+                kind => <<"candidate_review">>,
+                case_id => CaseId,
+                round_id => RoundId,
+                candidate_id => CandidateId,
+                template_id => TemplateId
+              }
+            ),
+          ReviewSessionId = to_bin(ReviewSessionId0),
+          CandidateSpec = template_candidate_spec(TemplateObj, Input, CaseObj),
+          CandidateObj = build_candidate(CaseId, RoundId, WorkflowSessionId, CandidateId, ReviewSessionId, CandidateSpec#{template_ref => TemplateId}, Now),
+          MailId = new_id(<<"mail">>),
+          MailObj = build_candidate_mail(CaseId, WorkflowSessionId, CandidateId, MailId, CandidateObj, Now),
+          ok = persist_case_object(CaseDir, candidate_file(CaseDir, CandidateId), CandidateObj),
+          ok = persist_case_object(CaseDir, mail_file(CaseDir, MailId), MailObj),
+          ok = rebuild_indexes(RootDir, CaseId),
+          {ok, #{candidate => CandidateObj, mail => MailObj, overview => get_case_overview_map(RootDir, CaseId)}}
+      end
+  end.
+
+list_inbox(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  StatusFilter = get_bin(Input, [status], undefined),
+  CaseFilter = get_bin(Input, [case_id, caseId], undefined),
+  CasesRoot = filename:join([RootDir, "cases"]),
+  Mail0 =
+    lists:foldl(
+      fun (CaseName, Acc) ->
+        CaseId = to_bin(CaseName),
+        case CaseFilter =:= undefined orelse CaseFilter =:= CaseId of
+          false -> Acc;
+          true ->
+            CaseDir = case_dir(RootDir, CaseId),
+            case filelib:is_file(case_file(CaseDir)) of
+              false -> Acc;
+              true ->
+                CaseObj = read_json(case_file(CaseDir)),
+                MailItems =
+                  [decorate_global_mail(Item, CaseObj) || Item <- read_objects_in_dir(filename:join([CaseDir, "meta", "mail"]))],
+                Acc ++ MailItems
+            end
+        end
+      end,
+      [],
+      safe_list_dir(CasesRoot)
+    ),
+  Mail1 =
+    case StatusFilter of
+      undefined -> Mail0;
+      <<"all">> -> Mail0;
+      _ -> [Item || Item <- Mail0, get_in_map(Item, [state, status], <<>>) =:= StatusFilter]
+    end,
+  {ok, lists:reverse(sort_by_created_at(Mail1))}.
+
+update_mail_state(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  MailId = required_bin(Input, [mail_id, mailId]),
+  Status = required_bin(Input, [status]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      MailPath = mail_file(CaseDir, MailId),
+      case filelib:is_file(MailPath) of
+        false -> {error, not_found};
+        true ->
+          Mail0 = read_json(MailPath),
+          case maybe_check_expected_revision(Input, Mail0) of
+            ok ->
+              Now = now_ts(),
+              MailDir = filename:join([CaseDir, "meta", "mail"]),
+              Mail1 = update_mail_status(Mail0, Input, Status, Now),
+              lists:foreach(
+                fun (Path) ->
+                  MailObj0 = read_json(Path),
+                  MailObj1 = update_mail_status(MailObj0, Input, Status, Now),
+                  ok = persist_case_object(CaseDir, Path, MailObj1)
+                end,
+                json_files(MailDir)
+              ),
+              ok = rebuild_indexes(RootDir, CaseId),
+              {ok, Mail1};
+            {error, Reason} -> {error, Reason}
+          end
+      end
   end.
 
 get_task_detail(RootDir0, CaseId0, TaskId0) ->
@@ -402,11 +586,15 @@ revise_task(RootDir0, Input0) ->
         false -> {error, not_found};
         true ->
           Task0 = read_json(TaskPath),
-          case get_in_map(Task0, [links, governance_session_id], <<>>) of
-            <<>> -> {error, governance_session_missing};
-            GovernanceSessionId ->
-              revise_task_with_session(RootDir, CaseId, CaseDir, Task0, Input, GovernanceSessionId);
-            _ -> {error, governance_session_mismatch}
+          case maybe_check_expected_revision(Input, Task0) of
+            ok ->
+              case get_in_map(Task0, [links, governance_session_id], <<>>) of
+                <<>> -> {error, governance_session_missing};
+                GovernanceSessionId ->
+                  revise_task_with_session(RootDir, CaseId, CaseDir, Task0, Input, GovernanceSessionId);
+                _ -> {error, governance_session_mismatch}
+              end;
+            {error, Reason} -> {error, Reason}
           end
       end
   end.
@@ -416,7 +604,6 @@ upsert_credential_binding(RootDir0, Input0) ->
   Input = ensure_map(Input0),
   CaseId = required_bin(Input, [case_id, caseId]),
   TaskId = required_bin(Input, [task_id, taskId]),
-  SlotName = required_bin(Input, [slot_name, slotName]),
   case load_case(RootDir, CaseId) of
     {error, Reason} -> {error, Reason};
     {ok, _CaseObj, CaseDir} ->
@@ -427,27 +614,160 @@ upsert_credential_binding(RootDir0, Input0) ->
           Now = now_ts(),
           Task0 = read_json(TaskPath),
           ExistingBindings = read_task_credential_bindings(CaseDir, TaskId),
-          BindingId = resolve_credential_binding_id(Input, ExistingBindings),
-          BindingPath = credential_binding_file(CaseDir, TaskId, BindingId),
-          Binding1 =
-            case filelib:is_file(BindingPath) of
-              true ->
-                update_credential_binding(read_json(BindingPath), Input, SlotName, Now);
-              false ->
-                build_credential_binding(CaseId, TaskId, BindingId, Input, SlotName, Now)
-            end,
-          ok = write_json(BindingPath, Binding1),
-          {Task1, Authorization} = sync_task_authorization(CaseDir, Task0, Now),
-          ok = refresh_case_state(RootDir, CaseId),
-          ok = rebuild_indexes(RootDir, CaseId),
-          {ok,
-           #{
-             credential_binding => Binding1,
-             credential_bindings => read_task_credential_bindings(CaseDir, TaskId),
-             task => Task1,
-             authorization => Authorization,
-             overview => get_case_overview_map(RootDir, CaseId)
-           }}
+          RotateBindingId = get_bin(Input, [rotate_binding_id, rotateBindingId], undefined),
+          ExistingBindingId = get_bin(Input, [credential_binding_id, credentialBindingId], undefined),
+          case resolve_binding_context(Input, ExistingBindings, RotateBindingId, ExistingBindingId) of
+            {error, Reason} -> {error, Reason};
+            {ok, SlotName, BindingDefaults, ExistingBinding0} ->
+              case ExistingBinding0 =:= undefined orelse maybe_check_expected_revision(Input, ExistingBinding0) =:= ok of
+                false -> maybe_check_expected_revision(Input, ExistingBinding0);
+                true ->
+                  case RotateBindingId of
+                    undefined ->
+                      BindingId =
+                        case ExistingBinding0 of
+                          undefined -> resolve_credential_binding_id(Input, ExistingBindings);
+                          _ -> id_of(ExistingBinding0)
+                        end,
+                      BindingPath = credential_binding_file(CaseDir, TaskId, BindingId),
+                      BindingInput = maps:merge(BindingDefaults, Input),
+                      Binding1 =
+                        case ExistingBinding0 of
+                          undefined -> build_credential_binding(CaseId, TaskId, BindingId, BindingInput, SlotName, Now);
+                          _ -> update_credential_binding(ExistingBinding0, BindingInput, SlotName, Now)
+                        end,
+                      ok = persist_case_object(CaseDir, BindingPath, Binding1),
+                      {Task1, Authorization} = sync_task_authorization(CaseDir, Task0, Now),
+                      ok = refresh_case_state(RootDir, CaseId),
+                      ok = rebuild_indexes(RootDir, CaseId),
+                      {ok,
+                       #{
+                         credential_binding => Binding1,
+                         credential_bindings => read_task_credential_bindings(CaseDir, TaskId),
+                         task => Task1,
+                         authorization => Authorization,
+                         overview => get_case_overview_map(RootDir, CaseId)
+                       }};
+                    _ ->
+                      RotatedFrom = ExistingBinding0,
+                      BindingId = new_id(<<"binding">>),
+                      BindingInput = maps:merge(BindingDefaults, Input),
+                      RotatedFromPath = credential_binding_file(CaseDir, TaskId, id_of(RotatedFrom)),
+                      BindingPath = credential_binding_file(CaseDir, TaskId, BindingId),
+                      RotatedOld =
+                        update_object(
+                          RotatedFrom,
+                          Now,
+                          fun (Obj) ->
+                            Obj#{
+                              links => maps:merge(maps:get(links, Obj, #{}), #{rotated_to_binding_id => BindingId}),
+                              state => maps:merge(maps:get(state, Obj, #{}), #{status => <<"rotated">>, rotated_at => Now}),
+                              audit =>
+                                maps:merge(
+                                  maps:get(audit, Obj, #{}),
+                                  compact_map(
+                                    #{
+                                      updated_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined),
+                                      note => get_bin(Input, [note], undefined)
+                                    }
+                                  )
+                                )
+                            }
+                          end
+                        ),
+                      RotatedNew0 = build_credential_binding(CaseId, TaskId, BindingId, BindingInput, SlotName, Now),
+                      RotatedNew =
+                        update_object(
+                          RotatedNew0,
+                          Now,
+                          fun (Obj) ->
+                            Obj#{
+                              links => maps:merge(maps:get(links, Obj, #{}), #{rotated_from_binding_id => id_of(RotatedFrom)})
+                            }
+                          end
+                        ),
+                      ok = persist_case_object(CaseDir, RotatedFromPath, RotatedOld),
+                      ok = persist_case_object(CaseDir, BindingPath, RotatedNew),
+                      {Task1, Authorization} = sync_task_authorization(CaseDir, Task0, Now),
+                      ok = refresh_case_state(RootDir, CaseId),
+                      ok = rebuild_indexes(RootDir, CaseId),
+                      {ok,
+                       #{
+                         credential_binding => RotatedNew,
+                         credential_bindings => read_task_credential_bindings(CaseDir, TaskId),
+                         task => Task1,
+                         authorization => Authorization,
+                         overview => get_case_overview_map(RootDir, CaseId)
+                       }}
+                  end
+              end
+          end
+      end
+  end.
+
+invalidate_credential_binding(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TaskId = required_bin(Input, [task_id, taskId]),
+  BindingId = required_bin(Input, [credential_binding_id, credentialBindingId]),
+  case load_case(RootDir, CaseId) of
+    {error, Reason} -> {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      BindingPath = credential_binding_file(CaseDir, TaskId, BindingId),
+      TaskPath = task_file(CaseDir, TaskId),
+      case filelib:is_file(BindingPath) andalso filelib:is_file(TaskPath) of
+        false -> {error, not_found};
+        true ->
+          Binding0 = read_json(BindingPath),
+          case maybe_check_expected_revision(Input, Binding0) of
+            ok ->
+              Now = now_ts(),
+              Binding1 =
+                update_object(
+                  Binding0,
+                  Now,
+                  fun (Obj) ->
+                    Obj#{
+                      state =>
+                        maps:merge(
+                          maps:get(state, Obj, #{}),
+                          compact_map(
+                            #{
+                              status => get_bin(Input, [status], <<"invalidated">>),
+                              invalidated_at => Now
+                            }
+                          )
+                        ),
+                      audit =>
+                        maps:merge(
+                          maps:get(audit, Obj, #{}),
+                          compact_map(
+                            #{
+                              updated_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined),
+                              invalidation_reason => get_bin(Input, [reason], undefined),
+                              note => get_bin(Input, [note], undefined)
+                            }
+                          )
+                        )
+                    }
+                  end
+                ),
+              ok = persist_case_object(CaseDir, BindingPath, Binding1),
+              Task0 = read_json(TaskPath),
+              {Task1, Authorization} = sync_task_authorization(CaseDir, Task0, Now),
+              ok = refresh_case_state(RootDir, CaseId),
+              ok = rebuild_indexes(RootDir, CaseId),
+              {ok,
+               #{
+                 credential_binding => Binding1,
+                 credential_bindings => read_task_credential_bindings(CaseDir, TaskId),
+                 task => Task1,
+                 authorization => Authorization,
+                 overview => get_case_overview_map(RootDir, CaseId)
+               }};
+            {error, Reason} -> {error, Reason}
+          end
       end
   end.
 
@@ -479,7 +799,7 @@ activate_task(RootDir0, Input0) ->
                       state =>
                         maps:merge(
                           maps:get(state, Obj, #{}),
-                          #{status => <<"active">>, health => task_health_for_status(<<"active">>)}
+                          #{status => <<"active">>, health => task_health_for_status(<<"active">>), activated_at => Now}
                         ),
                       audit =>
                         maps:merge(
@@ -494,7 +814,7 @@ activate_task(RootDir0, Input0) ->
                     }
                   end
                 ),
-              ok = write_json(TaskPath, Task1),
+              ok = persist_case_object(CaseDir, TaskPath, Task1),
               ok = refresh_case_state(RootDir, CaseId),
               ok = rebuild_indexes(RootDir, CaseId),
               {ok,
@@ -528,8 +848,8 @@ revise_task_with_session(RootDir, CaseId, CaseDir, Task0, Input, GovernanceSessi
           end
         ),
       NextVersion = build_revised_task_version(CaseId, TaskId, NextVersionId, CurrentVersion0, Input, GovernanceSessionId, Now),
-      ok = write_json(task_version_file(CaseDir, TaskId, CurrentVersionId), CurrentVersion1),
-      ok = write_json(task_version_file(CaseDir, TaskId, NextVersionId), NextVersion),
+      ok = persist_case_object(CaseDir, task_version_file(CaseDir, TaskId, CurrentVersionId), CurrentVersion1),
+      ok = persist_case_object(CaseDir, task_version_file(CaseDir, TaskId, NextVersionId), NextVersion),
       Task1Base =
         update_object(
           Task0,
@@ -647,8 +967,8 @@ create_candidates_and_mail(RootDir, CaseDir, CaseId, RoundId, WorkflowSessionId,
   CandidateObj = build_candidate(CaseId, RoundId, WorkflowSessionId, CandidateId, ReviewSessionId, Spec, Now),
   MailId = new_id(<<"mail">>),
   MailObj = build_candidate_mail(CaseId, WorkflowSessionId, CandidateId, MailId, CandidateObj, Now),
-  ok = write_json(candidate_file(CaseDir, CandidateId), CandidateObj),
-  ok = write_json(mail_file(CaseDir, MailId), MailObj),
+  ok = persist_case_object(CaseDir, candidate_file(CaseDir, CandidateId), CandidateObj),
+  ok = persist_case_object(CaseDir, mail_file(CaseDir, MailId), MailObj),
   {RestCandidates, RestMail} = create_candidates_and_mail(RootDir, CaseDir, CaseId, RoundId, WorkflowSessionId, Rest, Now),
   {[CandidateObj | RestCandidates], [MailObj | RestMail]}.
 
@@ -723,13 +1043,76 @@ build_candidate_mail(CaseId, WorkflowSessionId, CandidateId, MailId, CandidateOb
     ext => #{}
   }.
 
+template_candidate_spec(TemplateObj0, Input0, CaseObj) ->
+  TemplateObj = ensure_map(TemplateObj0),
+  Input = ensure_map(Input0),
+  TemplateSpec = ensure_map(maps:get(spec, TemplateObj, #{})),
+  TemplateSummary = get_bin(TemplateSpec, [summary], undefined),
+  DefaultTimezone = get_bin(TemplateSpec, [default_timezone, defaultTimezone], default_timezone(CaseObj)),
+  maps:merge(
+    TemplateSpec,
+    compact_map(
+      #{
+        title => get_bin(Input, [title], get_in_map(TemplateSpec, [title], <<"Untitled Candidate">>)),
+        objective => get_bin(Input, [objective], get_in_map(TemplateSpec, [objective], undefined)),
+        default_timezone => get_bin(Input, [default_timezone, defaultTimezone], DefaultTimezone),
+        extracted_summary => get_bin(Input, [summary], TemplateSummary)
+      }
+    )
+  ).
+
+decorate_global_mail(Mail0, CaseObj) ->
+  Mail = ensure_map(Mail0),
+  Ext0 = ensure_map(maps:get(ext, Mail, #{})),
+  Mail#{
+    ext =>
+      maps:merge(
+        Ext0,
+        compact_map(
+          #{
+            case_title => get_in_map(CaseObj, [spec, title], undefined),
+            case_display_code => get_in_map(CaseObj, [spec, display_code], undefined)
+          }
+        )
+      )
+  }.
+
+update_mail_status(Mail0, Input0, Status, Now) ->
+  Mail = ensure_map(Mail0),
+  Input = ensure_map(Input0),
+  update_object(
+    Mail,
+    Now,
+    fun (Obj) ->
+      Obj#{
+        state =>
+          maps:merge(
+            maps:get(state, Obj, #{}),
+            compact_map(
+              #{
+                status => Status,
+                acted_at => Now,
+                consumed_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined)
+              }
+            )
+          ),
+        audit =>
+          maps:merge(
+            maps:get(audit, Obj, #{}),
+            compact_map(#{updated_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined)})
+          )
+      }
+    end
+  ).
+
 get_case_overview_map(RootDir, CaseId) ->
   {ok, CaseObj, CaseDir} = load_case(RootDir, CaseId),
   Rounds = sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "rounds"]))),
   Candidates = sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "candidates"]))),
   Tasks = sort_by_created_at(read_task_objects(filename:join([CaseDir, "meta", "tasks"]))),
   Mail = sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "mail"]))),
-  #{'case' => CaseObj, rounds => Rounds, candidates => Candidates, tasks => Tasks, mail => Mail}.
+  Templates = sort_by_created_at(read_template_objects(filename:join([CaseDir, "meta", "templates"]))),
+  #{'case' => CaseObj, rounds => Rounds, candidates => Candidates, tasks => Tasks, templates => Templates, mail => Mail}.
 
 refresh_case_state(RootDir, CaseId) ->
   {ok, CaseObj0, CaseDir} = load_case(RootDir, CaseId),
@@ -749,7 +1132,7 @@ refresh_case_state(RootDir, CaseId) ->
         Obj#{state => State0#{active_task_count => ActiveTaskCount, phase => Phase}}
       end
     ),
-  write_json(case_file(CaseDir), CaseObj1).
+  persist_case_object(CaseDir, case_file(CaseDir), CaseObj1).
 
 rebuild_indexes(RootDir, CaseId) ->
   {ok, _CaseObj, CaseDir} = load_case(RootDir, CaseId),
@@ -799,7 +1182,7 @@ mark_candidate_mail_acted(CaseDir, CandidateId, Action, Actor, Now) ->
                 }
               end
             ),
-          ok = write_json(Path, Mail1);
+          ok = persist_case_object(CaseDir, Path, Mail1);
         false -> ok
       end
     end,
@@ -943,6 +1326,26 @@ seed_task_workspace(TaskWorkspaceDir, CandidateObj, Input) ->
     ),
   file:write_file(filename:join([TaskWorkspaceDir, "TASK.md"]), Body).
 
+seed_template_workspace(TemplateWorkspaceDir, Input, CaseObj) ->
+  Title = get_bin(Input, [title], <<"Untitled Template">>),
+  Objective = get_bin(Input, [objective], <<>>),
+  Summary = get_bin(Input, [summary], <<>>),
+  TemplateBody = get_bin(Input, [template_body, templateBody], undefined),
+  Body =
+    case TemplateBody of
+      undefined ->
+        iolist_to_binary(
+          [
+            <<"# ">>, Title, <<"\n\n">>,
+            <<"## Summary\n">>, Summary, <<"\n\n">>,
+            <<"## Objective\n">>, Objective, <<"\n\n">>,
+            <<"## Timezone\n">>, default_timezone(CaseObj), <<"\n">>
+          ]
+        );
+      Value -> Value
+    end,
+  file:write_file(filename:join([TemplateWorkspaceDir, "TEMPLATE.md"]), Body).
+
 sort_by_created_at(Objs) ->
   lists:sort(
     fun (A, B) ->
@@ -963,6 +1366,20 @@ read_task_objects(TaskRoot) ->
     end,
     [],
     TaskDirs
+  ).
+
+read_template_objects(TemplateRoot) ->
+  TemplateDirs = safe_list_dir(TemplateRoot),
+  lists:foldl(
+    fun (Name, Acc) ->
+      Path = filename:join([TemplateRoot, Name, "template.json"]),
+      case filelib:is_file(Path) of
+        true -> [read_json(Path) | Acc];
+        false -> Acc
+      end
+    end,
+    [],
+    TemplateDirs
   ).
 
 read_task_versions(CaseDir, TaskId0) ->
@@ -1027,6 +1444,22 @@ credential_binding_file(CaseDir, TaskId0, BindingId0) ->
   BindingId = ensure_list(BindingId0),
   filename:join([CaseDir, "meta", "tasks", TaskId, "credential_bindings", BindingId ++ ".json"]).
 
+task_history_file(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  filename:join([CaseDir, "meta", "tasks", TaskId, "history.jsonl"]).
+
+template_file(CaseDir, TemplateId0) ->
+  TemplateId = ensure_list(TemplateId0),
+  filename:join([CaseDir, "meta", "templates", TemplateId, "template.json"]).
+
+template_history_file(CaseDir, TemplateId0) ->
+  TemplateId = ensure_list(TemplateId0),
+  filename:join([CaseDir, "meta", "templates", TemplateId, "history.jsonl"]).
+
+case_history_file(CaseDir) -> filename:join([CaseDir, "meta", "history.jsonl"]).
+
+object_type_registry_file(CaseDir) -> filename:join([CaseDir, "meta", "object-type-registry.json"]).
+
 mail_file(CaseDir, MailId0) ->
   MailId = ensure_list(MailId0),
   filename:join([CaseDir, "meta", "mail", MailId ++ ".json"]).
@@ -1037,10 +1470,12 @@ ensure_case_layout(CaseDir) ->
       filename:join([CaseDir, "meta", "rounds"]),
       filename:join([CaseDir, "meta", "candidates"]),
       filename:join([CaseDir, "meta", "tasks"]),
+      filename:join([CaseDir, "meta", "templates"]),
       filename:join([CaseDir, "meta", "mail"]),
       filename:join([CaseDir, "meta", "indexes"]),
       filename:join([CaseDir, "artifacts"]),
       filename:join([CaseDir, "workspaces"]),
+      filename:join([CaseDir, "workspaces", "templates"]),
       filename:join([CaseDir, "published"])
     ]
   ).
@@ -1063,6 +1498,90 @@ write_json(Path, Obj0) ->
       ok = file:rename(Tmp, Path),
       ok
   end.
+
+persist_case_object(CaseDir, Path, Obj0) ->
+  Obj = ensure_map(Obj0),
+  ok = write_json(Path, Obj),
+  case get_bin(Obj, [header, type], undefined) of
+    undefined -> ok;
+    <<>> -> ok;
+    _ ->
+      ok = touch_object_type_registry(CaseDir, Obj, Path),
+      ok = append_history_line(case_history_file(CaseDir), build_history_entry(Obj, Path)),
+      case object_history_path(CaseDir, Obj) of
+        undefined -> ok;
+        ObjectHistoryPath -> append_history_line(ObjectHistoryPath, build_history_entry(Obj, Path))
+      end
+  end.
+
+touch_object_type_registry(CaseDir, Obj, Path) ->
+  RegistryPath = object_type_registry_file(CaseDir),
+  Registry0 =
+    case filelib:is_file(RegistryPath) of
+      true -> read_json(RegistryPath);
+      false -> #{}
+    end,
+  Objects0 = ensure_map(maps:get(objects, Registry0, #{})),
+  ObjectId = id_of(Obj),
+  Type = get_in_map(Obj, [header, type], <<"unknown">>),
+  Entry =
+    compact_map(
+      #{
+        type => Type,
+        revision => get_in_map(Obj, [header, revision], undefined),
+        updated_at => get_in_map(Obj, [header, updated_at], undefined),
+        path => to_bin(Path)
+      }
+    ),
+  Objects1 = Objects0#{ObjectId => Entry},
+  TypeCounts =
+    maps:fold(
+      fun (_Id, Meta0, Acc0) ->
+        Meta = ensure_map(Meta0),
+        MetaType = get_bin(Meta, [type], <<"unknown">>),
+        Acc0#{MetaType => maps:get(MetaType, Acc0, 0) + 1}
+      end,
+      #{},
+      Objects1
+    ),
+  Registry1 =
+    maps:merge(
+      Registry0,
+      #{
+        schema_version => <<"case-governance-object-registry/v1">>,
+        updated_at => now_ts(),
+        objects => Objects1,
+        type_counts => TypeCounts
+      }
+    ),
+  write_json(RegistryPath, Registry1).
+
+build_history_entry(Obj, Path) ->
+  compact_map(
+    #{
+      at => get_in_map(Obj, [header, updated_at], undefined),
+      object_id => id_of(Obj),
+      object_type => get_in_map(Obj, [header, type], undefined),
+      revision => get_in_map(Obj, [header, revision], undefined),
+      status => get_in_map(Obj, [state, status], undefined),
+      path => to_bin(Path)
+    }
+  ).
+
+object_history_path(CaseDir, Obj) ->
+  case get_in_map(Obj, [header, type], <<>>) of
+    <<"monitoring_task">> -> task_history_file(CaseDir, id_of(Obj));
+    <<"task_version">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
+    <<"credential_binding">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
+    <<"task_template">> -> template_history_file(CaseDir, id_of(Obj));
+    _ -> undefined
+  end.
+
+append_history_line(Path, Entry0) ->
+  Entry = ensure_map(Entry0),
+  ok = filelib:ensure_dir(filename:join([filename:dirname(Path), "x"])),
+  Body = openagentic_json:encode_safe(Entry),
+  file:write_file(Path, <<Body/binary, "\n">>, [append]).
 
 read_json(Path) ->
   {ok, Bin} = file:read_file(Path),
@@ -1251,7 +1770,7 @@ sync_task_authorization(CaseDir, Task0, Now) ->
         }
       end
     ),
-  ok = write_json(task_file(CaseDir, TaskId), Task1),
+  ok = persist_case_object(CaseDir, task_file(CaseDir, TaskId), Task1),
   {Task1, Authorization0#{status => NextStatus}}.
 
 build_task_authorization(Task, Versions, CredentialBindings) ->
@@ -1266,10 +1785,14 @@ build_task_authorization(Task, Versions, CredentialBindings) ->
     ),
   MissingSlots = [Slot || Slot <- RequiredSlots, not lists:member(Slot, ValidSlots)],
   CurrentStatus = get_in_map(Task, [state, status], <<"active">>),
+  WasActivated =
+    get_in_map(Task, [state, activated_at], undefined) =/= undefined orelse
+      get_in_map(Task, [audit, activated_at], undefined) =/= undefined,
   Status =
     case RequiredSlots of
       [] -> <<"active">>;
       _ when ExpiredSlots =/= [] -> <<"credential_expired">>;
+      _ when MissingSlots =/= [], WasActivated -> <<"reauthorization_required">>;
       _ when MissingSlots =/= [] -> <<"awaiting_credentials">>;
       _ when CurrentStatus =:= <<"active">> -> <<"active">>;
       _ -> <<"ready_to_activate">>
@@ -1381,8 +1904,66 @@ activation_error(Authorization) ->
   case maps:get(status, Authorization, <<"active">>) of
     <<"awaiting_credentials">> -> awaiting_credentials;
     <<"credential_expired">> -> credential_expired;
+    <<"reauthorization_required">> -> reauthorization_required;
     _ -> undefined
   end.
+
+maybe_check_expected_revision(Input0, Obj0) ->
+  Input = ensure_map(Input0),
+  Obj = ensure_map(Obj0),
+  case find_any(Input, [expected_revision, expectedRevision]) of
+    undefined -> ok;
+    _ ->
+      ExpectedRevision = get_int(Input, [expected_revision, expectedRevision], undefined),
+      CurrentRevision = get_in_map(Obj, [header, revision], 0),
+      case ExpectedRevision =:= CurrentRevision of
+        true -> ok;
+        false -> {error, {revision_conflict, CurrentRevision}}
+      end
+  end.
+
+resolve_binding_context(Input0, ExistingBindings0, RotateBindingId, ExistingBindingId) ->
+  Input = ensure_map(Input0),
+  ExistingBindings = [ensure_map(Item) || Item <- ExistingBindings0],
+  ContextBinding =
+    case RotateBindingId of
+      undefined -> find_binding_by_id(ExistingBindings, ExistingBindingId);
+      _ -> find_binding_by_id(ExistingBindings, RotateBindingId)
+    end,
+  case ((RotateBindingId =/= undefined) orelse (ExistingBindingId =/= undefined)) andalso ContextBinding =:= undefined of
+    true -> {error, not_found};
+    false ->
+      SlotName =
+        case get_bin(Input, [slot_name, slotName], undefined) of
+          undefined -> get_in_map(ContextBinding, [spec, slot_name], undefined);
+          Value -> Value
+        end,
+      case SlotName of
+        undefined -> {error, {missing_required_field, slot_name}};
+        <<>> -> {error, {missing_required_field, slot_name}};
+        _ -> {ok, SlotName, binding_defaults_from_existing(ContextBinding), ContextBinding}
+      end
+  end.
+
+find_binding_by_id(_Bindings, undefined) -> undefined;
+find_binding_by_id([], _BindingId) -> undefined;
+find_binding_by_id([Binding | Rest], BindingId) ->
+  case id_of(Binding) =:= BindingId of
+    true -> Binding;
+    false -> find_binding_by_id(Rest, BindingId)
+  end.
+
+binding_defaults_from_existing(undefined) -> #{};
+binding_defaults_from_existing(Binding0) ->
+  Binding = ensure_map(Binding0),
+  compact_map(
+    #{
+      slot_name => get_in_map(Binding, [spec, slot_name], undefined),
+      binding_type => get_in_map(Binding, [spec, binding_type], undefined),
+      provider => get_in_map(Binding, [spec, provider], undefined),
+      material_ref => get_in_map(Binding, [spec, material_ref], undefined)
+    }
+  ).
 
 unique_binaries(List0) ->
   lists:usort([Item || Item <- List0, is_binary(Item), Item =/= <<>>]).

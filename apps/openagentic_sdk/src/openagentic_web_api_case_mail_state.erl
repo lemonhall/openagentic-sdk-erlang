@@ -1,4 +1,4 @@
--module(openagentic_web_api_tasks_activate).
+-module(openagentic_web_api_case_mail_state).
 
 -behaviour(cowboy_handler).
 
@@ -8,18 +8,22 @@ init(Req0, State0) ->
   State = ensure_map(State0),
   SessionRoot = ensure_list(maps:get(session_root, State, openagentic_paths:default_session_root())),
   CaseId = cowboy_req:binding(case_id, Req0),
-  TaskId = cowboy_req:binding(task_id, Req0),
+  MailId = cowboy_req:binding(mail_id, Req0),
+  Action = cowboy_req:binding(action, Req0),
   {ok, BodyBin, Req1} = cowboy_req:read_body(Req0),
   case decode_json(BodyBin) of
     {ok, Obj0} ->
-      Obj = ensure_map(Obj0),
-      Payload = Obj#{case_id => CaseId, task_id => TaskId},
-      case openagentic_case_store:activate_task(SessionRoot, Payload) of
-        {ok, Res} -> reply_json(200, Res, Req1, State);
-        {error, awaiting_credentials} -> reply_json(409, #{error => <<"awaiting_credentials">>}, Req1, State);
-        {error, credential_expired} -> reply_json(409, #{error => <<"credential_expired">>}, Req1, State);
-        {error, reauthorization_required} -> reply_json(409, #{error => <<"reauthorization_required">>}, Req1, State);
+      Status =
+        case Action of
+          <<"read">> -> <<"read">>;
+          <<"archive">> -> <<"archived">>;
+          _ -> <<"read">>
+        end,
+      Payload = (ensure_map(Obj0))#{case_id => CaseId, mail_id => MailId, status => Status},
+      case openagentic_case_store:update_mail_state(SessionRoot, Payload) of
+        {ok, Mail} -> reply_json(200, #{mail => Mail}, Req1, State);
         {error, {missing_required_field, Field}} -> reply_json(400, #{error => <<"missing required field">>, field => to_bin(Field)}, Req1, State);
+        {error, {revision_conflict, CurrentRevision}} -> reply_json(409, #{error => <<"revision_conflict">>, current_revision => CurrentRevision}, Req1, State);
         {error, not_found} -> reply_json(404, #{error => <<"not found">>}, Req1, State);
         {error, Reason} -> reply_json(500, #{error => to_bin(Reason)}, Req1, State)
       end;
@@ -38,13 +42,7 @@ decode_json(Bin) ->
 reply_json(Status, Obj0, Req0, State) ->
   Obj = ensure_map(Obj0),
   Body = openagentic_json:encode_safe(Obj),
-  Req1 =
-    cowboy_req:reply(
-      Status,
-      #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
-      Body,
-      Req0
-    ),
+  Req1 = cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>}, Body, Req0),
   {ok, Req1, State}.
 
 ensure_map(M) when is_map(M) -> M;

@@ -13,6 +13,7 @@
         <div class="brand">OpenAgentic</div>
         <div class="subtitle" id="governanceSubtitle">聊天式治理 / 审议会话</div>
         <a class="btn" id="backToCase" href="/view/cases.html">返回案卷</a>
+        <a class="btn" id="inboxLink" href="/view/inbox.html">统一信箱</a>
         <a class="btn" href="/">Workflow</a>
       </header>
 
@@ -58,11 +59,64 @@
               <span>新 Objective</span>
               <textarea id="revisionObjective" rows="4" placeholder="例如：Track diplomatic statement shifts with emphasis on escalation risk."></textarea>
             </label>
+            <label>
+              <span>新增授权槽位</span>
+              <input id="revisionCredentialSlotName" placeholder="留空表示本次不改授权要求" />
+            </label>
+            <label>
+              <span>绑定类型</span>
+              <input id="revisionCredentialBindingType" placeholder="例如：cookie / api_key" />
+            </label>
+            <label>
+              <span>Provider</span>
+              <input id="revisionCredentialProvider" placeholder="例如：x / openai" />
+            </label>
             <div class="caseActions span2">
               <button type="submit" class="btn primary">创建新版本</button>
               <a class="btn" id="taskDetailLink" href="/view/task-detail.html">查看任务详情</a>
             </div>
-            <div class="hint span2" id="governanceRevisionHint">正式任务治理可在同一条治理会话里沉淀新版本；候选审议态不会显示真实修订动作。</div>
+            <div class="hint span2" id="governanceRevisionHint">正式任务治理可在同一条治理会话里沉淀新版本；若修订引入新授权要求，也可在本页直接补权并重新激活。</div>
+          </form>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">当前任务状态</div>
+          <div id="governanceTaskSummary" class="overviewCard empty">暂无正式任务上下文。</div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">最新修订差异</div>
+          <div id="governanceVersionDiff" class="entityList empty">暂无版本差异</div>
+        </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">整改后再激活</div>
+          <div id="governanceAuthorization" class="entityList empty">暂无授权信息</div>
+          <form id="governanceCredentialBindingForm" class="caseFormGrid">
+            <label>
+              <span>槽位名</span>
+              <input id="governanceBindingSlotName" placeholder="例如：x_session" />
+            </label>
+            <label>
+              <span>绑定类型</span>
+              <input id="governanceBindingType" placeholder="例如：cookie / api_key" />
+            </label>
+            <label>
+              <span>Provider</span>
+              <input id="governanceBindingProvider" placeholder="例如：x / openai" />
+            </label>
+            <label>
+              <span>状态</span>
+              <input id="governanceBindingStatus" value="validated" />
+            </label>
+            <label class="span2">
+              <span>材料引用</span>
+              <input id="governanceBindingMaterialRef" placeholder="例如：secure://materials/x-session-cookie" />
+            </label>
+            <div class="caseActions span2">
+              <button type="submit" class="btn primary">保存补权绑定</button>
+              <button type="button" class="btn" id="governanceActivateTask">重新激活任务</button>
+            </div>
           </form>
         </section>
       </main>

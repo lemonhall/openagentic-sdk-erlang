@@ -224,10 +224,17 @@ Current local web server routes:
 - `POST /api/cases/:case_id/candidates/extract` -> extract `monitoring_candidate` items from the origin round transcript
 - `POST /api/cases/:case_id/candidates/:candidate_id/approve` -> promote a candidate into `monitoring_task` + first `task_version`
 - `POST /api/cases/:case_id/candidates/:candidate_id/discard` -> discard a candidate in review
+- `GET /api/cases/:case_id/templates` -> list case-local `task_template` objects
+- `POST /api/cases/:case_id/templates` -> create one case-local `task_template` + template workspace
+- `POST /api/cases/:case_id/templates/:template_id/instantiate` -> instantiate a template into a new review candidate
 - `GET /api/cases/:case_id/tasks/:task_id/detail` -> load one task with versions, authorization state, and credential bindings
 - `POST /api/cases/:case_id/tasks/:task_id/revise` -> create a new `task_version` on the same `governance_session_id`, supersede the old active version, and keep governance on one long-lived line
 - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` -> upsert one task-level `credential_binding`
 - `POST /api/cases/:case_id/tasks/:task_id/activate` -> activate a task after required bindings are satisfied
+- `GET /api/inbox` -> query the unified cross-case inbox with status filtering
+- `GET /api/inbox/unread-count` -> get unified unread inbox count
+- `POST /api/cases/:case_id/mail/:mail_id/read` -> mark inbox items as read
+- `POST /api/cases/:case_id/mail/:mail_id/archive` -> archive inbox items
 - `POST /api/workflows/start`
 - `POST /api/workflows/continue`
 - `POST /api/workflows/cancel`
@@ -244,6 +251,8 @@ Phase 1 case governance metadata is persisted under `cases/<case_id>/...`, while
 The case governance view now exposes a chat-style governance entry for both `review_session_id` and `governance_session_id` via `view/governance-session.html`, so candidate review can continue on the same long-lived session after promotion. For formal tasks, the same governance view can also create a new `task_version` in place, keeping version revision on the same governance line instead of forcing a parallel flow.
 
 Phase 1 also now includes `view/task-detail.html`, which surfaces task definition, version history, latest revision diff, reauthorization hints when a revision introduces new credential requirements, empty-state run/artifact sections, authorization status, and a dedicated credential-binding flow that keeps `material_ref` separate from task JSON snapshots.
+
+Phase 1 now also includes a case-local template library plus a unified inbox view. Templates live under `cases/<case_id>/meta/templates/...` and can be instantiated into fresh candidates without sharing a live task body; inbox data is aggregated from `meta/mail/` into `view/inbox.html` with read/archive/filter actions and corresponding JSON APIs.
 
 ## Tools and safety behavior
 

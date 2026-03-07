@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenAgentic - 统一信箱</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" href="/assets/case-governance.css" />
+  </head>
+  <body>
+    <div class="app caseApp">
+      <header class="topbar">
+        <div class="brand">OpenAgentic</div>
+        <div class="subtitle">统一信箱 / 已读归档筛选</div>
+        <a class="btn" href="/view/cases.html">返回案卷</a>
+        <a class="btn" href="/">Workflow</a>
+      </header>
+
+      <main class="caseMain">
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">筛选</div>
+          <form id="inboxFilterForm" class="caseFormGrid">
+            <label>
+              <span>状态</span>
+              <select id="inboxStatus">
+                <option value="all">全部</option>
+                <option value="unread">未读</option>
+                <option value="read">已读</option>
+                <option value="archived">已归档</option>
+              </select>
+            </label>
+            <div class="caseActions">
+              <button type="submit" class="btn primary">刷新</button>
+            </div>
+            <div class="hint span2" id="inboxHint">统一信箱聚合各案卷内邮，可按状态筛选并直接标记已读或归档。</div>
+          </form>
+        </section>
+
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle">全局内邮</div>
+          <div id="globalMailList" class="entityList empty">暂无内邮</div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/inbox.js"></script>
+  </body>
+</html>

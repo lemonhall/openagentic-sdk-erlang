@@ -224,10 +224,17 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 - `POST /api/cases/:case_id/candidates/extract` -> 从该轮朝议 transcript 抽取 `monitoring_candidate`
 - `POST /api/cases/:case_id/candidates/:candidate_id/approve` -> 将候选任务生效为 `monitoring_task` 与首个 `task_version`
 - `POST /api/cases/:case_id/candidates/:candidate_id/discard` -> 废弃候选任务
+- `GET /api/cases/:case_id/templates` -> 读取案卷级 `task_template` 模板库
+- `POST /api/cases/:case_id/templates` -> 创建案卷级模板与模板工作区
+- `POST /api/cases/:case_id/templates/:template_id/instantiate` -> 由模板实例化新的候选任务
 - `GET /api/cases/:case_id/tasks/:task_id/detail` -> 读取任务详情（定义、版本、授权状态、credential binding）
 - `POST /api/cases/:case_id/tasks/:task_id/revise` -> 在同一条 `governance_session_id` 上创建新的 `task_version`，并把旧活动版本转为 `superseded`
 - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` -> 为任务创建或更新一个 `credential_binding`
 - `POST /api/cases/:case_id/tasks/:task_id/activate` -> 在授权条件满足后激活任务
+- `GET /api/inbox` -> 读取统一信箱，并支持状态筛选
+- `GET /api/inbox/unread-count` -> 读取统一信箱未读计数
+- `POST /api/cases/:case_id/mail/:mail_id/read` -> 标记内邮为已读
+- `POST /api/cases/:case_id/mail/:mail_id/archive` -> 归档内邮
 - `POST /api/workflows/start`
 - `POST /api/workflows/continue`
 - `POST /api/workflows/cancel`
@@ -244,6 +251,8 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 现在案卷治理页已经把 `review_session_id` / `governance_session_id` 接成可打开的聊天式治理入口：通过 `view/governance-session.html` 可以继续围绕同一条治理线审议候选、跟进生效后的正式任务；对于正式任务，还可以在同一治理页里直接沉淀新的 `task_version`，而不是另开一条平行修订流。
 
 Phase 1 现在也补上了 `view/task-detail.html`：可查看任务定义、版本历史、最新修订差异、修订引入新凭证要求时的重授权提示、空态运行/交付物区、授权状态，并通过独立的授权接驳表单维护 `credential_binding`，只保存 `material_ref` 引用而不把敏感材料本体写进任务主 JSON。
+
+Phase 1 现在还补上了案卷级模板库与统一信箱：模板落在 `cases/<case_id>/meta/templates/...` 与模板工作区中，可被实例化为新的候选任务，但不与正式任务共享执行体；统一信箱由各案卷 `meta/mail/` 聚合到 `view/inbox.html`，支持已读、归档、筛选与对应 JSON API。
 
 ## 工具与安全行为
 

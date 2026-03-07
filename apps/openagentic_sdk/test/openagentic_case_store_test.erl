@@ -327,7 +327,7 @@ revise_task_with_new_credentials_requires_reauthorization_and_exposes_diff_test(
 
   Task1 = maps:get(task, Revised),
   Auth1 = maps:get(authorization, Revised),
-  ?assertEqual(<<"awaiting_credentials">>, deep_get(Task1, [state, status])),
+  ?assertEqual(<<"reauthorization_required">>, deep_get(Task1, [state, status])),
   ?assertEqual([<<"x_session">>], maps:get(missing_slots, Auth1)),
 
   {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
@@ -336,7 +336,7 @@ revise_task_with_new_credentials_requires_reauthorization_and_exposes_diff_test(
   ?assertEqual(true, maps:get(credential_requirements_changed, Diff)),
   ?assertEqual(true, maps:get(reauthorization_required, Diff)),
   ?assertEqual([<<"x_session">>], maps:get(newly_required_slots, Diff)),
-  ?assertEqual(<<"awaiting_credentials">>, maps:get(authorization_status, Diff)),
+  ?assertEqual(<<"reauthorization_required">>, maps:get(authorization_status, Diff)),
   ?assert(
     lists:any(
       fun (Item) -> maps:get(field, Item) =:= <<"objective">> end,
@@ -349,6 +349,244 @@ revise_task_with_new_credentials_requires_reauthorization_and_exposes_diff_test(
       ChangedFields
     )
   ),
+
+  {ok, Bound} =
+    openagentic_case_store:upsert_credential_binding(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        slot_name => <<"x_session">>,
+        binding_type => <<"cookie">>,
+        provider => <<"x">>,
+        material_ref => <<"secure://materials/x-session-cookie">>,
+        status => <<"validated">>
+      }
+    ),
+  Task2 = maps:get(task, Bound),
+  ?assertEqual(<<"ready_to_activate">>, deep_get(Task2, [state, status])),
+
+  {ok, Detail1} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  Diff1 = maps:get(latest_version_diff, Detail1),
+  ?assertEqual(true, maps:get(reauthorization_required, Diff1)),
+  ?assertEqual(<<"ready_to_activate">>, maps:get(authorization_status, Diff1)),
+
+  {ok, Activated} =
+    openagentic_case_store:activate_task(
+      Root,
+      #{case_id => CaseId, task_id => TaskId, activated_by_op_id => <<"lemon">>}
+    ),
+  Task3 = maps:get(task, Activated),
+  ?assertEqual(<<"active">>, deep_get(Task3, [state, status])),
+
+  {ok, Detail2} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  Diff2 = maps:get(latest_version_diff, Detail2),
+  ?assertEqual(false, maps:get(reauthorization_required, Diff2)),
+  ?assertEqual(<<"active">>, maps:get(authorization_status, Diff2)),
+  ok.
+
+credential_binding_rotation_and_invalidation_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => id_of(Candidate),
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"Approve pending credentials">>,
+        objective => <<"Track diplomatic statement frequency and wording shifts">>,
+        credential_requirements =>
+          #{required_slots => [#{slot_name => <<"x_session">>, binding_type => <<"cookie">>, provider => <<"x">>}]} 
+      }
+    ),
+  Task0 = maps:get(task, Approved),
+  TaskId = id_of(Task0),
+
+  {ok, Bound0} =
+    openagentic_case_store:upsert_credential_binding(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        slot_name => <<"x_session">>,
+        binding_type => <<"cookie">>,
+        provider => <<"x">>,
+        material_ref => <<"secure://materials/x-session-cookie-v1">>,
+        status => <<"validated">>
+      }
+    ),
+  Binding0 = maps:get(credential_binding, Bound0),
+
+  {ok, _Activated} =
+    openagentic_case_store:activate_task(
+      Root,
+      #{case_id => CaseId, task_id => TaskId, activated_by_op_id => <<"lemon">>}
+    ),
+
+  {ok, Rotated} =
+    openagentic_case_store:upsert_credential_binding(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        rotate_binding_id => id_of(Binding0),
+        acted_by_op_id => <<"lemon">>,
+        note => <<"Rotate compromised session cookie">>,
+        material_ref => <<"secure://materials/x-session-cookie-v2">>
+      }
+    ),
+  Binding1 = maps:get(credential_binding, Rotated),
+  Bindings1 = maps:get(credential_bindings, Rotated),
+  [RotatedOld] = [B || B <- Bindings1, id_of(B) =:= id_of(Binding0)],
+  ?assert(id_of(Binding1) =/= id_of(Binding0)),
+  ?assertEqual(<<"rotated">>, deep_get(RotatedOld, [state, status])),
+  ?assertEqual(id_of(Binding1), deep_get(RotatedOld, [links, rotated_to_binding_id])),
+  ?assertEqual(id_of(Binding0), deep_get(Binding1, [links, rotated_from_binding_id])),
+  ?assertEqual(<<"active">>, deep_get(maps:get(task, Rotated), [state, status])),
+
+  {ok, Invalidated} =
+    openagentic_case_store:invalidate_credential_binding(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        credential_binding_id => id_of(Binding1),
+        status => <<"revoked">>,
+        acted_by_op_id => <<"lemon">>,
+        reason => <<"Provider revoked the session">>
+      }
+    ),
+  ?assertEqual(<<"revoked">>, deep_get(maps:get(credential_binding, Invalidated), [state, status])),
+  ?assertEqual(<<"reauthorization_required">>, deep_get(maps:get(task, Invalidated), [state, status])),
+  ?assertEqual(<<"reauthorization_required">>, maps:get(status, maps:get(authorization, Invalidated))),
+  ok.
+
+template_library_instantiation_and_history_registry_test() ->
+  Root = tmp_root(),
+  {CaseId, _RoundId, _Sid} = create_case_fixture(Root),
+
+  {ok, CreatedTemplate} =
+    openagentic_case_store:create_template(
+      Root,
+      #{
+        case_id => CaseId,
+        created_by_op_id => <<"lemon">>,
+        title => <<"外交表态监测模板">>,
+        summary => <<"适用于外交表态频率、措辞与升级风险监测">>,
+        objective => <<"Track diplomatic statement shifts with escalation risk emphasis">>,
+        template_body => <<"# Template\n\nReference fetch + parse scaffold\n">>,
+        credential_requirements => #{required_slots => [#{slot_name => <<"x_session">>, binding_type => <<"cookie">>, provider => <<"x">>}]} 
+      }
+    ),
+  Template = maps:get(template, CreatedTemplate),
+  TemplateId = id_of(Template),
+
+  {ok, Templates} = openagentic_case_store:list_templates(Root, CaseId),
+  ?assert(lists:any(fun (Item) -> id_of(Item) =:= TemplateId end, Templates)),
+
+  {ok, Instantiated} =
+    openagentic_case_store:instantiate_template_candidate(
+      Root,
+      #{case_id => CaseId, template_id => TemplateId, acted_by_op_id => <<"lemon">>}
+    ),
+  Candidate = maps:get(candidate, Instantiated),
+  ?assertEqual(TemplateId, deep_get(Candidate, [spec, template_ref])),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{
+        case_id => CaseId,
+        candidate_id => id_of(Candidate),
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"Instantiate from template">>
+      }
+    ),
+  Task = maps:get(task, Approved),
+  Version = maps:get(task_version, Approved),
+  CaseDir = filename:join([Root, "cases", ensure_list(CaseId)]),
+  RegistryPath = filename:join([CaseDir, "meta", "object-type-registry.json"]),
+  CaseHistoryPath = filename:join([CaseDir, "meta", "history.jsonl"]),
+  TaskHistoryPath = filename:join([CaseDir, "meta", "tasks", ensure_list(id_of(Task)), "history.jsonl"]),
+  WorkspaceRef = deep_get(Task, [links, workspace_ref]),
+  TaskWorkspace = filename:join([CaseDir, ensure_list(WorkspaceRef)]),
+  ?assertEqual(TemplateId, deep_get(Task, [spec, template_ref])),
+  ?assertEqual(TemplateId, deep_get(Version, [links, derived_from_template_ref])),
+  ?assert(filelib:is_file(RegistryPath)),
+  ?assert(filelib:is_file(CaseHistoryPath)),
+  ?assert(filelib:is_file(TaskHistoryPath)),
+  ?assert(length(file_lines(CaseHistoryPath)) > 0),
+  ?assert(length(file_lines(TaskHistoryPath)) > 0),
+  ?assert(filelib:is_file(filename:join([TaskWorkspace, "TASK.md"]))),
+  ok.
+
+revise_task_rejects_stale_revision_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(
+      Root,
+      #{case_id => CaseId, candidate_id => id_of(Candidate), approved_by_op_id => <<"lemon">>, approval_summary => <<"Approve">>}
+    ),
+  Task = maps:get(task, Approved),
+  TaskId = id_of(Task),
+  GovernanceSid = deep_get(Task, [links, governance_session_id]),
+  CurrentRevision = deep_get(Task, [header, revision]),
+
+  ?assertMatch(
+    {error, {revision_conflict, CurrentRevision}},
+    openagentic_case_store:revise_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        governance_session_id => GovernanceSid,
+        revised_by_op_id => <<"lemon">>,
+        expected_revision => CurrentRevision - 1,
+        objective => <<"new objective">>
+      }
+    )
+  ),
+  ok.
+
+global_inbox_read_archive_filter_test() ->
+  Root = tmp_root(),
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, _Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+
+  {ok, Inbox0} = openagentic_case_store:list_inbox(Root, #{}),
+  [Mail0 | _] = Inbox0,
+  MailId = id_of(Mail0),
+  ?assertEqual(<<"unread">>, deep_get(Mail0, [state, status])),
+
+  {ok, ReadMail} =
+    openagentic_case_store:update_mail_state(
+      Root,
+      #{case_id => CaseId, mail_id => MailId, status => <<"read">>, acted_by_op_id => <<"lemon">>}
+    ),
+  ?assertEqual(<<"read">>, deep_get(ReadMail, [state, status])),
+
+  {ok, InboxUnread} = openagentic_case_store:list_inbox(Root, #{status => <<"unread">>}),
+  ?assertEqual([], InboxUnread),
+  {ok, InboxRead} = openagentic_case_store:list_inbox(Root, #{status => <<"read">>}),
+  ?assert(lists:any(fun (Item) -> id_of(Item) =:= MailId end, InboxRead)),
+
+  {ok, ArchivedMail} =
+    openagentic_case_store:update_mail_state(
+      Root,
+      #{case_id => CaseId, mail_id => MailId, status => <<"archived">>, acted_by_op_id => <<"lemon">>}
+    ),
+  ?assertEqual(<<"archived">>, deep_get(ArchivedMail, [state, status])),
+  {ok, InboxArchived} = openagentic_case_store:list_inbox(Root, #{status => <<"archived">>}),
+  ?assert(lists:any(fun (Item) -> id_of(Item) =:= MailId end, InboxArchived)),
   ok.
 
 discard_candidate_marks_candidate_discarded_test() ->
@@ -427,3 +665,7 @@ to_bin(L) when is_list(L) -> iolist_to_binary(L);
 to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
+
+file_lines(Path) ->
+  {ok, Bin} = file:read_file(Path),
+  [Line || Line <- binary:split(Bin, <<"\n">>, [global]), Line =/= <<>>].

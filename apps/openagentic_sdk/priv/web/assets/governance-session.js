@@ -12,7 +12,20 @@ const ui = {
   governanceRevisionForm: el("governanceRevisionForm"),
   revisionChangeSummary: el("revisionChangeSummary"),
   revisionObjective: el("revisionObjective"),
+  revisionCredentialSlotName: el("revisionCredentialSlotName"),
+  revisionCredentialBindingType: el("revisionCredentialBindingType"),
+  revisionCredentialProvider: el("revisionCredentialProvider"),
   governanceRevisionHint: el("governanceRevisionHint"),
+  governanceTaskSummary: el("governanceTaskSummary"),
+  governanceVersionDiff: el("governanceVersionDiff"),
+  governanceAuthorization: el("governanceAuthorization"),
+  governanceCredentialBindingForm: el("governanceCredentialBindingForm"),
+  governanceBindingSlotName: el("governanceBindingSlotName"),
+  governanceBindingType: el("governanceBindingType"),
+  governanceBindingProvider: el("governanceBindingProvider"),
+  governanceBindingStatus: el("governanceBindingStatus"),
+  governanceBindingMaterialRef: el("governanceBindingMaterialRef"),
+  governanceActivateTask: el("governanceActivateTask"),
   taskDetailLink: el("taskDetailLink"),
   backToCase: el("backToCase"),
 };
@@ -24,6 +37,7 @@ const state = {
   eventSource: null,
   seenSeqs: new Set(),
   pendingAssistantEl: null,
+  taskDetail: null,
 };
 
 function queryValue(...names) {
@@ -271,11 +285,218 @@ function taskDetailHref() {
   return `/view/task-detail.html?${search.toString()}`;
 }
 
+function taskDetailApiUrl() {
+  const { caseId, taskId } = taskContext();
+  if (!caseId || !taskId) return "";
+  return `/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}/detail`;
+}
+
 function setRevisionEnabled(enabled) {
   if (ui.revisionChangeSummary) ui.revisionChangeSummary.disabled = !enabled;
   if (ui.revisionObjective) ui.revisionObjective.disabled = !enabled;
+  if (ui.revisionCredentialSlotName) ui.revisionCredentialSlotName.disabled = !enabled;
+  if (ui.revisionCredentialBindingType) ui.revisionCredentialBindingType.disabled = !enabled;
+  if (ui.revisionCredentialProvider) ui.revisionCredentialProvider.disabled = !enabled;
   const button = ui.governanceRevisionForm?.querySelector('button[type="submit"]');
   if (button) button.disabled = !enabled;
+}
+
+function setBindingEnabled(enabled) {
+  if (ui.governanceBindingSlotName) ui.governanceBindingSlotName.disabled = !enabled;
+  if (ui.governanceBindingType) ui.governanceBindingType.disabled = !enabled;
+  if (ui.governanceBindingProvider) ui.governanceBindingProvider.disabled = !enabled;
+  if (ui.governanceBindingStatus) ui.governanceBindingStatus.disabled = !enabled;
+  if (ui.governanceBindingMaterialRef) ui.governanceBindingMaterialRef.disabled = !enabled;
+  const button = ui.governanceCredentialBindingForm?.querySelector('button[type="submit"]');
+  if (button) button.disabled = !enabled;
+  if (ui.governanceActivateTask) ui.governanceActivateTask.disabled = !enabled;
+}
+
+function formatInline(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function setEmptyBlock(target, text, className = "entityList empty") {
+  if (!target) return;
+  target.className = className;
+  target.textContent = text;
+}
+
+function renderGovernanceTaskSummary(detail) {
+  if (!ui.governanceTaskSummary) return;
+  const task = detail?.task || {};
+  const header = task.header || {};
+  const spec = task.spec || {};
+  const taskState = task.state || {};
+  const auth = detail?.authorization || {};
+  if (!header.id) {
+    ui.governanceTaskSummary.className = "overviewCard empty";
+    ui.governanceTaskSummary.textContent = "暂无正式任务上下文。";
+    return;
+  }
+  ui.governanceTaskSummary.className = "overviewCard";
+  ui.governanceTaskSummary.innerHTML = `
+    <div class="overviewTitle">${escapeHtml(spec.title || header.id || "未命名任务")}</div>
+    <div class="overviewMeta">任务 ID：<code>${escapeHtml(header.id || "")}</code></div>
+    <div class="overviewMeta">任务状态：${escapeHtml(taskState.status || "")}</div>
+    <div class="overviewMeta">授权状态：${escapeHtml(auth.status || taskState.status || "")}</div>
+    <div class="overviewMeta">治理会话：<code>${escapeHtml(task?.links?.governance_session_id || "")}</code></div>
+    <div class="overviewSummary">${escapeHtml(spec.mission_statement || spec.objective || "")}</div>
+  `;
+}
+
+function renderGovernanceVersionDiff(detail) {
+  if (!ui.governanceVersionDiff) return;
+  const diff = detail?.latest_version_diff || {};
+  const changedFields = Array.isArray(diff.changed_fields) ? diff.changed_fields : [];
+  if (!diff.to_version_id || !changedFields.length) {
+    setEmptyBlock(ui.governanceVersionDiff, "暂无版本差异");
+    return;
+  }
+  const cards = [
+    `
+      <article class="entityCard compact">
+        <div class="entityHeader">
+          <div>
+            <div class="entityTitle">${escapeHtml(diff.change_summary || "最新修订")}</div>
+            <div class="entityMeta">${escapeHtml(diff.from_version_id || "")}${diff.from_version_id ? " → " : ""}${escapeHtml(diff.to_version_id || "")}</div>
+          </div>
+          <span class="statusChip">${escapeHtml(diff.authorization_status || "")}</span>
+        </div>
+        <div class="entityBody">变更字段：${escapeHtml(String(diff.changed_field_count || changedFields.length || 0))}</div>
+      </article>
+    `,
+    ...changedFields.map((item) => {
+      const field = item?.field || "field";
+      const fromValue = formatInline(item?.from);
+      const toValue = formatInline(item?.to);
+      return `
+        <article class="entityCard compact">
+          <div class="entityTitle">${escapeHtml(field)}</div>
+          <div class="entityBody">from: ${escapeHtml(fromValue || "∅")}<br/>to: ${escapeHtml(toValue || "∅")}</div>
+        </article>
+      `;
+    })
+  ];
+  if (Array.isArray(diff.newly_required_slots) && diff.newly_required_slots.length) {
+    cards.push(`
+      <article class="entityCard compact">
+        <div class="entityTitle">新增授权槽位</div>
+        <div class="entityBody">${escapeHtml(diff.newly_required_slots.join(", "))}</div>
+      </article>
+    `);
+  }
+  ui.governanceVersionDiff.className = "entityList";
+  ui.governanceVersionDiff.innerHTML = cards.join("");
+}
+
+function renderGovernanceAuthorization(detail) {
+  if (!ui.governanceAuthorization) return;
+  const authorization = detail?.authorization || {};
+  const bindings = detail?.credential_bindings || [];
+  const diff = detail?.latest_version_diff || {};
+  const required = Array.isArray(authorization.required_slots) ? authorization.required_slots : [];
+  const missing = Array.isArray(authorization.missing_slots) ? authorization.missing_slots : [];
+  const expired = Array.isArray(authorization.expired_slots) ? authorization.expired_slots : [];
+  const cards = [
+    `<article class="entityCard compact"><div class="entityTitle">授权状态：${escapeHtml(authorization.status || "")}</div><div class="entityBody">必需槽位：${escapeHtml(required.join(", ") || "无")}</div></article>`
+  ];
+  if (missing.length) {
+    cards.push(`<article class="entityCard compact"><div class="entityTitle">缺失槽位</div><div class="entityBody">${escapeHtml(missing.join(", "))}</div></article>`);
+  }
+  if (expired.length) {
+    cards.push(`<article class="entityCard compact"><div class="entityTitle">已过期槽位</div><div class="entityBody">${escapeHtml(expired.join(", "))}</div></article>`);
+  }
+  if (diff.reauthorization_required) {
+    const slots = Array.isArray(diff.newly_required_slots) ? diff.newly_required_slots : [];
+    cards.push(`<article class="entityCard compact"><div class="entityTitle">当前需要重授权</div><div class="entityBody">${escapeHtml(slots.join(", ") || "请查看缺失槽位")} 补齐后即可重新激活任务。</div></article>`);
+  }
+  cards.push(
+    ...bindings.map((binding) => {
+      const spec = binding.spec || {};
+      const bindingState = binding.state || {};
+      return `
+        <article class="entityCard compact">
+          <div class="entityHeader">
+            <div class="entityTitle">${escapeHtml(spec.slot_name || "未命名槽位")}</div>
+            <span class="statusChip">${escapeHtml(bindingState.status || "")}</span>
+          </div>
+          <div class="entityBody">${escapeHtml(spec.binding_type || "")}${spec.provider ? ` / ${escapeHtml(spec.provider)}` : ""}<br/>${escapeHtml(spec.material_ref || "")}</div>
+        </article>
+      `;
+    })
+  );
+  ui.governanceAuthorization.className = "entityList";
+  ui.governanceAuthorization.innerHTML = cards.join("");
+  const defaultSlot = missing[0] || required[0] || "";
+  if (defaultSlot && ui.governanceBindingSlotName && !ui.governanceBindingSlotName.value.trim()) {
+    ui.governanceBindingSlotName.value = defaultSlot;
+  }
+}
+
+function syncGovernanceTaskState(detail) {
+  const taskStatus = detail?.task?.state?.status || "";
+  const authStatus = detail?.authorization?.status || taskStatus;
+  const diff = detail?.latest_version_diff || {};
+  const required = Array.isArray(detail?.authorization?.required_slots) ? detail.authorization.required_slots : [];
+  setBindingEnabled(Boolean(required.length || taskContext().taskId));
+  if (ui.governanceActivateTask) {
+    ui.governanceActivateTask.disabled = authStatus !== "ready_to_activate";
+  }
+  if (taskContext().taskId) {
+    if (authStatus === "reauthorization_required") {
+      setRevisionHint("最新版本已进入重授权状态：请先在本页补齐绑定，再点击“重新激活任务”。", false);
+    } else if (authStatus === "credential_expired") {
+      setRevisionHint("当前绑定已过期：请更新绑定材料后重新激活任务。", false);
+    } else if (authStatus === "ready_to_activate" && diff.reauthorization_required) {
+      setRevisionHint("重授权材料已补齐：现在可以直接在本页重新激活任务。", false);
+    } else if (authStatus === "active") {
+      setRevisionHint("当前版本已处于 active，可继续治理或再次修订。", false);
+    }
+    ui.governanceContextHint.textContent = `这里承接候选任务审议与正式任务治理。当前任务状态：${taskStatus || "未知"}；授权状态：${authStatus || "未知"}。`;
+  }
+}
+
+function resetGovernanceTaskPanels() {
+  if (ui.governanceTaskSummary) {
+    ui.governanceTaskSummary.className = "overviewCard empty";
+    ui.governanceTaskSummary.textContent = "暂无正式任务上下文。";
+  }
+  setEmptyBlock(ui.governanceVersionDiff, "暂无版本差异");
+  setEmptyBlock(ui.governanceAuthorization, "暂无授权信息");
+  setBindingEnabled(false);
+}
+
+async function loadTaskDetail() {
+  const url = taskDetailApiUrl();
+  if (!url) {
+    state.taskDetail = null;
+    resetGovernanceTaskPanels();
+    return;
+  }
+  const detail = await fetchJson(url);
+  state.taskDetail = detail;
+  renderGovernanceTaskSummary(detail);
+  renderGovernanceVersionDiff(detail);
+  renderGovernanceAuthorization(detail);
+  syncGovernanceTaskState(detail);
+}
+
+function collectRevisionCredentialRequirements() {
+  const slotName = ui.revisionCredentialSlotName?.value.trim() || "";
+  if (!slotName) return undefined;
+  const slot = { slot_name: slotName };
+  const bindingType = ui.revisionCredentialBindingType?.value.trim() || "";
+  const provider = ui.revisionCredentialProvider?.value.trim() || "";
+  if (bindingType) slot.binding_type = bindingType;
+  if (provider) slot.provider = provider;
+  return { required_slots: [slot] };
 }
 
 function applyContext() {
@@ -293,15 +514,19 @@ function applyContext() {
   }
   if (taskId) {
     setRevisionEnabled(true);
-    setRevisionHint("当前为正式任务治理，可基于这条治理会话直接创建新版本。", false);
+    setBindingEnabled(true);
+    setRevisionHint("当前为正式任务治理，可基于这条治理会话直接创建新版本，也可在本页完成补权与再激活。", false);
   } else {
     setRevisionEnabled(false);
+    setBindingEnabled(false);
     setRevisionHint("当前没有 task_id；这通常表示仍处于候选审议态，暂不能创建正式任务版本。", false);
+    resetGovernanceTaskPanels();
   }
   if (!sid) {
     setHint("缺少 sid，无法打开治理会话。", true);
     ui.governancePrompt.disabled = true;
     setRevisionEnabled(false);
+    setBindingEnabled(false);
     return false;
   }
   return true;
@@ -313,12 +538,15 @@ async function continueGovernance(message) {
 
 async function createRevision(changeSummary, objective) {
   const { caseId, taskId } = taskContext();
-  return postJson(`/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}/revise`, {
+  const payload = {
     governance_session_id: state.sid,
     revised_by_op_id: "web_user",
-    change_summary: changeSummary,
-    objective,
-  });
+  };
+  if (changeSummary) payload.change_summary = changeSummary;
+  if (objective) payload.objective = objective;
+  const credentialRequirements = collectRevisionCredentialRequirements();
+  if (credentialRequirements) payload.credential_requirements = credentialRequirements;
+  return postJson(`/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}/revise`, payload);
 }
 
 ui.governanceSessionForm?.addEventListener("submit", async (event) => {
@@ -362,11 +590,16 @@ ui.governanceRevisionForm?.addEventListener("submit", async (event) => {
     const versionId = res?.task_version?.header?.id || "";
     const auth = res?.authorization?.status || res?.task?.state?.status || "";
     const missingSlots = Array.isArray(res?.authorization?.missing_slots) ? res.authorization.missing_slots : [];
+    ui.revisionChangeSummary.value = "";
     ui.revisionObjective.value = "";
-    if (auth === "awaiting_credentials" || auth === "credential_expired" || auth === "ready_to_activate") {
-      setRevisionHint(`新版本已创建${versionId ? `：${versionId}` : ""}，但当前授权状态为 ${auth}。${missingSlots.length ? `缺失槽位：${missingSlots.join(", ")}。` : ""}请去任务详情补齐绑定后再激活。`, false);
+    if (ui.revisionCredentialSlotName) ui.revisionCredentialSlotName.value = "";
+    if (ui.revisionCredentialBindingType) ui.revisionCredentialBindingType.value = "";
+    if (ui.revisionCredentialProvider) ui.revisionCredentialProvider.value = "";
+    await loadTaskDetail();
+    if (auth === "reauthorization_required" || auth === "awaiting_credentials" || auth === "credential_expired" || auth === "ready_to_activate") {
+      setRevisionHint(`新版本已创建${versionId ? `：${versionId}` : ""}，当前授权状态为 ${auth}。${missingSlots.length ? `缺失槽位：${missingSlots.join(", ")}。` : ""}可直接在本页补齐绑定并重新激活。`, false);
     } else {
-      setRevisionHint(`新版本已创建${versionId ? `：${versionId}` : ""}。可继续在本页治理，或去任务详情查看版本列表。`, false);
+      setRevisionHint(`新版本已创建${versionId ? `：${versionId}` : ""}。可继续在本页治理，也可查看下方差异与状态。`, false);
     }
   } catch (error) {
     setRevisionHint(error.message || String(error), true);
@@ -376,9 +609,72 @@ ui.governanceRevisionForm?.addEventListener("submit", async (event) => {
   }
 });
 
-function init() {
+ui.governanceCredentialBindingForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const { caseId, taskId } = taskContext();
+  if (!caseId || !taskId) {
+    setRevisionHint("当前没有正式任务上下文，不能补权。", true);
+    return;
+  }
+  const slotName = ui.governanceBindingSlotName?.value.trim() || "";
+  const bindingType = ui.governanceBindingType?.value.trim() || "";
+  const materialRef = ui.governanceBindingMaterialRef?.value.trim() || "";
+  if (!slotName || !bindingType || !materialRef) {
+    setRevisionHint("请至少填写槽位名、绑定类型和材料引用。", true);
+    return;
+  }
+  try {
+    setBindingEnabled(false);
+    setRevisionHint("正在保存补权绑定...");
+    await postJson(`/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}/credential-bindings`, {
+      slot_name: slotName,
+      binding_type: bindingType,
+      provider: ui.governanceBindingProvider?.value.trim() || "",
+      status: ui.governanceBindingStatus?.value.trim() || "validated",
+      material_ref: materialRef,
+    });
+    await loadTaskDetail();
+    setRevisionHint("补权绑定已保存。若状态已变为 ready_to_activate，可直接重新激活任务。", false);
+  } catch (error) {
+    setRevisionHint(error.message || String(error), true);
+  } finally {
+    setBindingEnabled(Boolean(taskContext().taskId));
+    if (state.taskDetail) syncGovernanceTaskState(state.taskDetail);
+  }
+});
+
+ui.governanceActivateTask?.addEventListener("click", async () => {
+  const { caseId, taskId } = taskContext();
+  if (!caseId || !taskId) {
+    setRevisionHint("当前没有正式任务上下文，不能重新激活。", true);
+    return;
+  }
+  try {
+    setBindingEnabled(false);
+    setRevisionHint("正在重新激活任务...");
+    await postJson(`/api/cases/${encodeURIComponent(caseId)}/tasks/${encodeURIComponent(taskId)}/activate`, {
+      activated_by_op_id: "web_user",
+    });
+    await loadTaskDetail();
+    setRevisionHint("任务已重新激活，可继续在本页治理。", false);
+  } catch (error) {
+    setRevisionHint(error.message || String(error), true);
+  } finally {
+    setBindingEnabled(Boolean(taskContext().taskId));
+    if (state.taskDetail) syncGovernanceTaskState(state.taskDetail);
+  }
+});
+
+async function init() {
   if (!applyContext()) return;
   connectSse(state.sid);
+  if (taskContext().taskId) {
+    try {
+      await loadTaskDetail();
+    } catch (error) {
+      setRevisionHint(error.message || String(error), true);
+    }
+  }
 }
 
 void init();

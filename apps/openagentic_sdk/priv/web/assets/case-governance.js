@@ -10,9 +10,15 @@ const ui = {
   caseOverview: el("caseOverview"),
   candidateList: el("candidateList"),
   taskList: el("taskList"),
+  templateList: el("templateList"),
   mailList: el("mailList"),
   caseStatusHint: el("caseStatusHint"),
   caseCreateForm: el("caseCreateForm"),
+  templateCreateForm: el("templateCreateForm"),
+  templateTitle: el("templateTitle"),
+  templateSummary: el("templateSummary"),
+  templateObjective: el("templateObjective"),
+  templateBody: el("templateBody"),
   btnExtractCandidates: el("btnExtractCandidates"),
   btnLoadOverview: el("btnLoadOverview"),
 };
@@ -224,6 +230,34 @@ function renderTaskList(tasks) {
     .join("");
 }
 
+function renderTemplateList(templates) {
+  if (!ui.templateList) return;
+  if (!Array.isArray(templates) || !templates.length) {
+    ui.templateList.className = "entityList empty";
+    ui.templateList.textContent = "暂无模板";
+    return;
+  }
+  ui.templateList.className = "entityList";
+  ui.templateList.innerHTML = templates
+    .map((item) => {
+      const header = item.header || {};
+      const spec = item.spec || {};
+      return `
+        <article class="entityCard compact">
+          <div class="entityHeader">
+            <div>
+              <div class="entityTitle">${escapeHtml(spec.title || header.id || "模板")}</div>
+              <div class="entityMeta">模板 ID：<code>${escapeHtml(header.id || "")}</code></div>
+            </div>
+            <button type="button" class="btn" data-action="instantiate-template" data-id="${escapeHtml(header.id || "")}">实例化候选</button>
+          </div>
+          <div class="entityBody">${escapeHtml(spec.summary || spec.objective || "")}</div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
 function renderMailList(mailItems) {
   if (!Array.isArray(mailItems) || !mailItems.length) {
     ui.mailList.className = "entityList empty";
@@ -252,6 +286,7 @@ function hydrateFromOverview(data) {
   renderOverview(data);
   renderCandidateList(data?.candidates || []);
   renderTaskList(data?.tasks || []);
+  renderTemplateList(data?.templates || []);
   renderMailList(data?.mail || []);
   const caseId = data?.case?.header?.id || "";
   const rounds = Array.isArray(data?.rounds) ? data.rounds : [];
@@ -267,6 +302,7 @@ function overviewFromCreateResponse(created) {
     rounds: created?.round ? [created.round] : [],
     candidates: created?.candidates || [],
     tasks: [],
+    templates: created?.templates || [],
     mail: created?.mail || [],
   };
 }
@@ -351,6 +387,39 @@ async function discardCandidate(candidateId) {
   setHint(`候选任务 ${candidateId} 已废弃。`);
 }
 
+async function createTemplate(event) {
+  event.preventDefault();
+  const caseId = ui.caseIdInput.value.trim();
+  if (!caseId) {
+    setHint("请先创建案卷或填入 case id。", true);
+    return;
+  }
+  setHint("正在创建模板...");
+  await postJson(`/api/cases/${encodeURIComponent(caseId)}/templates`, {
+    created_by_op_id: "web_user",
+    title: ui.templateTitle?.value?.trim() || "",
+    summary: ui.templateSummary?.value?.trim() || "",
+    objective: ui.templateObjective?.value?.trim() || "",
+    template_body: ui.templateBody?.value?.trim() || "",
+  });
+  await loadOverview();
+  setHint("模板已创建。", false);
+}
+
+async function instantiateTemplate(templateId) {
+  const caseId = ui.caseIdInput.value.trim();
+  if (!caseId) {
+    setHint("请先创建案卷或填入 case id。", true);
+    return;
+  }
+  setHint(`正在按模板 ${templateId} 生成候选任务...`);
+  await postJson(`/api/cases/${encodeURIComponent(caseId)}/templates/${encodeURIComponent(templateId)}/instantiate`, {
+    acted_by_op_id: "web_user",
+  });
+  await loadOverview();
+  setHint(`模板 ${templateId} 已实例化为候选任务。`);
+}
+
 function applyQueryPrefill() {
   const workflowSessionId = queryValue("workflow_session_id", "workflowSessionId");
   const caseId = queryValue("case_id", "caseId");
@@ -416,6 +485,24 @@ ui.candidateList?.addEventListener("click", async (event) => {
     } else if (action === "discard") {
       await discardCandidate(candidateId);
     }
+  } catch (error) {
+    setHint(error.message || String(error), true);
+  }
+});
+
+ui.templateCreateForm?.addEventListener("submit", async (event) => {
+  try {
+    await createTemplate(event);
+  } catch (error) {
+    setHint(error.message || String(error), true);
+  }
+});
+
+ui.templateList?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action='instantiate-template']");
+  if (!button) return;
+  try {
+    await instantiateTemplate(button.dataset.id || "");
   } catch (error) {
     setHint(error.message || String(error), true);
   }

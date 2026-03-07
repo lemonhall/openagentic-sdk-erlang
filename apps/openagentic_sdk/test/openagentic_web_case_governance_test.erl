@@ -431,10 +431,134 @@ task_detail_api_exposes_reauthorization_hint_after_revision_test() ->
 
     {200, Detail} = http_get_json(Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/detail"),
     Diff = maps:get(<<"latest_version_diff">>, Detail),
-    ?assertEqual(<<"awaiting_credentials">>, deep_get_bin(Detail, [<<"task">>, <<"state">>, <<"status">>])),
+    ?assertEqual(<<"reauthorization_required">>, deep_get_bin(Detail, [<<"task">>, <<"state">>, <<"status">>])),
     ?assertEqual(true, maps:get(<<"reauthorization_required">>, Diff)),
     ?assertEqual([<<"x_session">>], maps:get(<<"newly_required_slots">>, Diff)),
-    ?assertEqual(<<"awaiting_credentials">>, maps:get(<<"authorization_status">>, Diff))
+    ?assertEqual(<<"reauthorization_required">>, maps:get(<<"authorization_status">>, Diff)),
+
+    {201, Bound} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/credential-bindings",
+        #
+        {
+          slot_name => <<"x_session">>,
+          binding_type => <<"cookie">>,
+          provider => <<"x">>,
+          material_ref => <<"secure://materials/x-session-cookie">>,
+          status => <<"validated">>
+        }
+      ),
+    ?assertEqual(<<"ready_to_activate">>, deep_get_bin(Bound, [<<"task">>, <<"state">>, <<"status">>])),
+
+    {200, _Activated} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/activate",
+        #{activated_by_op_id => <<"lemon">>}
+      ),
+    {200, Detail2} = http_get_json(Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/detail"),
+    Diff2 = maps:get(<<"latest_version_diff">>, Detail2),
+    ?assertEqual(<<"active">>, deep_get_bin(Detail2, [<<"task">>, <<"state">>, <<"status">>])),
+    ?assertEqual(false, maps:get(<<"reauthorization_required">>, Diff2)),
+    ?assertEqual(<<"active">>, maps:get(<<"authorization_status">>, Diff2))
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
+  end,
+  ok.
+
+template_library_and_global_inbox_api_test() ->
+  Root = tmp_root(),
+  Port = pick_port(),
+  PrevTrap = process_flag(trap_exit, true),
+  ensure_httpc_started(),
+  try
+    {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+    ok =
+      append_round_result(
+        Root,
+        Sid,
+        <<"## Suggested Monitoring Items\n",
+          "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+          "- Track US sanctions policy and enforcement cadence\n">>
+      ),
+    {ok, _} =
+      openagentic_web:start(
+        #{
+          project_dir => Root,
+          session_root => Root,
+          web_bind => "127.0.0.1",
+          web_port => Port,
+          provider_mod => openagentic_testing_provider,
+          tools => [openagentic_tool_echo],
+          permission_mode_override => bypass,
+          api_key => <<"x">>,
+          model => <<"x">>
+        }
+      ),
+    Base = ensure_list(openagentic_web:base_url(#{bind => "127.0.0.1", port => Port})),
+
+    {201, Created} =
+      http_post_json(
+        Base ++ "api/cases",
+        #{
+          workflow_session_id => to_bin(Sid),
+          title => <<"Iran Situation">>,
+          opening_brief => <<"Create a long-running governance case around Iran">>,
+          current_summary => <<"Deliberation completed; waiting for candidate extraction">>
+        }
+      ),
+    CaseId = deep_get_bin(maps:get(<<"case">>, Created), [<<"header">>, <<"id">>]),
+    [Mail0 | _] = maps:get(<<"mail">>, maps:get(<<"overview">>, Created)),
+    MailId = deep_get_bin(Mail0, [<<"header">>, <<"id">>]),
+
+    {201, TemplateCreated} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/templates",
+        #{
+          created_by_op_id => <<"lemon">>,
+          title => <<"外交表态监测模板">>,
+          summary => <<"适用于外交表态频率、措辞与升级风险监测">>,
+          objective => <<"Track diplomatic statement shifts with escalation risk emphasis">>,
+          template_body => <<"# Template\n\nReference fetch + parse scaffold\n">>
+        }
+      ),
+    TemplateId = deep_get_bin(maps:get(<<"template">>, TemplateCreated), [<<"header">>, <<"id">>]),
+
+    {200, Templates} = http_get_json(Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/templates"),
+    ?assert(lists:any(fun (Item) -> deep_get_bin(Item, [<<"header">>, <<"id">>]) =:= TemplateId end, maps:get(<<"templates">>, Templates))),
+
+    {201, Instantiated} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/templates/" ++ ensure_list(TemplateId) ++ "/instantiate",
+        #{acted_by_op_id => <<"lemon">>}
+      ),
+    ?assertEqual(TemplateId, deep_get_bin(maps:get(<<"candidate">>, Instantiated), [<<"spec">>, <<"template_ref">>])),
+
+    {200, Inbox0} = http_get_json(Base ++ "api/inbox?status=unread"),
+    ?assert(lists:any(fun (Item) -> deep_get_bin(Item, [<<"header">>, <<"id">>]) =:= MailId end, maps:get(<<"mail">>, Inbox0))),
+
+    {200, Unread0} = http_get_json(Base ++ "api/inbox/unread-count"),
+    ?assert(maps:get(<<"unread_count">>, Unread0) >= 1),
+
+    {200, ReadMail} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/mail/" ++ ensure_list(MailId) ++ "/read",
+        #{acted_by_op_id => <<"lemon">>}
+      ),
+    ?assertEqual(<<"read">>, deep_get_bin(ReadMail, [<<"mail">>, <<"state">>, <<"status">>])),
+
+    {200, InboxRead} = http_get_json(Base ++ "api/inbox?status=read"),
+    ?assert(lists:any(fun (Item) -> deep_get_bin(Item, [<<"header">>, <<"id">>]) =:= MailId end, maps:get(<<"mail">>, InboxRead))),
+
+    {200, ArchivedMail} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/mail/" ++ ensure_list(MailId) ++ "/archive",
+        #{acted_by_op_id => <<"lemon">>}
+      ),
+    ?assertEqual(<<"archived">>, deep_get_bin(ArchivedMail, [<<"mail">>, <<"state">>, <<"status">>])),
+
+    {200, InboxArchived} = http_get_json(Base ++ "api/inbox?status=archived"),
+    ?assert(lists:any(fun (Item) -> deep_get_bin(Item, [<<"header">>, <<"id">>]) =:= MailId end, maps:get(<<"mail">>, InboxArchived)))
   after
     reset_web_runtime(),
     process_flag(trap_exit, PrevTrap)
@@ -477,18 +601,31 @@ case_governance_static_page_test() ->
     {200, Html} = http_get_text(Base ++ "view/cases.html"),
     {200, GovernanceHtml} = http_get_text(Base ++ "view/governance-session.html"),
     {200, TaskDetailHtml} = http_get_text(Base ++ "view/task-detail.html"),
+    {200, InboxHtml} = http_get_text(Base ++ "view/inbox.html"),
     {200, IndexHtml} = http_get_text(Base),
     ?assert(string:find(Html, "caseCreateForm") =/= nomatch),
     ?assert(string:find(Html, "caseLifecycleNote") =/= nomatch),
     ?assert(string:find(Html, "btnExtractCandidates") =/= nomatch),
     ?assert(string:find(Html, "candidateList") =/= nomatch),
+    ?assert(string:find(Html, "templateCreateForm") =/= nomatch),
+    ?assert(string:find(Html, "templateList") =/= nomatch),
+    ?assert(string:find(Html, "inboxLink") =/= nomatch),
     ?assert(string:find(Html, "/assets/case-governance.js") =/= nomatch),
     ?assert(string:find(GovernanceHtml, "governanceSessionForm") =/= nomatch),
     ?assert(string:find(GovernanceHtml, "governanceRevisionForm") =/= nomatch),
+    ?assert(string:find(GovernanceHtml, "governanceTaskSummary") =/= nomatch),
+    ?assert(string:find(GovernanceHtml, "governanceVersionDiff") =/= nomatch),
+    ?assert(string:find(GovernanceHtml, "governanceCredentialBindingForm") =/= nomatch),
+    ?assert(string:find(GovernanceHtml, "governanceActivateTask") =/= nomatch),
+    ?assert(string:find(GovernanceHtml, "revisionCredentialSlotName") =/= nomatch),
     ?assert(string:find(GovernanceHtml, "/assets/governance-session.js") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "taskDetailView") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "taskVersionDiff") =/= nomatch),
+    ?assert(string:find(TaskDetailHtml, "inboxLink") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "/assets/task-detail.js") =/= nomatch),
+    ?assert(string:find(InboxHtml, "inboxFilterForm") =/= nomatch),
+    ?assert(string:find(InboxHtml, "globalMailList") =/= nomatch),
+    ?assert(string:find(InboxHtml, "/assets/inbox.js") =/= nomatch),
     ?assert(string:find(IndexHtml, "/view/cases.html") =/= nomatch),
     ?assert(string:find(IndexHtml, "btnFileCase") =/= nomatch),
     ?assert(contains_codepoints(IndexHtml, [19977, 30465, 20845, 37096])),

@@ -1,10 +1,12 @@
 # 2026-03-07：Phase 1｜案卷与任务骨架实现对齐审计
 
 ## 文档状态
-- 状态：实现审计基线 / 下一轮对齐施工前置文档
+- 状态：实现审计基线 / Phase 1 对齐收口后回写文档
 - 审计时间：2026-03-07
 - 审计对象：当前仓库内已经落地的 Phase 1 相关实现
 - 审计目标：确认当前实现与 `Phase 1` 设计稿之间，哪些已经对齐，哪些只落了一半，哪些仍未落地
+
+> 2026-03-07 当日追加回写：`10.1 ~ 10.5` 已全部落地；文内更早出现的“下一轮”措辞保留为当时审计快照，**以第 10 节完成态描述为准**。
 
 ---
 
@@ -54,10 +56,19 @@
   - `apps/openagentic_sdk/src/openagentic_web_api_candidates_extract.erl`
   - `apps/openagentic_sdk/src/openagentic_web_api_candidates_approve.erl`
   - `apps/openagentic_sdk/src/openagentic_web_api_candidates_discard.erl`
+  - `apps/openagentic_sdk/src/openagentic_web_api_sessions_query.erl`
+  - `apps/openagentic_sdk/src/openagentic_web_api_tasks_detail.erl`
+  - `apps/openagentic_sdk/src/openagentic_web_api_tasks_revise.erl`
+  - `apps/openagentic_sdk/src/openagentic_web_api_task_credential_bindings.erl`
+  - `apps/openagentic_sdk/src/openagentic_web_api_tasks_activate.erl`
 
 - Web 页面与前端逻辑：
   - `apps/openagentic_sdk/priv/web/view/cases.html`
   - `apps/openagentic_sdk/priv/web/assets/case-governance.js`
+  - `apps/openagentic_sdk/priv/web/view/governance-session.html`
+  - `apps/openagentic_sdk/priv/web/assets/governance-session.js`
+  - `apps/openagentic_sdk/priv/web/view/task-detail.html`
+  - `apps/openagentic_sdk/priv/web/assets/task-detail.js`
 
 - 测试证据：
   - `apps/openagentic_sdk/test/openagentic_case_store_test.erl`
@@ -112,7 +123,7 @@
 - 候选审议会话直接转正为 `governance_session_id`
 
 但如果按设计稿原文要求继续审：
-- “聊天式审议”已具备治理页、任务详情页、同会话延续、第一版版本修订闭环，以及任务详情中的最新版本差异 / 重授权提示；但整改后再激活与更完整治理面仍未收口
+- “聊天式审议”已具备治理页、任务详情页、同会话延续、同会话版本修订闭环，以及治理页 / 任务详情页中的最新版本差异、重授权提示、补权后再激活第一版闭环；但更完整的治理制度与后续运行治理面仍未收口
 - “模板库 / 模板起草流程”还没有落地
 - “授权接驳分轨 / credential_binding 一等对象”已补上第一版，但仍未覆盖更完整的重授权机制
 - “内邮系统”还只是候选待审通知的第一版，不是完整信箱模型
@@ -144,6 +155,34 @@
   - 不要把 Phase 2/3/4 的运行、检察、复议能力混入本轮缺口
   - 不要把“已有字段占位”误判为“制度已经落地”
   - 不要把“已有页面入口”误判为“完整产品闭环已经完成”
+
+### 4.4 本轮已经确认、下一轮不要再重复审计的新增落地点
+为避免下一轮再花半天确认“这些到底做没做”，这里把本轮已经核实的新增落地点单独钉住：
+
+- 治理页已经不是纯占位：
+  - 已存在 `view/governance-session.html`
+  - 已存在 `POST /api/sessions/:sid/query`
+  - 已可围绕既有 `review_session_id` / `governance_session_id` 原地续聊，并继续使用既有 session 事件流
+
+- 任务详情页已经不是纯壳页面：
+  - 已存在 `view/task-detail.html`
+  - 已存在 `GET /api/cases/:case_id/tasks/:task_id/detail`
+  - 已能展示版本列表、授权状态、治理入口、运行/交付物空态、最新修订差异与重授权提示
+
+- 正式任务的“同治理线修订闭环”已经有第一版：
+  - 已存在 `POST /api/cases/:case_id/tasks/:task_id/revise`
+  - 已能在同一条 `governance_session_id` 上创建新 `task_version`
+  - 已会把旧版标为 `superseded`、新版标为 `active`
+
+- 授权接驳已经不是只有字段占位：
+  - 已存在任务级 `credential_binding` 对象目录
+  - 已存在 `POST /api/cases/:case_id/tasks/:task_id/credential-bindings`
+  - 已存在 `POST /api/cases/:case_id/tasks/:task_id/activate`
+  - 已具备 `awaiting_credentials -> ready_to_activate -> active / credential_expired` 的第一版状态语义
+
+- 静态页与 Web API 已经有成体系测试覆盖：
+  - `openagentic_case_store_test.erl` 已覆盖立案、抽取、approve/discard、会话转正、版本修订、重授权提示、授权接驳
+  - `openagentic_web_case_governance_test.erl` 已覆盖页面可访问性、治理页 query、任务详情 API、修订 API、授权绑定与激活 API
 
 ---
 
@@ -376,12 +415,12 @@
 
 - 已经具备：
   - `cases.html`：立案、总览、候选审批、任务入口、案卷内邮
-  - `governance-session.html`：围绕既有 session 继续发治理指令、观察事件流，并在正式任务治理态创建新版本
+  - `governance-session.html`：围绕既有 session 继续发治理指令、观察事件流，并在正式任务治理态创建新版本、查看最新修订差异、补权并重新激活
   - `task-detail.html`：查看任务定义、版本列表、最新修订差异、授权状态、治理入口、运行/交付物空态
 
 - 仍未具备：
   - 全站统一信箱入口与右上角未读提醒
-  - 在治理页内直接完成“更完整的版本差异对比 / 整改后再激活 / 更强重授权提示”的一体化流转
+  - 围绕更复杂修订字段的结构化治理编辑体验
   - 真实非空的运行记录、交付物列表与基于它们触发的进一步治理动作
 
 ---
@@ -478,37 +517,40 @@
 
 ---
 
-## 10. 下一轮对齐建议顺序
+## 10. 剩余缺口对齐建议顺序
 
-建议下一轮按以下顺序推进，收益最高，也最不容易返工：
+在本轮实现完成后，`10.1 治理会话真正落地` 已可直接视为**已实现**；下一轮应从剩余缺口继续推进，收益最高，也最不容易返工：
 
-### 10.1 第一优先级：治理会话真正落地
-- 为 candidate/task 增加真正的治理会话入口
-- 让 `review_session_id` / `governance_session_id` 不只是元数据，而是可打开、可继续对话的治理面
-- 把“聊天式审议”从设计语义变成产品语义
-- 当前进度：已完成同会话续聊 + 同会话版本修订；剩余是版本差异展示、整改后再激活与更强重授权提示
+### 10.1 第一优先级：治理会话真正落地（已实现，2026-03-07）
+- candidate / task 均已具备真正可打开、可继续对话的治理会话入口
+- `review_session_id` / `governance_session_id` 已不再只是元数据，而是可打开、可续聊、可沉淀修订动作的治理面
+- “聊天式审议”已从设计语义落到产品语义
+- 本轮落地内容：同会话续聊 + 同会话版本修订 + 治理页内版本差异展示 + 重授权提示 + 补权后再激活第一版闭环
+- 因此，下一轮**不要再把 10.1 当成待实现项**；除非要做增强体验，否则直接从 `10.2` 开始即可
 
 ### 10.2 第二优先级：授权接驳分轨
-- 已补上第一版 `credential_binding` 一等对象与任务授权状态流
-- 下一步聚焦重授权、轮换与更强审计边界
+- 本轮已实现 `credential_binding` 一等对象的重授权闭环、轮换补录与失效/撤销后再授权语义
+- `rotate_binding_id` 已落地，旧绑定会转为 `rotated`，新绑定与旧绑定建立前后关系
+- `revoked` / `invalidated` / 缺失补权后可把任务推进到明确的 `reauthorization_required` 或恢复激活
+- 激活拦截与 Web 冲突提示已同步支持 `reauthorization_required`
 
 ### 10.3 第三优先级：模板制度补齐
-- 引入模板库与模板引用关系
-- 明确模板只用于起草与参考实现，不共享正式执行体
-- 把目前的 `template_ref` 从占位升级为真正制度对象
+- 本轮已引入 case 级模板库、模板工作区与模板实例化候选任务入口
+- `template_ref` 已不再只是占位字段，而是可落盘、可枚举、可实例化的正式制度对象
+- 模板仍只承担起草与参考实现职责，不与正式任务共享执行体；任务工作区与模板工作区已分离
 
 ### 10.4 第四优先级：审计与存储硬化
-- 增加 `history.jsonl`
-- 增加对象类型注册表
-- 增加乐观并发写入校验
+- 本轮已补上 case 级 `history.jsonl`、task/template 局部 `history.jsonl` 与对象类型注册表
+- 关键对象写入已走统一持久化旁路，变更会留下轻量历史与对象类型登记
+- 已补上第一版乐观并发校验语义；冲突会返回 `{revision_conflict, CurrentRevision}`
 
 ### 10.5 第五优先级：内邮信箱体验补齐
-- 做成统一信箱入口
-- 补 `已读 / 归档 / 筛选`
-- 为后续异常督办、急报、可复议通知预留统一模型
+- 本轮已补成统一信箱入口 `view/inbox.html` 与全局 `/api/inbox` / `/api/inbox/unread-count`
+- 已补 `已读 / 归档 / 筛选` 第一版动作与页面模型，案卷页/任务页/治理页顶部也已接入统一入口
+- 统一内邮模型已形成，后续异常督办、急报、可复议通知可在同一模型上继续扩展
 
-### 10.6 下一轮直接文件落点（按缺口分组）
-为避免下一轮先花时间重新定位代码入口，这里直接给出推荐落点：
+### 10.6 本轮已落地文件落点（按能力分组）
+为避免后续再花时间重新定位代码入口，这里直接把本轮实际落地文件落点钉住：
 
 - 治理会话闭环：
   - 重点先看 `apps/openagentic_sdk/src/openagentic_case_store.erl`
@@ -546,6 +588,17 @@
 5. 底层落盘补上 `history.jsonl`、对象类型注册表与乐观并发校验中的至少最小闭环。
 6. `rebar3 eunit` 继续通过，且新增能力有对应 EUnit / Web API 测试覆盖。
 
+### 10.8 直接可执行的差距清单（下一轮不要再先做认知体操）
+下面这张表的目的只有一个：让下一轮直接开工补差距，而不是再重做一轮“现状梳理”。
+
+| 差距主题 | 保持不动的既有地基 | 下一轮最小补齐内容 | 最小验收口径 |
+| --- | --- | --- | --- |
+| 模板制度 | `task` / `task_version` 上既有 `template_ref`、`derived_from_template_ref` 字段与实例独立 workspace | 增加模板对象、模板引用关系、模板实例化审计链；明确模板仅用于起草与参考实现 | 能创建模板、能从模板实例化任务、能在任务/版本中追溯模板来源且不共享执行体 |
+| 授权重接驳 | 既有 `credential_binding` 目录、绑定 API、激活 API、状态流 | 增加失效补录、轮换补录、重授权原因与动作沉淀 | 修订引入新凭证后，任务进入明确待重授权状态；补录后可重新激活；全程有对象与状态证据 |
+| 统一信箱 | 既有 `meta/mail/` 与 `mail-unread.json`，案卷页内已有 `mailList` | 增加统一信箱入口、已读/归档、类型筛选与全站跳转 | 至少存在一个独立信箱入口，能看到未读、已读/归档、按类型过滤 |
+| 审计硬化 | 既有统一对象外壳、`revision`、原子写盘与索引层 | 增加 `history.jsonl`、对象类型注册表、乐观并发校验 | 任一对象变更会留下轻量历史；对象类型可登记查询；并发写入冲突可被识别 |
+| 治理体验收口 | 既有治理页、任务详情页、修订 API、差异提示与重授权提示 | `已完成第一版闭环`；后续仅补更复杂修订字段的结构化编辑体验 | 用户已能从治理页/详情页直接完成“修订 -> 看到差异 -> 补授权 -> 再激活”的主线操作 |
+
 ---
 
 ## 11. 验证结论
@@ -561,7 +614,7 @@
 
 本文件的结论仍然是：
 
-**当前实现已经具备 Phase 1 主干，且已补上任务详情页与第一版授权接驳分轨；剩余主要缺口集中在模板制度、信箱统一模型与审计硬化。**
+**当前实现已经具备 Phase 1 主干，且已补上任务详情页、治理页内补权后再激活闭环与第一版授权接驳分轨；剩余主要缺口集中在模板制度、信箱统一模型与审计硬化。**
 
 ---
 
@@ -590,13 +643,55 @@
 | approve / discard 候选 | 已对齐 | `openagentic_web_api_candidates_approve.erl`、`openagentic_web_api_candidates_discard.erl`、相关 EUnit |
 | 候选转正式任务并生成首版 `task_version` | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
 | `review_session_id -> governance_session_id` 转正 | 已对齐 | `openagentic_case_store.erl`、`openagentic_case_store_test.erl` |
-| 聊天式治理页入口 | 部分对齐 | `view/governance-session.html`、`governance-session.js`、`openagentic_web_api_sessions_query.erl` |
-| 同会话任务版本修订 | 部分对齐 | `openagentic_case_store.erl`、`openagentic_web_api_tasks_revise.erl`、相关 EUnit |
+| 聊天式治理页入口 | 已对齐 | `view/governance-session.html`、`governance-session.js`、`openagentic_web_api_sessions_query.erl` |
+| 同会话任务版本修订 | 已对齐 | `openagentic_case_store.erl`、`openagentic_web_api_tasks_revise.erl`、相关 EUnit |
 | 任务详情页 | 已对齐 | `view/task-detail.html`、`task-detail.js`、`openagentic_web_api_tasks_detail.erl` |
-| 最新版本差异 / 重授权提示 | 部分对齐 | `openagentic_case_store.erl`、`task-detail.js`、相关 EUnit |
-| 任务授权接驳第一版 | 部分对齐 | `openagentic_case_store.erl`、`openagentic_web_api_task_credential_bindings.erl`、`openagentic_web_api_tasks_activate.erl` |
+| 最新版本差异 / 重授权提示 | 已对齐 | `openagentic_case_store.erl`、`task-detail.js`、`governance-session.js`、相关 EUnit |
+| 任务授权接驳第一版 | 已对齐 | `openagentic_case_store.erl`、`openagentic_web_api_task_credential_bindings.erl`、`openagentic_web_api_tasks_activate.erl` |
 | 模板制度 | 部分对齐 | 仅有 `template_ref` / `derived_from_template_ref` 字段，占位多于制度 |
 | 统一信箱模型 | 未对齐 | 当前仅 `cases.html` 内 `mailList` 与 `mail-unread.json` |
 | 审计硬化 | 未对齐 | 仅有 `revision` 与原子写盘，无 `history.jsonl` / 注册表 / 乐观并发 |
 
 这个表的用处只有一个：下一轮先扫这一节，再决定开工顺序；不要再重复做一轮“到底哪些已经有了”的认知体操。
+
+---
+
+## 14. 页面 / API / 测试入口速查
+
+### 14.1 页面入口
+- `view/cases.html`：案卷总览、候选审批、任务入口、案卷内邮入口
+- `view/governance-session.html`：围绕既有 `review_session_id` / `governance_session_id` 继续治理
+- `view/task-detail.html`：查看任务定义、版本历史、授权状态、修订差异与治理入口
+
+### 14.2 API 入口
+- `POST /api/cases`：从已完成 workflow session 立案
+- `GET /api/cases/:case_id/overview`：读取案卷总览
+- `POST /api/cases/:case_id/candidates/extract`：重新抽取候选
+- `POST /api/cases/:case_id/candidates/:candidate_id/approve`：候选转正式任务
+- `POST /api/cases/:case_id/candidates/:candidate_id/discard`：废弃候选
+- `POST /api/sessions/:sid/query`：围绕既有治理会话续聊
+- `GET /api/cases/:case_id/tasks/:task_id/detail`：读取任务详情与版本/授权信息
+- `POST /api/cases/:case_id/tasks/:task_id/revise`：在同一治理线生成新版本
+- `POST /api/cases/:case_id/tasks/:task_id/credential-bindings`：写入或更新任务级授权接驳对象
+- `POST /api/cases/:case_id/tasks/:task_id/activate`：在授权满足后激活任务
+
+### 14.3 已有测试入口
+- `apps/openagentic_sdk/test/openagentic_case_store_test.erl`
+  - `create_case_from_round_persists_case_and_round_test`
+  - `create_case_from_round_requires_completed_workflow_test`
+  - `extract_candidates_from_round_creates_inbox_candidates_and_mail_test`
+  - `approve_candidate_promotes_review_session_to_governance_session_test`
+  - `approve_candidate_with_credential_requirements_enters_authorization_flow_test`
+  - `revise_task_creates_new_active_version_on_same_governance_session_test`
+  - `revise_task_with_new_credentials_requires_reauthorization_and_exposes_diff_test`
+  - `discard_candidate_marks_candidate_discarded_test`
+
+- `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
+  - `phase1_case_governance_api_test`
+  - `governance_session_page_and_query_api_test`
+  - `task_detail_and_credential_binding_api_test`
+  - `task_revision_api_updates_task_detail_versions_test`
+  - `task_detail_api_exposes_reauthorization_hint_after_revision_test`
+  - `case_governance_static_page_test`
+
+下一轮如果要补齐 Phase 1，对照这一节就能直接定位入口，不需要再先做一轮文件寻路。

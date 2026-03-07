@@ -1,4 +1,4 @@
--module(openagentic_web_api_tasks_activate).
+-module(openagentic_web_api_case_template_instantiate).
 
 -behaviour(cowboy_handler).
 
@@ -8,17 +8,13 @@ init(Req0, State0) ->
   State = ensure_map(State0),
   SessionRoot = ensure_list(maps:get(session_root, State, openagentic_paths:default_session_root())),
   CaseId = cowboy_req:binding(case_id, Req0),
-  TaskId = cowboy_req:binding(task_id, Req0),
+  TemplateId = cowboy_req:binding(template_id, Req0),
   {ok, BodyBin, Req1} = cowboy_req:read_body(Req0),
   case decode_json(BodyBin) of
     {ok, Obj0} ->
-      Obj = ensure_map(Obj0),
-      Payload = Obj#{case_id => CaseId, task_id => TaskId},
-      case openagentic_case_store:activate_task(SessionRoot, Payload) of
-        {ok, Res} -> reply_json(200, Res, Req1, State);
-        {error, awaiting_credentials} -> reply_json(409, #{error => <<"awaiting_credentials">>}, Req1, State);
-        {error, credential_expired} -> reply_json(409, #{error => <<"credential_expired">>}, Req1, State);
-        {error, reauthorization_required} -> reply_json(409, #{error => <<"reauthorization_required">>}, Req1, State);
+      Payload = (ensure_map(Obj0))#{case_id => CaseId, template_id => TemplateId},
+      case openagentic_case_store:instantiate_template_candidate(SessionRoot, Payload) of
+        {ok, Res} -> reply_json(201, Res, Req1, State);
         {error, {missing_required_field, Field}} -> reply_json(400, #{error => <<"missing required field">>, field => to_bin(Field)}, Req1, State);
         {error, not_found} -> reply_json(404, #{error => <<"not found">>}, Req1, State);
         {error, Reason} -> reply_json(500, #{error => to_bin(Reason)}, Req1, State)
@@ -38,13 +34,7 @@ decode_json(Bin) ->
 reply_json(Status, Obj0, Req0, State) ->
   Obj = ensure_map(Obj0),
   Body = openagentic_json:encode_safe(Obj),
-  Req1 =
-    cowboy_req:reply(
-      Status,
-      #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
-      Body,
-      Req0
-    ),
+  Req1 = cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>}, Body, Req0),
   {ok, Req1, State}.
 
 ensure_map(M) when is_map(M) -> M;
