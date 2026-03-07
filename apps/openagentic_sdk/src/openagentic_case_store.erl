@@ -14,6 +14,7 @@ create_case_from_round(RootDir0, Input0) ->
   WorkflowSessionId = required_bin(Input, [workflow_session_id, workflowSessionId]),
   try
     _ = openagentic_session_store:session_dir(RootDir, ensure_list(WorkflowSessionId)),
+    ok = ensure_workflow_session_completed(RootDir, WorkflowSessionId),
     Now = now_ts(),
     CaseId = new_id(<<"case">>),
     RoundId = new_id(<<"round">>),
@@ -100,7 +101,25 @@ create_case_from_round(RootDir0, Input0) ->
     ok = write_json(case_file(CaseDir), CaseObj),
     ok = write_json(round_file(CaseDir, RoundId), RoundObj),
     ok = rebuild_indexes(RootDir, CaseId),
-    {ok, #{'case' => CaseObj, round => RoundObj}}
+    BaseRes = #{'case' => CaseObj, round => RoundObj},
+    case get_bool(Input, [auto_extract, autoExtract], true) of
+      true ->
+        case extract_candidates(RootDir, #{case_id => CaseId, round_id => RoundId}) of
+          {ok, Extracted} ->
+            {ok,
+             maps:merge(
+               BaseRes,
+               #{
+                 candidates => maps:get(candidates, Extracted, []),
+                 mail => maps:get(mail, Extracted, []),
+                 overview => maps:get(overview, Extracted, undefined)
+               }
+             )};
+          {error, ExtractReason} -> {error, ExtractReason}
+        end;
+      false ->
+        {ok, BaseRes}
+    end
   catch
     error:{missing_required_field, Field} -> {error, {missing_required_field, Field}};
     error:{invalid_session_id, _} -> {error, invalid_workflow_session_id};
@@ -507,6 +526,31 @@ newest_round_id(CaseDir) ->
     [] -> throw({error, round_not_found})
   end.
 
+ensure_workflow_session_completed(RootDir, WorkflowSessionId0) ->
+  WorkflowSessionId = ensure_list(WorkflowSessionId0),
+  Events = openagentic_session_store:read_events(RootDir, WorkflowSessionId),
+  case latest_workflow_done_event(Events) of
+    undefined -> throw({error, workflow_session_not_completed});
+    Event ->
+      case get_bin(Event, [status], <<>>) of
+        <<"completed">> -> ok;
+        _ -> throw({error, workflow_session_not_completed})
+      end
+  end.
+
+latest_workflow_done_event(Events) ->
+  lists:foldl(
+    fun (Event0, Acc0) ->
+      Event = ensure_map(Event0),
+      case get_bin(Event, [type], <<>>) of
+        <<"workflow.done">> -> Event;
+        _ -> Acc0
+      end
+    end,
+    undefined,
+    Events
+  ).
+
 infer_candidate_specs_from_session(RootDir, WorkflowSessionId0, DefaultTimezone) ->
   WorkflowSessionId = ensure_list(WorkflowSessionId0),
   Events = openagentic_session_store:read_events(RootDir, WorkflowSessionId),
@@ -811,6 +855,18 @@ get_list(Map, Keys, Default) ->
     null -> Default;
     Value when is_list(Value) -> Value;
     Value -> [Value]
+  end.
+
+get_bool(Map, Keys, Default) ->
+  case find_any(Map, Keys) of
+    undefined -> Default;
+    true -> true;
+    false -> false;
+    <<"true">> -> true;
+    <<"false">> -> false;
+    "true" -> true;
+    "false" -> false;
+    _ -> Default
   end.
 
 find_any(Map0, Keys0) ->

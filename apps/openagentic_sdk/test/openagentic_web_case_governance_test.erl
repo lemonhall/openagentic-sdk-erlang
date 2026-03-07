@@ -35,16 +35,12 @@ phase1_case_governance_api_test() ->
     CaseId = deep_get_bin(CaseObj, [<<"header">>, <<"id">>]),
     RoundId = deep_get_bin(RoundObj, [<<"header">>, <<"id">>]),
 
-    {201, Extracted} =
-      http_post_json(
-        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/candidates/extract",
-        #{round_id => RoundId}
-      ),
-    Candidates = maps:get(<<"candidates">>, Extracted),
+    Candidates = maps:get(<<"candidates">>, Created),
     ?assertEqual(2, length(Candidates)),
     [Candidate1, Candidate2] = Candidates,
     CandidateId1 = deep_get_bin(Candidate1, [<<"header">>, <<"id">>]),
     CandidateId2 = deep_get_bin(Candidate2, [<<"header">>, <<"id">>]),
+    ?assertEqual(RoundId, deep_get_bin(Candidate1, [<<"links">>, <<"source_round_id">>])),
 
     {201, Approved} =
       http_post_json(
@@ -76,6 +72,31 @@ phase1_case_governance_api_test() ->
   end,
   ok.
 
+case_create_api_requires_completed_workflow_test() ->
+  Root = tmp_root(),
+  Port = pick_port(),
+  PrevTrap = process_flag(trap_exit, true),
+  ensure_httpc_started(),
+  try
+    {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+    {ok, _} = openagentic_web:start(#{project_dir => Root, session_root => Root, web_bind => "127.0.0.1", web_port => Port}),
+    Base = ensure_list(openagentic_web:base_url(#{bind => "127.0.0.1", port => Port})),
+
+    {400, Res} =
+      http_post_json(
+        Base ++ "api/cases",
+        #{
+          workflow_session_id => to_bin(Sid),
+          title => <<"Iran Situation">>
+        }
+      ),
+    ?assertEqual(<<"workflow session not completed">>, maps:get(<<"error">>, Res))
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
+  end,
+  ok.
+
 case_governance_static_page_test() ->
   Root = tmp_root(),
   Port = pick_port(),
@@ -87,13 +108,14 @@ case_governance_static_page_test() ->
     {200, Html} = http_get_text(Base ++ "view/cases.html"),
     {200, IndexHtml} = http_get_text(Base),
     ?assert(string:find(Html, "caseCreateForm") =/= nomatch),
+    ?assert(string:find(Html, "caseLifecycleNote") =/= nomatch),
     ?assert(string:find(Html, "btnExtractCandidates") =/= nomatch),
     ?assert(string:find(Html, "candidateList") =/= nomatch),
     ?assert(string:find(Html, "/assets/case-governance.js") =/= nomatch),
     ?assert(string:find(IndexHtml, "/view/cases.html") =/= nomatch),
-    ?assert(string:find(IndexHtml, "三省六部") =/= nomatch),
-    ?assert(string:find(IndexHtml, "流程图") =/= nomatch),
-    ?assert(string:find(IndexHtml, "涓夌渷") =:= nomatch)
+    ?assert(string:find(IndexHtml, "btnFileCase") =/= nomatch),
+    ?assert(contains_codepoints(IndexHtml, [19977, 30465, 20845, 37096])),
+    ?assert(contains_codepoints(IndexHtml, [27969, 31243, 22270]))
   after
     reset_web_runtime(),
     process_flag(trap_exit, PrevTrap)
@@ -162,6 +184,9 @@ http_get_text(Url0) ->
       _ -> ensure_list(RespBody)
     end,
   {Status, Text}.
+
+contains_codepoints(Text, Codepoints) ->
+  string:find(Text, unicode:characters_to_list(Codepoints)) =/= nomatch.
 
 deep_get_bin(Map0, [Key]) -> to_bin(maps:get(Key, Map0));
 deep_get_bin(Map0, [Key | Rest]) -> deep_get_bin(maps:get(Key, Map0), Rest).

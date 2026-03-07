@@ -1,4 +1,4 @@
-const $ = (id) => document.getElementById(id);
+﻿const $ = (id) => document.getElementById(id);
 
 const stepIds = [
   "taizi_route",
@@ -28,12 +28,32 @@ const state = {
 function setOverall(text) {
   state.overall = text;
   $("overallStatus").textContent = text;
+  updateFileCaseLink();
 }
 
 function setModeHint(text) {
   const el = $("modeHint");
   if (!el) return;
   el.textContent = text;
+}
+
+function updateFileCaseLink() {
+  const link = $("btnFileCase");
+  if (!link) return;
+  const baseHref = "/view/cases.html";
+  const hasSession = Boolean(state.workflowSessionId);
+  link.href = hasSession
+    ? `${baseHref}?workflow_session_id=${encodeURIComponent(state.workflowSessionId)}`
+    : baseHref;
+  const canFileCase =
+    hasSession &&
+    state.overall !== "idle" &&
+    state.overall !== "starting" &&
+    state.overall !== "running" &&
+    state.overall !== "error" &&
+    state.overall !== "canceled";
+  link.setAttribute("aria-disabled", canFileCase ? "false" : "true");
+  link.title = canFileCase ? "从当前已完成朝议立案" : "先完成一轮朝议，再立案";
 }
 
 function setStep(stepId, status) {
@@ -77,7 +97,7 @@ function extractWorkspaceRefs(text) {
   for (const m of s.matchAll(re)) {
     let ref = m[0];
     // Trim trailing punctuation commonly attached in prose.
-    ref = ref.replace(/[)\],.;:，。；：》」』】]+$/g, "");
+    ref = ref.replace(/[)\],.;:锛屻€傦紱锛氥€嬨€嶃€忋€慮+$/g, "");
     if (!ref.startsWith("workspace:")) continue;
     if (!refs.includes(ref)) refs.push(ref);
   }
@@ -97,7 +117,7 @@ function addWorkspaceDocLinks(msgEl, text) {
     a.target = "_blank";
     a.rel = "noopener";
     a.href = `/view/workspace.html?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(ref)}`;
-    a.textContent = `打开文档：${ref}`;
+    a.textContent = `鎵撳紑鏂囨。锛?{ref}`;
     actions.appendChild(a);
   }
 }
@@ -114,7 +134,7 @@ function truncateText(text, maxChars = 8000) {
   if (text == null) return "";
   const s = typeof text === "string" ? text : String(text);
   if (s.length <= maxChars) return s;
-  return s.slice(0, maxChars) + `\n…(truncated, total=${s.length} chars)`;
+  return s.slice(0, maxChars) + `\n鈥?truncated, total=${s.length} chars)`;
 }
 
 function formatAny(value) {
@@ -155,11 +175,11 @@ function connectSse(eventsUrl) {
   state.eventSource = es;
   es.onopen = () => {
     setOverall("running");
-    setModeHint("提示：运行中（可等结束后继续输入，或点“新开一局”清空上下文）");
+    setModeHint("鎻愮ず锛氳繍琛屼腑锛堝彲绛夌粨鏉熷悗缁х画杈撳叆锛屾垨鐐光€滄柊寮€涓€灞€鈥濇竻绌轰笂涓嬫枃锛?);
   };
   es.onerror = () => {
     setOverall("disconnected");
-    setModeHint("提示：SSE 断开（刷新页面或重新开跑）");
+    setModeHint("鎻愮ず锛歋SE 鏂紑锛堝埛鏂伴〉闈㈡垨閲嶆柊寮€璺戯級");
   };
   es.onmessage = (e) => {
     // Some events may come as default message; try parse anyway.
@@ -194,7 +214,7 @@ function handleEvent(ev) {
   if (type === "workflow.run.start") {
     for (const stepId of stepIds) setStep(stepId, "pending");
     setOverall("running");
-    addMsg("system", `继续执行：start_step_id=${ev.start_step_id || ""}`);
+    addMsg("system", `缁х画鎵ц锛歴tart_step_id=${ev.start_step_id || ""}`);
     return;
   }
   if (type === "system.init") {
@@ -215,7 +235,7 @@ function handleEvent(ev) {
   }
   if (type === "workflow.step.start") {
     setStep(ev.step_id, "running");
-    addMsg(ev.role || "step", `开始：${ev.step_id} (attempt=${ev.attempt})`);
+    addMsg(ev.role || "step", `寮€濮嬶細${ev.step_id} (attempt=${ev.attempt})`);
     return;
   }
   if (type === "workflow.step.pass") {
@@ -224,7 +244,7 @@ function handleEvent(ev) {
   }
   if (type === "workflow.guard.fail") {
     setStep(ev.step_id, "failed");
-    addMsg("guard", `失败：${ev.step_id}\n${(ev.reasons || []).join("\n")}`);
+    addMsg("guard", `澶辫触锛?{ev.step_id}\n${(ev.reasons || []).join("\n")}`);
     return;
   }
   if (type === "workflow.transition") {
@@ -241,7 +261,7 @@ function handleEvent(ev) {
     return;
   }
   if (type === "workflow.step.output") {
-    const who = `输出 · ${ev.step_id}`;
+    const who = `杈撳嚭 路 ${ev.step_id}`;
     const fmt = ev.output_format || "text";
     const body = fmt === "json" ? prettyJson(ev.output) : ev.output;
     addMsg(who, truncateText(body));
@@ -253,7 +273,7 @@ function handleEvent(ev) {
       const qid = se.question_id;
       const prompt = se.prompt || "";
       const choices = se.choices || [];
-      const msgEl = addMsg(`HITL · ${ev.step_id}`, `${prompt}\nquestion_id=${qid}`);
+      const msgEl = addMsg(`HITL 路 ${ev.step_id}`, `${prompt}\nquestion_id=${qid}`);
       const actions = msgEl.querySelector(".actions");
       for (const c of choices) {
         const btn = document.createElement("button");
@@ -274,48 +294,48 @@ function handleEvent(ev) {
     }
     if (se.type === "tool.use") {
       addMsg(
-        `tool.use · ${ev.step_id}`,
+        `tool.use 路 ${ev.step_id}`,
         truncateText(`${se.name}\n${formatAny(se.input || {})}`)
       );
       return;
     }
     if (se.type === "tool.result" && se.is_error) {
-      addMsg(`tool.error · ${ev.step_id}`, `${se.error_type}\n${se.error_message}`);
+      addMsg(`tool.error 路 ${ev.step_id}`, `${se.error_type}\n${se.error_message}`);
       return;
     }
     if (se.type === "tool.result" && !se.is_error) {
       const out = se.output ?? se.result ?? se.data ?? "";
       const txt = out;
-      addMsg(`tool.result · ${ev.step_id}`, truncateText(prettyJson(formatAny(txt))));
+      addMsg(`tool.result 路 ${ev.step_id}`, truncateText(prettyJson(formatAny(txt))));
       return;
     }
     if (se.type === "runtime.error") {
       addMsg(
-        `runtime.error · ${ev.step_id}`,
+        `runtime.error 路 ${ev.step_id}`,
         truncateText(`${se.phase || ""}\n${se.error_type || ""}\n${se.error_message || ""}`)
       );
       return;
     }
     if (se.type === "hook.event") {
-      addMsg(`hook.event · ${ev.step_id}`, truncateText(formatAny(se)));
+      addMsg(`hook.event 路 ${ev.step_id}`, truncateText(formatAny(se)));
       return;
     }
     if (se.type === "provider.event") {
-      addMsg(`provider.event · ${ev.step_id}`, truncateText(formatAny(se.json || se)));
+      addMsg(`provider.event 路 ${ev.step_id}`, truncateText(formatAny(se.json || se)));
       return;
     }
     if (se.type === "assistant.message") {
       const text = se.text || "";
       const isSummary = se.is_summary ? " (summary)" : "";
-      addMsg(`assistant${isSummary} · ${ev.step_id}`, truncateText(text));
+      addMsg(`assistant${isSummary} 路 ${ev.step_id}`, truncateText(text));
       return;
     }
     if (se.type === "tool.output_compacted") {
-      addMsg(`tool.compacted · ${ev.step_id}`, truncateText(formatAny(se)));
+      addMsg(`tool.compacted 路 ${ev.step_id}`, truncateText(formatAny(se)));
       return;
     }
     if (se.type === "result") {
-      addMsg(`result · ${ev.step_id}`, truncateText(formatAny(se)));
+      addMsg(`result 路 ${ev.step_id}`, truncateText(formatAny(se)));
       return;
     }
     // Ignore noisy streaming deltas by default.
@@ -325,12 +345,12 @@ function handleEvent(ev) {
   if (type === "workflow.done") {
     setOverall(ev.status || "done");
     addMsg("done", ev.final_text || "");
-    setModeHint("提示：本局已结束；继续输入会在同一局里追加并继续跑（不清空上下文）");
+    setModeHint("鎻愮ず锛氭湰灞€宸茬粨鏉燂紱缁х画杈撳叆浼氬湪鍚屼竴灞€閲岃拷鍔犲苟缁х画璺戯紙涓嶆竻绌轰笂涓嬫枃锛?);
     return;
   }
 
   // Fallback: show any unknown workflow/session event so nothing "disappears".
-  addMsg(`event · ${type || "unknown"}`, truncateText(formatAny(ev)));
+  addMsg(`event 路 ${type || "unknown"}`, truncateText(formatAny(ev)));
 }
 
 function resetToNewSessionUi() {
@@ -343,7 +363,7 @@ function resetToNewSessionUi() {
   $("chat").innerHTML = "";
   for (const stepId of stepIds) setStep(stepId, "pending");
   setOverall("idle");
-  setModeHint("提示：已清空上下文；下一次“发送”会新开一局");
+  setModeHint("鎻愮ず锛氬凡娓呯┖涓婁笅鏂囷紱涓嬩竴娆♀€滃彂閫佲€濅細鏂板紑涓€灞€");
 }
 
 $("composer").addEventListener("submit", async (e) => {
@@ -360,9 +380,9 @@ $("composer").addEventListener("submit", async (e) => {
       const wasRunning = state.overall === "starting" || state.overall === "running";
       if (!wasRunning) {
         setOverall("starting");
-        setModeHint("提示：继续本局…");
+        setModeHint("鎻愮ず锛氱户缁湰灞€鈥?);
       } else {
-        addMsg("system", "提示：本局仍在运行，你的输入已排队，稍后自动继续。");
+        addMsg("system", "鎻愮ず锛氭湰灞€浠嶅湪杩愯锛屼綘鐨勮緭鍏ュ凡鎺掗槦锛岀◢鍚庤嚜鍔ㄧ户缁€?);
       }
 
       const res = await postJson("/api/workflows/continue", {
@@ -390,7 +410,7 @@ $("composer").addEventListener("submit", async (e) => {
   // Otherwise start a new workflow.
   resetToNewSessionUi();
   setOverall("starting");
-  setModeHint("提示：启动新局…");
+  setModeHint("鎻愮ず锛氬惎鍔ㄦ柊灞€鈥?);
   try {
     $("prompt").value = "";
     addMsg("you", prompt);
@@ -413,23 +433,23 @@ $("composer").addEventListener("submit", async (e) => {
 async function startNewRun() {
   const s = state.overall;
   if (s === "starting" || s === "running") {
-    addMsg("system", "当前 workflow 正在运行；请等结束后再新开一局。");
+    addMsg("system", "褰撳墠 workflow 姝ｅ湪杩愯锛涜绛夌粨鏉熷悗鍐嶆柊寮€涓€灞€銆?);
     return;
   }
   resetToNewSessionUi();
-  addMsg("system", "=== 已清空上下文；下一次发送会新开 workflow ===");
+  addMsg("system", "=== 宸叉竻绌轰笂涓嬫枃锛涗笅涓€娆″彂閫佷細鏂板紑 workflow ===");
 }
 
 $("btnNewRun").addEventListener("click", () => startNewRun());
 
 async function cancelRun() {
   if (!state.workflowSessionId) {
-    addMsg("system", "当前没有可取消的 workflow。");
+    addMsg("system", "褰撳墠娌℃湁鍙彇娑堢殑 workflow銆?);
     return;
   }
   const s = state.overall;
   if (s !== "starting" && s !== "running") {
-    addMsg("system", "当前 workflow 未在运行（如需继续，直接发送即可）。");
+    addMsg("system", "褰撳墠 workflow 鏈湪杩愯锛堝闇€缁х画锛岀洿鎺ュ彂閫佸嵆鍙級銆?);
     return;
   }
   try {
@@ -445,4 +465,5 @@ async function cancelRun() {
 }
 
 $("btnCancel").addEventListener("click", () => cancelRun());
-setModeHint("提示：默认在同一局里继续；点“新开一局”才会清空上下文");
+setModeHint("鎻愮ず锛氶粯璁ゅ湪鍚屼竴灞€閲岀户缁紱鐐光€滄柊寮€涓€灞€鈥濇墠浼氭竻绌轰笂涓嬫枃");
+

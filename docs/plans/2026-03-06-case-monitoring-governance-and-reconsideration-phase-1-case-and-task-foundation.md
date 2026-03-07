@@ -85,6 +85,13 @@
 #### 5.1 `case`
 议题案卷，代表“伊朗局势”“某政策走势”“某市场监测”等长期议题本身。它是产品顶层容器，而不是某个单独的 workflow session。
 
+#### 5.1A `case` 的生命周期与立案责任
+- `workflow_session` 只是某一轮朝议的 transcript，不等于 `case`
+- `case` 只能通过“把某轮**已完成朝议**立此为案”产生，不能凭空手填一个 session id 乱建案卷
+- 立案责任属于你：你决定是否立案，系统负责写盘建档，并生成该案卷的 origin `deliberation_round`
+- 提案官**不创建 `case`**；提案官只在立案完成后读取 origin round 对应的 `workflow_session`，自动抽取 `monitoring_candidate` 并投递到你的待审内邮
+- 因此，制度上的顺序是：朝议完成 -> 你拍板立案 -> 系统建档 -> 提案官抽取候选任务 -> 你审定候选任务 -> 正式任务进入长期治理
+
 #### 5.2 `deliberation_round`
 一次正式朝会轮次，包括首轮朝议、第一次复议、第二次复议等。每一轮都关联一个独立的 `workflow_session_id`。
 
@@ -125,7 +132,8 @@
 
 ### 6. 官员体系与职责分工
 #### 6.1 提案官
-- 在某轮朝会结束后通读该轮 `workflow_session`
+- 不负责创建 `case`；立案责任属于你
+- 在某轮朝会结束并且案卷已经建立后，通读该轮 `workflow_session`
 - 自动提取值得持续监测的事项
 - 生成 `monitoring_candidate`
 - 把候选任务投递到你的待审信箱
@@ -206,6 +214,8 @@ Web 右上角提供统一“新奏折 / 内邮”提醒，用于提示：
 - `paused`
 - `superseded`
 - `closed`
+
+
 
 #### 8.3 任务版本
 - 每次重大定义修订产生新的 `task_version`
@@ -1171,6 +1181,15 @@ v1 的核心对象 JSON 应统一采用以下外壳结构：
 - `awaiting_new_signals`
 - `closed`
 
+#### 62.3 Phase 1 当前落地语义
+- `case.state.status` 目前固定落在 `active`
+- 新立案时，`case.state.phase = post_deliberation_extraction`
+- 立案成功后，提案官立即自动抽取候选任务并投递内邮
+- 一旦出现至少一个 `active` 的 `monitoring_task`，案卷阶段切换为 `monitoring_active`
+- `briefing_ready`、`reconsideration_in_progress`、`closed` 等后续阶段属于后继 Phase 的实现范围
+
+
+
 ---
 
 
@@ -1289,6 +1308,10 @@ v1 应把 `credential_binding` 设计成 `task` 级独立对象，并用 `materi
 - `material_ref`
 
 ---
+
+
+
+
 
 
 

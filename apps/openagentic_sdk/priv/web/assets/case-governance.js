@@ -17,9 +17,19 @@ const ui = {
   btnLoadOverview: el("btnLoadOverview"),
 };
 
+const searchParams = new URLSearchParams(window.location.search);
+
 function setHint(text, isError = false) {
   ui.caseStatusHint.textContent = text;
   ui.caseStatusHint.classList.toggle("errorText", isError);
+}
+
+function queryValue(...names) {
+  for (const name of names) {
+    const value = searchParams.get(name);
+    if (value && value.trim()) return value.trim();
+  }
+  return "";
 }
 
 async function fetchJson(url, options = {}) {
@@ -66,11 +76,11 @@ function renderOverview(data) {
   const header = caseObj.header || {};
   ui.caseOverview.className = "overviewCard";
   ui.caseOverview.innerHTML = `
-    <div class="overviewTitle">${escapeHtml(spec.title || "Untitled Case")}</div>
-    <div class="overviewMeta">Case ID: <code>${escapeHtml(header.id || "")}</code></div>
+    <div class="overviewTitle">${escapeHtml(spec.title || "未命名案卷")}</div>
+    <div class="overviewMeta">案卷 ID：<code>${escapeHtml(header.id || "")}</code></div>
     <div class="overviewMeta">阶段：${escapeHtml(state.phase || "")}</div>
     <div class="overviewMeta">状态：${escapeHtml(state.status || "")}</div>
-    <div class="overviewMeta">Active Tasks: ${escapeHtml(state.active_task_count ?? 0)}</div>
+    <div class="overviewMeta">生效任务数：${escapeHtml(state.active_task_count ?? 0)}</div>
     <div class="overviewSummary">${escapeHtml(state.current_summary || spec.opening_brief || "")}</div>
   `;
 }
@@ -103,7 +113,7 @@ function renderCandidateList(candidates) {
         <article class="entityCard">
           <div class="entityHeader">
             <div>
-              <div class="entityTitle">${escapeHtml(spec.title || header.id || "Untitled Candidate")}</div>
+              <div class="entityTitle">${escapeHtml(spec.title || header.id || "未命名候选任务")}</div>
               <div class="entityMeta">${escapeHtml(header.id || "")}</div>
             </div>
             <span class="statusChip">${escapeHtml(state.status || "")}</span>
@@ -132,12 +142,12 @@ function renderTaskList(tasks) {
         <article class="entityCard compact">
           <div class="entityHeader">
             <div>
-              <div class="entityTitle">${escapeHtml(spec.title || header.id || "Untitled Task")}</div>
+              <div class="entityTitle">${escapeHtml(spec.title || header.id || "未命名正式任务")}</div>
               <div class="entityMeta">${escapeHtml(header.id || "")}</div>
             </div>
             <span class="statusChip">${escapeHtml(state.status || "")}</span>
           </div>
-          <div class="entityBody">${escapeHtml(spec.mission_statement || "")}</div>
+          <div class="entityBody">${escapeHtml(spec.mission_statement || spec.objective || "")}</div>
         </article>
       `;
     })
@@ -158,7 +168,7 @@ function renderMailList(mailItems) {
       return `
         <article class="entityCard compact">
           <div class="entityHeader">
-            <div class="entityTitle">${escapeHtml(spec.title || "Mail")}</div>
+            <div class="entityTitle">${escapeHtml(spec.title || "内邮")}</div>
             <span class="statusChip">${escapeHtml(state.status || "")}</span>
           </div>
           <div class="entityBody">${escapeHtml(spec.summary || "")}</div>
@@ -180,6 +190,17 @@ function hydrateFromOverview(data) {
   if (lastRound?.header?.id) ui.roundIdInput.value = lastRound.header.id;
 }
 
+function overviewFromCreateResponse(created) {
+  if (created?.overview) return created.overview;
+  return {
+    case: created?.case || null,
+    rounds: created?.round ? [created.round] : [],
+    candidates: created?.candidates || [],
+    tasks: [],
+    mail: created?.mail || [],
+  };
+}
+
 async function loadOverview() {
   const caseId = ui.caseIdInput.value.trim();
   if (!caseId) {
@@ -196,10 +217,10 @@ async function createCase(event) {
   event.preventDefault();
   const workflowSessionId = ui.workflowSessionId.value.trim();
   if (!workflowSessionId) {
-    setHint("请先输入 workflow session id。", true);
+    setHint("请先输入已完成朝议的 workflow session id。", true);
     return;
   }
-  setHint("正在创建案卷...");
+  setHint("正在立案...");
   const created = await postJson("/api/cases", {
     workflow_session_id: workflowSessionId,
     title: ui.caseTitle.value.trim(),
@@ -208,8 +229,17 @@ async function createCase(event) {
   });
   ui.caseIdInput.value = created?.case?.header?.id || "";
   ui.roundIdInput.value = created?.round?.header?.id || "";
-  hydrateFromOverview({ case: created.case, rounds: [created.round], candidates: [], tasks: [], mail: [] });
-  setHint("案卷已创建，可继续抽取候选任务。", false);
+  hydrateFromOverview(overviewFromCreateResponse(created));
+  const candidateCount = Array.isArray(created?.candidates)
+    ? created.candidates.length
+    : Array.isArray(created?.overview?.candidates)
+      ? created.overview.candidates.length
+      : 0;
+  if (candidateCount > 0) {
+    setHint(`已立案；提案官已自动抽取 ${candidateCount} 个候选任务。`);
+    return;
+  }
+  setHint("已立案；提案官暂未抽取到候选任务，可稍后重新抽取。", false);
 }
 
 async function extractCandidates() {
@@ -218,12 +248,12 @@ async function extractCandidates() {
     setHint("请先创建案卷或填入 case id。", true);
     return;
   }
-  setHint("正在抽取候选任务...");
+  setHint("正在重新抽取候选任务...");
   const payload = {};
   if (ui.roundIdInput.value.trim()) payload.round_id = ui.roundIdInput.value.trim();
   const extracted = await postJson(`/api/cases/${encodeURIComponent(caseId)}/candidates/extract`, payload);
   hydrateFromOverview(extracted.overview);
-  setHint(`已抽取 ${Array.isArray(extracted.candidates) ? extracted.candidates.length : 0} 个候选任务。`);
+  setHint(`已重新抽取 ${Array.isArray(extracted.candidates) ? extracted.candidates.length : 0} 个候选任务。`);
 }
 
 async function approveCandidate(candidateId) {
@@ -249,6 +279,36 @@ async function discardCandidate(candidateId) {
   });
   await loadOverview();
   setHint(`候选任务 ${candidateId} 已废弃。`);
+}
+
+function applyQueryPrefill() {
+  const workflowSessionId = queryValue("workflow_session_id", "workflowSessionId");
+  const caseId = queryValue("case_id", "caseId");
+  const roundId = queryValue("round_id", "roundId");
+  if (workflowSessionId && !ui.workflowSessionId.value.trim()) {
+    ui.workflowSessionId.value = workflowSessionId;
+  }
+  if (caseId && !ui.caseIdInput.value.trim()) {
+    ui.caseIdInput.value = caseId;
+  }
+  if (roundId && !ui.roundIdInput.value.trim()) {
+    ui.roundIdInput.value = roundId;
+  }
+}
+
+async function initCasePage() {
+  applyQueryPrefill();
+  if (ui.caseIdInput.value.trim()) {
+    try {
+      await loadOverview();
+    } catch (error) {
+      setHint(error.message || String(error), true);
+    }
+    return;
+  }
+  if (ui.workflowSessionId.value.trim()) {
+    setHint("已预填已完成朝议的 workflow session id；确认后可直接立案。", false);
+  }
 }
 
 ui.caseCreateForm?.addEventListener("submit", async (event) => {
@@ -290,3 +350,5 @@ ui.candidateList?.addEventListener("click", async (event) => {
     setHint(error.message || String(error), true);
   }
 });
+
+void initCasePage();

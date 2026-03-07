@@ -1,28 +1,28 @@
-/* ==================== 设计系统 ==================== */
+﻿/* ==================== 璁捐绯荤粺 ==================== */
 :root {
-  /* 深色主题配色 - 更现代的色板 */
+  /* 娣辫壊涓婚閰嶈壊 - 鏇寸幇浠ｇ殑鑹叉澘 */
   --bg-primary: #0a0e1a;
   --bg-secondary: #0f1419;
   --bg-tertiary: #1a1f2e;
   
-  /* 表面层次 */
+  /* 琛ㄩ潰灞傛 */
   --surface-1: rgba(255, 255, 255, 0.03);
   --surface-2: rgba(255, 255, 255, 0.05);
   --surface-3: rgba(255, 255, 255, 0.08);
   --surface-hover: rgba(255, 255, 255, 0.12);
   
-  /* 文字层次 */
+  /* 鏂囧瓧灞傛 */
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
   --text-tertiary: #64748b;
   --text-muted: #475569;
   
-  /* 品牌色 - 更鲜艳的渐变系 */
+  /* 鍝佺墝鑹?- 鏇撮矞鑹崇殑娓愬彉绯?*/
   --accent-primary: #3b82f6;
   --accent-secondary: #8b5cf6;
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
   
-  /* 状态色 */
+  /* 鐘舵€佽壊 */
   --success: #10b981;
   --success-glow: rgba(16, 185, 129, 0.2);
   --warning: #f59e0b;
@@ -32,22 +32,22 @@
   --info: #06b6d4;
   --info-glow: rgba(6, 182, 212, 0.2);
   
-  /* 边框 */
+  /* 杈规 */
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-default: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.15);
   
-  /* 阴影系统 */
+  /* 闃村奖绯荤粺 */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
   --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.3);
   
-  /* 字体 */
+  /* 瀛椾綋 */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, monospace;
   
-  /* 圆角 */
+  /* 鍦嗚 */
   --radius-xs: 6px;
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -55,13 +55,13 @@
   --radius-xl: 20px;
   --radius-full: 9999px;
   
-  /* 动画 */
+  /* 鍔ㄧ敾 */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ==================== 全局样式 ==================== */
+/* ==================== 鍏ㄥ眬鏍峰紡 ==================== */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -81,14 +81,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ==================== 布局 ==================== */
+/* ==================== 甯冨眬 ==================== */
 .app {
   height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
-/* ==================== 顶栏 ==================== */
+/* ==================== 椤舵爮 ==================== */
 .topbar {
   display: flex;
   align-items: center;
@@ -130,7 +130,7 @@ body {
   letter-spacing: 0.05em;
 }
 
-/* ==================== 主区域 ==================== */
+/* ==================== 涓诲尯鍩?==================== */
 .main {
   flex: 1;
   display: grid;
@@ -162,7 +162,7 @@ body {
   letter-spacing: 0.08em;
 }
 
-/* ==================== 流程图 ==================== */
+/* ==================== 娴佺▼鍥?==================== */
 .diagram {
   flex: 1;
   padding: 20px 16px;
@@ -242,7 +242,7 @@ body {
   gap: 12px;
 }
 
-/* ==================== 徽章状态 ==================== */
+/* ==================== 寰界珷鐘舵€?==================== */
 .badge {
   position: absolute;
   top: 12px;
@@ -296,7 +296,7 @@ body {
   }
 }
 
-/* ==================== 对话区 ==================== */
+/* ==================== 瀵硅瘽鍖?==================== */
 .chat {
   flex: 1;
   padding: 16px;
@@ -388,7 +388,7 @@ body {
   margin-top: 12px;
 }
 
-/* ==================== 按钮系统 ==================== */
+/* ==================== 鎸夐挳绯荤粺 ==================== */
 .btn {
   padding: 8px 14px;
   background: var(--surface-2);
@@ -410,6 +410,11 @@ body {
 
 .btn:active {
   transform: translateY(0);
+}
+
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .btn.primary {
@@ -434,7 +439,7 @@ body {
   box-shadow: 0 0 16px var(--error-glow);
 }
 
-/* ==================== 输入区 ==================== */
+/* ==================== 杈撳叆鍖?==================== */
 .composer {
   display: grid;
   grid-template-columns: 1fr 2.5fr auto auto;
@@ -484,7 +489,7 @@ body {
   font-size: 12px;
 }
 
-/* ==================== 响应式 ==================== */
+/* ==================== 鍝嶅簲寮?==================== */
 @media (max-width: 1200px) {
   .main {
     grid-template-columns: 380px 1fr;
@@ -536,7 +541,7 @@ body {
   }
 }
 
-/* ==================== 辅助动画 ==================== */
+/* ==================== 杈呭姪鍔ㄧ敾 ==================== */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -549,3 +554,4 @@ body {
 .app {
   animation: fadeIn 0.4s ease-out;
 }
+

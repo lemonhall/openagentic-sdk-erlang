@@ -13,6 +13,7 @@ init(Req0, State0) ->
       case openagentic_case_store:create_case_from_round(SessionRoot, Obj) of
         {ok, Res} -> reply_json(201, Res, Req1, State);
         {error, invalid_workflow_session_id} -> reply_json(400, #{error => <<"invalid workflow_session_id">>}, Req1, State);
+        {error, workflow_session_not_completed} -> reply_json(400, #{error => <<"workflow session not completed">>}, Req1, State);
         {error, {missing_required_field, Field}} -> reply_json(400, #{error => <<"missing required field">>, field => to_bin(Field)}, Req1, State);
         {error, Reason} -> reply_json(500, #{error => to_bin(Reason)}, Req1, State)
       end;

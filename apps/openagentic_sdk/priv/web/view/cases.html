@@ -17,30 +17,33 @@
 
       <main class="caseMain">
         <section class="casePanel casePanelWide">
-          <div class="panelTitle">1. 建案</div>
+          <div class="panelTitle">1. 从已完成朝议立案</div>
           <form id="caseCreateForm" class="caseFormGrid">
             <label>
-              <span>Workflow Session ID</span>
+              <span>已完成朝议 Workflow Session ID</span>
               <input id="workflowSessionId" placeholder="例如：893c4994f45790a60a8da221e2cb81ce" required />
             </label>
             <label>
               <span>案卷标题</span>
-              <input id="caseTitle" value="Iran Situation" required />
+              <input id="caseTitle" value="伊朗局势" required />
             </label>
             <label class="span2">
               <span>立案摘要</span>
-              <textarea id="openingBrief" rows="3">Create a long-running governance case around Iran</textarea>
+              <textarea id="openingBrief" rows="3">围绕伊朗局势建立长期治理案卷，用于承接后续监测、检察与复议。</textarea>
             </label>
             <label class="span2">
               <span>当前摘要</span>
-              <textarea id="currentSummary" rows="2">Deliberation completed; waiting for candidate extraction</textarea>
+              <textarea id="currentSummary" rows="2">本轮朝议已结束，等待候选监测任务审定。</textarea>
             </label>
+            <div class="hint span2" id="caseLifecycleNote">
+              制度说明：<code>workflow_session</code> 不等于 <code>case</code>。你是在某轮已完成朝议之后拍板“立此为案”，系统据此建立长期案卷与 origin round；立案完成后，提案官会自动抽取候选监测任务并投递内邮。案卷初始阶段为 <code>post_deliberation_extraction</code>，一旦出现生效中的正式任务，就转入 <code>monitoring_active</code>。
+            </div>
             <div class="caseActions span2">
-              <button type="submit" class="btn primary">创建案卷</button>
-              <button type="button" class="btn" id="btnLoadOverview">加载总览</button>
+              <button type="submit" class="btn primary">立此为案</button>
+              <button type="button" class="btn" id="btnLoadOverview">查看案卷总览</button>
             </div>
           </form>
-          <div class="hint" id="caseStatusHint">先输入 workflow session id 建案，或直接填 case id 加载已有案卷。</div>
+          <div class="hint" id="caseStatusHint">先输入已完成朝议的 workflow session id 立案；也可以直接填写 case id 查看既有案卷。</div>
         </section>
 
         <section class="casePanel">
@@ -48,13 +51,13 @@
           <div class="caseStack">
             <label>
               <span>Case ID</span>
-              <input id="caseIdInput" placeholder="创建后会自动回填" />
+              <input id="caseIdInput" placeholder="立案后会自动回填" />
             </label>
             <label>
               <span>Round ID</span>
-              <input id="roundIdInput" placeholder="创建后会自动回填" />
+              <input id="roundIdInput" placeholder="立案后会自动回填" />
             </label>
-            <button type="button" class="btn" id="btnExtractCandidates">抽取候选任务</button>
+            <button type="button" class="btn" id="btnExtractCandidates">重新抽取候选任务</button>
           </div>
         </section>
 
@@ -64,7 +67,7 @@
         </section>
 
         <section class="casePanel">
-          <div class="panelTitle">候选任务</div>
+          <div class="panelTitle">待审候选任务</div>
           <div id="candidateList" class="entityList empty">暂无候选任务</div>
         </section>
 

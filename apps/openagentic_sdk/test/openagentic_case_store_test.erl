@@ -37,6 +37,54 @@ create_case_from_round_persists_case_and_round_test() ->
   ?assertEqual(to_bin(Sid), deep_get(RoundObj, [links, workflow_session_id])),
   ok.
 
+create_case_from_round_requires_completed_workflow_test() ->
+  Root = tmp_root(),
+  {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+
+  ?assertEqual(
+    {error, workflow_session_not_completed},
+    openagentic_case_store:create_case_from_round(
+      Root,
+      #{
+        workflow_session_id => to_bin(Sid),
+        title => <<"Iran Situation">>
+      }
+    )
+  ),
+  ok.
+
+create_case_from_round_auto_extracts_candidates_by_default_test() ->
+  Root = tmp_root(),
+  {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+  ok =
+    append_round_result(
+      Root,
+      Sid,
+      <<"## Suggested Monitoring Items\n",
+        "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+        "- Track US sanctions policy and enforcement cadence\n">>
+    ),
+
+  {ok, Res} =
+    openagentic_case_store:create_case_from_round(
+      Root,
+      #{
+        workflow_session_id => to_bin(Sid),
+        title => <<"Iran Situation">>,
+        opening_brief => <<"Create a long-running governance case around Iran">>,
+        current_summary => <<"Deliberation completed; waiting for candidate extraction">>
+      }
+    ),
+
+  Candidates = maps:get(candidates, Res),
+  Mail = maps:get(mail, Res),
+  Overview = maps:get(overview, Res),
+  OverviewCase = maps:get('case', Overview),
+  ?assertEqual(2, length(Candidates)),
+  ?assertEqual(2, length(Mail)),
+  ?assertEqual(<<"post_deliberation_extraction">>, deep_get(OverviewCase, [state, phase])),
+  ok.
+
 extract_candidates_from_round_creates_inbox_candidates_and_mail_test() ->
   Root = tmp_root(),
   {CaseId, RoundId, _Sid} = create_case_fixture(Root),
