@@ -25,6 +25,78 @@
   grid-column: 1 / -1;
 }
 
+.isHidden {
+  display: none !important;
+}
+
+.caseHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.caseHeroMain {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.caseBreadcrumb {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.caseHeroTitle {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.caseHeroSummary {
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.caseActionCard {
+  align-self: start;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.caseActionLabel {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.caseActionTitle {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.caseActionBody {
+  margin-top: 8px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.caseActionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .caseFormGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -170,6 +242,10 @@
 }
 
 @media (max-width: 980px) {
+  .caseHero {
+    grid-template-columns: 1fr;
+  }
+
   .caseMain {
     grid-template-columns: 1fr;
   }

@@ -13,6 +13,11 @@ const ui = {
   templateList: el("templateList"),
   mailList: el("mailList"),
   caseStatusHint: el("caseStatusHint"),
+  caseBreadcrumb: el("caseBreadcrumb"),
+  casePageTitle: el("casePageTitle"),
+  casePageSummary: el("casePageSummary"),
+  caseNextAction: el("caseNextAction"),
+  caseWorkspaceGuide: el("caseWorkspaceGuide"),
   caseCreateForm: el("caseCreateForm"),
   templateCreateForm: el("templateCreateForm"),
   templateTitle: el("templateTitle"),
@@ -21,6 +26,7 @@ const ui = {
   templateBody: el("templateBody"),
   btnExtractCandidates: el("btnExtractCandidates"),
   btnLoadOverview: el("btnLoadOverview"),
+  workspaceSections: Array.from(document.querySelectorAll("[data-case-workspace]")),
 };
 
 const searchParams = new URLSearchParams(window.location.search);
@@ -36,6 +42,17 @@ function queryValue(...names) {
     if (value && value.trim()) return value.trim();
   }
   return "";
+}
+
+function currentCaseId() {
+  return ui.caseIdInput?.value.trim() || "";
+}
+
+function setWorkspaceVisible(visible) {
+  for (const section of ui.workspaceSections || []) {
+    section.classList.toggle("isHidden", !visible);
+  }
+  ui.caseWorkspaceGuide?.classList.toggle("isHidden", visible);
 }
 
 async function fetchJson(url, options = {}) {
@@ -87,48 +104,190 @@ function sessionMetaLine(label, sid) {
   return `<div class="entityMeta">${escapeHtml(label)}：<code>${escapeHtml(sid)}</code></div>`;
 }
 
-function candidateSessionButton(candidate) {
+function candidateSessionHref(candidate) {
   const header = candidate?.header || {};
   const links = candidate?.links || {};
   const state = candidate?.state || {};
   const sid = links.review_session_id || "";
-  const caseId = ui.caseIdInput.value.trim() || links.case_id || "";
-  const href = governanceSessionHref({
+  const caseId = currentCaseId() || links.case_id || "";
+  return governanceSessionHref({
     sid,
     caseId,
     candidateId: header.id || "",
     title: (candidate?.spec?.title || header.id || "候选任务") + " / 审议会话",
     mode: state.status === "approved" ? "governance" : "candidate_review",
   });
+}
+
+function candidateSessionButton(candidate) {
+  const state = candidate?.state || {};
+  const href = candidateSessionHref(candidate);
   if (!href) return "";
   const label = state.status === "approved" ? "继续治理" : "进入审议";
   return `<a class="btn" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
 }
 
-function taskSessionButton(task) {
+function taskSessionHref(task) {
   const header = task?.header || {};
   const links = task?.links || {};
   const sid = links.governance_session_id || "";
-  const caseId = ui.caseIdInput.value.trim() || links.case_id || "";
-  const href = governanceSessionHref({
+  const caseId = currentCaseId() || links.case_id || "";
+  return governanceSessionHref({
     sid,
     caseId,
     taskId: header.id || "",
     title: (task?.spec?.title || header.id || "正式任务") + " / 治理会话",
     mode: "governance",
   });
+}
+
+function taskSessionButton(task) {
+  const href = taskSessionHref(task);
   if (!href) return "";
   return `<a class="btn" href="${escapeHtml(href)}">打开治理</a>`;
 }
 
-function taskDetailButton(task) {
+function taskDetailHref(task) {
   const header = task?.header || {};
   const links = task?.links || {};
-  const caseId = ui.caseIdInput.value.trim() || links.case_id || "";
+  const caseId = currentCaseId() || links.case_id || "";
   const taskId = header.id || "";
   if (!caseId || !taskId) return "";
   const params = new URLSearchParams({ case_id: caseId, task_id: taskId });
-  return `<a class="btn" href="/view/task-detail.html?${params.toString()}">任务详情</a>`;
+  return `/view/task-detail.html?${params.toString()}`;
+}
+
+function taskDetailButton(task) {
+  const href = taskDetailHref(task);
+  if (!href) return "";
+  return `<a class="btn" href="${escapeHtml(href)}">任务详情</a>`;
+}
+
+function renderNextAction(action) {
+  if (!ui.caseNextAction) return;
+  const buttons = Array.isArray(action?.buttons) ? action.buttons : [];
+  ui.caseNextAction.innerHTML = `
+    <div class="caseActionLabel">下一步</div>
+    <div class="caseActionTitle">${escapeHtml(action?.title || "先进入案卷")}</div>
+    <div class="caseActionBody">${escapeHtml(action?.body || "先立案或输入 Case ID，再进入案卷工作台。")}</div>
+    <div class="caseActionButtons">
+      ${buttons
+        .map((button) => {
+          const klass = button.primary ? "btn primary" : "btn";
+          if (button.type === "button") {
+            return `<button type="button" class="${klass}" data-case-action="${escapeHtml(button.action || "")}">${escapeHtml(button.label || "操作")}</button>`;
+          }
+          return `<a class="${klass}" href="${escapeHtml(button.href || "#")}">${escapeHtml(button.label || "查看")}</a>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function pendingCandidates(items) {
+  return (Array.isArray(items) ? items : []).filter((candidate) => {
+    const status = candidate?.state?.status || "";
+    return status !== "approved" && status !== "discarded";
+  });
+}
+
+function casePageSummary(data) {
+  const caseObj = data?.case || null;
+  const state = caseObj?.state || {};
+  const pending = pendingCandidates(data?.candidates || []);
+  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  if (pending.length) {
+    return "当前主任务：先处理候选审议，再决定哪些任务转正进入长期治理。";
+  }
+  if (tasks.length) {
+    return "当前主任务：围绕正式任务继续治理，并留意版本差异、授权状态和激活进度。";
+  }
+  if (state.current_summary) {
+    return state.current_summary;
+  }
+  return "当前主任务：先补齐候选来源，让案卷进入可治理状态。";
+}
+
+function deriveNextAction(data) {
+  const pending = pendingCandidates(data?.candidates || []);
+  if (pending.length) {
+    const candidate = pending[0];
+    return {
+      title: "进入审议",
+      body: "当前还有待审候选任务；先完成审议，再决定是否转成正式任务。",
+      buttons: [{ type: "link", href: candidateSessionHref(candidate), label: "进入审议", primary: true }],
+    };
+  }
+
+  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  const credentialTask = tasks.find((task) => {
+    const status = task?.state?.status || "";
+    return status === "awaiting_credentials" || status === "reauthorization_required" || status === "credential_expired";
+  });
+  if (credentialTask) {
+    return {
+      title: "先补权",
+      body: "当前正式任务缺少授权或需要重授权；请先进入任务详情处理。",
+      buttons: [{ type: "link", href: taskDetailHref(credentialTask), label: "先补权", primary: true }],
+    };
+  }
+
+  const readyTask = tasks.find((task) => (task?.state?.status || "") === "ready_to_activate");
+  if (readyTask) {
+    return {
+      title: "查看差异并激活",
+      body: "当前版本已就绪；请先查看任务详情，再执行激活。",
+      buttons: [{ type: "link", href: taskDetailHref(readyTask), label: "查看任务详情", primary: true }],
+    };
+  }
+
+  const activeTask = tasks[0] || null;
+  if (activeTask) {
+    return {
+      title: "继续治理",
+      body: "已有正式任务；继续沿用同一条治理线推进。",
+      buttons: [
+        { type: "link", href: taskSessionHref(activeTask), label: "继续治理", primary: true },
+        { type: "link", href: taskDetailHref(activeTask), label: "任务详情" },
+      ],
+    };
+  }
+
+  return {
+    title: "重新抽取候选任务",
+    body: "当前案卷还没有可处理任务；先重新抽取候选任务，再进入审议。",
+    buttons: [{ type: "button", action: "extract-candidates", label: "重新抽取", primary: true }],
+  };
+}
+
+function syncCaseShell(data) {
+  const caseObj = data?.case || null;
+  if (!caseObj) {
+    if (ui.caseBreadcrumb) ui.caseBreadcrumb.textContent = "Cases / 案卷入口";
+    if (ui.casePageTitle) ui.casePageTitle.textContent = "先创建案卷或进入既有案卷";
+    if (ui.casePageSummary) {
+      ui.casePageSummary.textContent = "此页的主任务是进入案卷：要么从已完成 Workflow 立案，要么输入既有 Case ID 进入工作台。";
+    }
+    renderNextAction({
+      title: "先创建案卷或输入 Case ID",
+      body: "完成立案或进入既有案卷后，这一页才会展开案卷工作台。",
+      buttons: [
+        { type: "link", href: "#caseCreateForm", label: "去立案", primary: true },
+        { type: "link", href: "#caseIdInput", label: "输入 Case ID" },
+      ],
+    });
+    setWorkspaceVisible(false);
+    return;
+  }
+
+  const header = caseObj.header || {};
+  const spec = caseObj.spec || {};
+  const title = spec.title || header.id || "未命名案卷";
+  if (ui.caseBreadcrumb) ui.caseBreadcrumb.textContent = `Cases / ${title}`;
+  if (ui.casePageTitle) ui.casePageTitle.textContent = title;
+  if (ui.casePageSummary) ui.casePageSummary.textContent = casePageSummary(data);
+  renderNextAction(deriveNextAction(data));
+  setWorkspaceVisible(true);
 }
 
 function renderOverview(data) {
@@ -283,6 +442,7 @@ function renderMailList(mailItems) {
 }
 
 function hydrateFromOverview(data) {
+  syncCaseShell(data);
   renderOverview(data);
   renderCandidateList(data?.candidates || []);
   renderTaskList(data?.tasks || []);
@@ -436,6 +596,7 @@ function applyQueryPrefill() {
 }
 
 async function initCasePage() {
+  syncCaseShell(null);
   applyQueryPrefill();
   if (ui.caseIdInput.value.trim()) {
     try {
@@ -449,6 +610,18 @@ async function initCasePage() {
     setHint("已预填已完成朝议的 workflow session id；确认后可直接立案。", false);
   }
 }
+
+ui.caseNextAction?.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-case-action]");
+  if (!button) return;
+  try {
+    if (button.dataset.caseAction === "extract-candidates") {
+      await extractCandidates();
+    }
+  } catch (error) {
+    setHint(error.message || String(error), true);
+  }
+});
 
 ui.caseCreateForm?.addEventListener("submit", async (event) => {
   try {

@@ -20,8 +20,31 @@
       </header>
 
       <main class="caseMain">
-        <section class="casePanel casePanelWide">
-          <div class="panelTitle">1. 从已完成朝议立案</div>
+        <section class="casePanel casePanelWide caseHeroPanel">
+          <div class="panelTitle">Cases / 案卷入口</div>
+          <div class="caseHero">
+            <div class="caseHeroMain">
+              <div class="caseBreadcrumb" id="caseBreadcrumb">Cases / 案卷入口</div>
+              <div class="caseHeroTitle" id="casePageTitle">先创建案卷或进入既有案卷</div>
+              <div class="caseHeroSummary" id="casePageSummary">
+                此页的主任务是进入案卷：要么从已完成 Workflow 立案，要么输入既有 Case ID 进入工作台。
+              </div>
+              <div class="hint" id="caseStatusHint">先输入已完成朝议的 workflow session id 立案；也可以直接填写 case id 查看既有案卷。</div>
+            </div>
+            <aside class="caseActionCard" id="caseNextAction">
+              <div class="caseActionLabel">下一步</div>
+              <div class="caseActionTitle">先创建案卷或输入 Case ID</div>
+              <div class="caseActionBody">完成立案或进入既有案卷后，这一页才会展开案卷工作台。</div>
+              <div class="caseActionButtons">
+                <a class="btn primary" href="#caseCreateForm">去立案</a>
+                <a class="btn" href="#caseIdInput">输入 Case ID</a>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="casePanel">
+          <div class="panelTitle">新建案卷</div>
           <form id="caseCreateForm" class="caseFormGrid">
             <label>
               <span>已完成朝议 Workflow Session ID</span>
@@ -44,14 +67,12 @@
             </div>
             <div class="caseActions span2">
               <button type="submit" class="btn primary">立此为案</button>
-              <button type="button" class="btn" id="btnLoadOverview">查看案卷总览</button>
             </div>
           </form>
-          <div class="hint" id="caseStatusHint">先输入已完成朝议的 workflow session id 立案；也可以直接填写 case id 查看既有案卷。</div>
         </section>
 
         <section class="casePanel">
-          <div class="panelTitle">2. 案卷定位</div>
+          <div class="panelTitle">进入既有案卷</div>
           <div class="caseStack">
             <label>
               <span>Case ID</span>
@@ -61,16 +82,28 @@
               <span>Round ID</span>
               <input id="roundIdInput" placeholder="立案后会自动回填" />
             </label>
-            <button type="button" class="btn" id="btnExtractCandidates">重新抽取候选任务</button>
+            <div class="caseActions">
+              <button type="button" class="btn primary" id="btnLoadOverview">进入案卷工作台</button>
+              <button type="button" class="btn" id="btnExtractCandidates">重新抽取候选任务</button>
+            </div>
+            <div class="hint">已有 Case ID 时，主操作是进入案卷工作台；重新抽取候选任务是次级动作。</div>
           </div>
         </section>
 
-        <section class="casePanel">
-          <div class="panelTitle">3. 案卷总览</div>
+        <section class="casePanel casePanelWide" id="caseWorkspaceGuide">
+          <div class="panelTitle">案卷工作台未激活</div>
+          <div class="caseStack">
+            <div class="overviewTitle">还没有进入具体案卷</div>
+            <div class="overviewSummary">先立案或输入 Case ID，工作台才会展示案卷摘要、候选任务、正式任务、模板和内邮。</div>
+          </div>
+        </section>
+
+        <section class="casePanel isHidden" id="caseOverviewPanel" data-case-workspace>
+          <div class="panelTitle">当前案卷摘要</div>
           <div id="caseOverview" class="overviewCard empty">暂无案卷数据</div>
         </section>
 
-        <section class="casePanel">
+        <section class="casePanel isHidden" id="candidateSection" data-case-workspace>
           <div class="panelTitle">待审候选任务</div>
           <div class="hint" style="padding: 0 16px 12px 16px;">
             每个候选都带一条专属审议会话；候选转正后，应继续沿用同一条治理线，不另起炉灶。
@@ -78,7 +111,7 @@
           <div id="candidateList" class="entityList empty">暂无候选任务</div>
         </section>
 
-        <section class="casePanel">
+        <section class="casePanel isHidden" id="taskSection" data-case-workspace>
           <div class="panelTitle">正式任务</div>
           <div class="hint" style="padding: 0 16px 12px 16px;">
             正式任务可直接打开聊天式治理入口，继续围绕当前任务定义、整改与版本修订对话。
@@ -86,7 +119,7 @@
           <div id="taskList" class="entityList empty">暂无正式任务</div>
         </section>
 
-        <section class="casePanel casePanelWide">
+        <section class="casePanel casePanelWide isHidden" id="templateSection" data-case-workspace>
           <div class="panelTitle">模板库</div>
           <form id="templateCreateForm" class="caseFormGrid">
             <label>
@@ -113,7 +146,7 @@
           <div id="templateList" class="entityList empty">暂无模板</div>
         </section>
 
-        <section class="casePanel">
+        <section class="casePanel isHidden" id="mailSection" data-case-workspace>
           <div class="panelTitle">内邮</div>
           <div id="mailList" class="entityList empty">暂无内邮</div>
         </section>
