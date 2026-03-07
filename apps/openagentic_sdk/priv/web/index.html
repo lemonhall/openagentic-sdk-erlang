@@ -10,9 +10,12 @@
     <div class="app">
       <header class="topbar">
         <div class="brand">OpenAgentic</div>
-        <a class="btn" href="/view/cases.html">Cases</a>
-        <a class="btn" id="btnFileCase" href="/view/cases.html" title="从当前已完成朝议立案">立此为案</a>
-        <div class="subtitle">三省六部 · 本地硬流程（DSL）</div>
+        <nav class="topnav" aria-label="一级导航">
+          <a class="btn" href="/" aria-current="page">Workflow</a>
+          <a class="btn" id="navCasesLink" href="/view/cases.html" title="前往 Cases，处理案卷与任务">Cases</a>
+          <a class="btn" href="/view/inbox.html">Inbox</a>
+        </nav>
+        <div class="subtitle">Workflow 主界面：运行三省六部流程；案卷治理请前往 Cases。</div>
         <div class="status" id="overallStatus">idle</div>
       </header>
 

@@ -11,10 +11,13 @@
     <div class="app caseApp">
       <header class="topbar">
         <div class="brand">OpenAgentic</div>
-        <div class="subtitle" id="governanceSubtitle">聊天式治理 / 审议会话</div>
-        <a class="btn" id="backToCase" href="/view/cases.html">返回案卷</a>
-        <a class="btn" id="inboxLink" href="/view/inbox.html">统一信箱</a>
-        <a class="btn" href="/">Workflow</a>
+        <nav class="topnav" aria-label="一级导航">
+          <a class="btn" href="/">Workflow</a>
+          <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
+        </nav>
+        <div class="subtitle" id="governanceSubtitle">治理会话：继续审议、提交修订，并在必要时补权再激活。</div>
+        <a class="btn" id="backToCase" href="/view/cases.html">返回当前案卷</a>
       </header>
 
       <main class="caseMain">

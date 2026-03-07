@@ -11,9 +11,12 @@
     <div class="app caseApp">
       <header class="topbar">
         <div class="brand">OpenAgentic</div>
-        <div class="subtitle">案卷总览 / 候选任务审批</div>
-        <a class="btn" id="inboxLink" href="/view/inbox.html">统一信箱</a>
-        <a class="btn" href="/">Workflow</a>
+        <nav class="topnav" aria-label="一级导航">
+          <a class="btn" href="/">Workflow</a>
+          <a class="btn" href="/view/cases.html" aria-current="page">Cases</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox</a>
+        </nav>
+        <div class="subtitle">Cases：从已完成 Workflow 立案，并处理候选与正式任务。</div>
       </header>
 
       <main class="caseMain">

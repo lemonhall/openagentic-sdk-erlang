@@ -28,7 +28,7 @@ const state = {
 function setOverall(text) {
   state.overall = text;
   $("overallStatus").textContent = text;
-  updateFileCaseLink();
+  updateCasesLink();
 }
 
 function setModeHint(text) {
@@ -37,23 +37,15 @@ function setModeHint(text) {
   el.textContent = text;
 }
 
-function updateFileCaseLink() {
-  const link = $("btnFileCase");
+function updateCasesLink() {
+  const link = $("navCasesLink");
   if (!link) return;
   const baseHref = "/view/cases.html";
   const hasSession = Boolean(state.workflowSessionId);
   link.href = hasSession
     ? `${baseHref}?workflow_session_id=${encodeURIComponent(state.workflowSessionId)}`
     : baseHref;
-  const canFileCase =
-    hasSession &&
-    state.overall !== "idle" &&
-    state.overall !== "starting" &&
-    state.overall !== "running" &&
-    state.overall !== "error" &&
-    state.overall !== "canceled";
-  link.setAttribute("aria-disabled", canFileCase ? "false" : "true");
-  link.title = canFileCase ? "从当前已完成朝议立案" : "先完成一轮朝议，再立案";
+  link.title = hasSession ? "前往 Cases，可直接从当前 Workflow 立案" : "前往 Cases，处理案卷与任务";
 }
 
 function setStep(stepId, status) {
@@ -97,7 +89,7 @@ function extractWorkspaceRefs(text) {
   for (const m of s.matchAll(re)) {
     let ref = m[0];
     // Trim trailing punctuation commonly attached in prose.
-    ref = ref.replace(/[)\],.;:锛屻€傦紱锛氥€嬨€嶃€忋€慮+$/g, "");
+    ref = ref.replace(/[)\],.;:，。；：）》】”]+$/g, "");
     if (!ref.startsWith("workspace:")) continue;
     if (!refs.includes(ref)) refs.push(ref);
   }
@@ -117,7 +109,7 @@ function addWorkspaceDocLinks(msgEl, text) {
     a.target = "_blank";
     a.rel = "noopener";
     a.href = `/view/workspace.html?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(ref)}`;
-    a.textContent = `鎵撳紑鏂囨。锛?{ref}`;
+    a.textContent = `打开文档：${ref}`;
     actions.appendChild(a);
   }
 }
@@ -134,7 +126,7 @@ function truncateText(text, maxChars = 8000) {
   if (text == null) return "";
   const s = typeof text === "string" ? text : String(text);
   if (s.length <= maxChars) return s;
-  return s.slice(0, maxChars) + `\n鈥?truncated, total=${s.length} chars)`;
+  return s.slice(0, maxChars) + `\n…truncated, total=${s.length} chars)`;
 }
 
 function formatAny(value) {
@@ -175,11 +167,11 @@ function connectSse(eventsUrl) {
   state.eventSource = es;
   es.onopen = () => {
     setOverall("running");
-    setModeHint("鎻愮ず锛氳繍琛屼腑锛堝彲绛夌粨鏉熷悗缁х画杈撳叆锛屾垨鐐光€滄柊寮€涓€灞€鈥濇竻绌轰笂涓嬫枃锛?);
+    setModeHint("提示：运行中（可等结束后继续输入，或点“新开一局”清空上下文）");
   };
   es.onerror = () => {
     setOverall("disconnected");
-    setModeHint("鎻愮ず锛歋SE 鏂紑锛堝埛鏂伴〉闈㈡垨閲嶆柊寮€璺戯級");
+    setModeHint("提示：SSE 已断开（可刷新页面或重新开跑）");
   };
   es.onmessage = (e) => {
     // Some events may come as default message; try parse anyway.
@@ -214,7 +206,7 @@ function handleEvent(ev) {
   if (type === "workflow.run.start") {
     for (const stepId of stepIds) setStep(stepId, "pending");
     setOverall("running");
-    addMsg("system", `缁х画鎵ц锛歴tart_step_id=${ev.start_step_id || ""}`);
+    addMsg("system", `继续执行：start_step_id=${ev.start_step_id || ""}`);
     return;
   }
   if (type === "system.init") {
@@ -244,7 +236,7 @@ function handleEvent(ev) {
   }
   if (type === "workflow.guard.fail") {
     setStep(ev.step_id, "failed");
-    addMsg("guard", `澶辫触锛?{ev.step_id}\n${(ev.reasons || []).join("\n")}`);
+    addMsg("guard", `失败：${ev.step_id}\n${(ev.reasons || []).join("\n")}`);
     return;
   }
   if (type === "workflow.transition") {
@@ -345,7 +337,7 @@ function handleEvent(ev) {
   if (type === "workflow.done") {
     setOverall(ev.status || "done");
     addMsg("done", ev.final_text || "");
-    setModeHint("鎻愮ず锛氭湰灞€宸茬粨鏉燂紱缁х画杈撳叆浼氬湪鍚屼竴灞€閲岃拷鍔犲苟缁х画璺戯紙涓嶆竻绌轰笂涓嬫枃锛?);
+    setModeHint("提示：本局已结束；继续输入会在同一局里追加并继续跑（不清空上下文）");
     return;
   }
 
@@ -363,7 +355,7 @@ function resetToNewSessionUi() {
   $("chat").innerHTML = "";
   for (const stepId of stepIds) setStep(stepId, "pending");
   setOverall("idle");
-  setModeHint("鎻愮ず锛氬凡娓呯┖涓婁笅鏂囷紱涓嬩竴娆♀€滃彂閫佲€濅細鏂板紑涓€灞€");
+  setModeHint("提示：已清空上下文；下一次“发送”会新开一局");
 }
 
 $("composer").addEventListener("submit", async (e) => {
@@ -380,9 +372,9 @@ $("composer").addEventListener("submit", async (e) => {
       const wasRunning = state.overall === "starting" || state.overall === "running";
       if (!wasRunning) {
         setOverall("starting");
-        setModeHint("鎻愮ず锛氱户缁湰灞€鈥?);
+        setModeHint("提示：继续本局");
       } else {
-        addMsg("system", "鎻愮ず锛氭湰灞€浠嶅湪杩愯锛屼綘鐨勮緭鍏ュ凡鎺掗槦锛岀◢鍚庤嚜鍔ㄧ户缁€?);
+        addMsg("system", "提示：本局仍在运行，你的输入已排队，稍后自动继续。");
       }
 
       const res = await postJson("/api/workflows/continue", {
@@ -410,7 +402,7 @@ $("composer").addEventListener("submit", async (e) => {
   // Otherwise start a new workflow.
   resetToNewSessionUi();
   setOverall("starting");
-  setModeHint("鎻愮ず锛氬惎鍔ㄦ柊灞€鈥?);
+  setModeHint("提示：启动新局");
   try {
     $("prompt").value = "";
     addMsg("you", prompt);
@@ -433,23 +425,23 @@ $("composer").addEventListener("submit", async (e) => {
 async function startNewRun() {
   const s = state.overall;
   if (s === "starting" || s === "running") {
-    addMsg("system", "褰撳墠 workflow 姝ｅ湪杩愯锛涜绛夌粨鏉熷悗鍐嶆柊寮€涓€灞€銆?);
+    addMsg("system", "当前 workflow 正在运行；请等结束后再新开一局。");
     return;
   }
   resetToNewSessionUi();
-  addMsg("system", "=== 宸叉竻绌轰笂涓嬫枃锛涗笅涓€娆″彂閫佷細鏂板紑 workflow ===");
+  addMsg("system", "=== 已清空上下文；下一次发送会新开 workflow ===");
 }
 
 $("btnNewRun").addEventListener("click", () => startNewRun());
 
 async function cancelRun() {
   if (!state.workflowSessionId) {
-    addMsg("system", "褰撳墠娌℃湁鍙彇娑堢殑 workflow銆?);
+    addMsg("system", "当前没有可取消的 workflow。");
     return;
   }
   const s = state.overall;
   if (s !== "starting" && s !== "running") {
-    addMsg("system", "褰撳墠 workflow 鏈湪杩愯锛堝闇€缁х画锛岀洿鎺ュ彂閫佸嵆鍙級銆?);
+    addMsg("system", "当前 workflow 未在运行（如需继续，直接发送即可）。");
     return;
   }
   try {
@@ -465,5 +457,5 @@ async function cancelRun() {
 }
 
 $("btnCancel").addEventListener("click", () => cancelRun());
-setModeHint("鎻愮ず锛氶粯璁ゅ湪鍚屼竴灞€閲岀户缁紱鐐光€滄柊寮€涓€灞€鈥濇墠浼氭竻绌轰笂涓嬫枃");
+setModeHint("提示：默认在同一局里继续；点“新开一局”才会清空上下文");
 
