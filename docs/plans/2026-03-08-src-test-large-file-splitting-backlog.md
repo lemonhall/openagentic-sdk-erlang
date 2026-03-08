@@ -327,8 +327,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_fs_tools_read_test','openagentic_fs_tools_glob_test','openagentic_fs_tools_grep_test','openagentic_fs_tools_list_write_test','openagentic_fs_tools_edit_test','openagentic_fs_tools_safety_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
   - 验证结果：`23 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 fs_tools 测试拆分未引入新失败。
-- [ ] `285` 行 `apps/openagentic_sdk/test/openagentic_web_runtime_test.erl`
-  - 建议切口：`health`、`sse`、`workspace_read`、`question_answer`
+- [x] `285` 行 `apps/openagentic_sdk/test/openagentic_web_runtime_test.erl`
+  - 实际目标：`apps/openagentic_sdk/test/`
+  - 实际切口：`supervisor`、`workflow_watchdog`、`question_broker`；共享 support 抽到 `openagentic_web_runtime_test_support.erl`
+  - 结果证据：`apps/openagentic_sdk/test/openagentic_web_runtime_test.erl` 已收缩为 `1` 行 stub；新增 `3` 个拆分 `*_test.erl` 模块与 `1` 个 support 模块，最大文件 `121` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_web_runtime_supervisor_test','openagentic_web_runtime_workflow_watchdog_test','openagentic_web_runtime_question_broker_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
+  - 验证结果：`3 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 web_runtime 测试拆分未引入新失败。
 - [ ] `265` 行 `apps/openagentic_sdk/test/openagentic_tools_contract_test.erl`
   - 建议切口：`registry`、`schemas`、`tool_contract`
 - [ ] `261` 行 `apps/openagentic_sdk/test/openagentic_web_e2e_online_test.erl`
