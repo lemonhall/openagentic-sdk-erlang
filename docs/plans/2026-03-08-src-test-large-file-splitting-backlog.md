@@ -45,9 +45,15 @@
 
 优先处理最深、最耦合、最容易阻塞后续功能演进的核心源文件。
 
-- [ ] `1576` 行 `apps/openagentic_sdk/src/openagentic_workflow_engine.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_workflow_engine/`
-  - 建议切口：`facade`、`execution`、`fanout_join`、`guards`、`retry_policy`、`state_helpers`
+- [x] `1576` 行 `apps/openagentic_sdk/src/openagentic_workflow_engine.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_workflow_engine/`
+  - 实际切口：`run`、`continue`、`history_time`、`history_steps`、`execution`、`fanout_wait`、`fanout_child`、`retry`、`executor`、`tooling`、`prompts`、`contracts`、`output_helpers`、`state`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_workflow_engine.erl` 已收缩为 `16` 行 facade；新增 15 个同名子目录模块，最大文件 `140` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_workflow_engine_test`
+  - 验证结果：`27 tests, 0 failures`
+  - 扩展验证：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_workflow_engine_test --module=openagentic_workflow_mgr_test`
+  - 扩展结果：`27 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前在 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 出现既有超时取消（`162 tests, 0 failures, 3 cancelled`）；本轮变更相关的 workflow 护栏已全部通过。
 - [ ] `1498` 行 `apps/openagentic_sdk/src/openagentic_runtime.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_runtime/`
   - 建议切口：`facade`、`request_build`、`stream_loop`、`tool_dispatch`、`session_persist`、`hook_bridge`
@@ -166,6 +172,7 @@
   - 建议切口：`registry`、`schemas`、`tool_contract`
 - [ ] `261` 行 `apps/openagentic_sdk/test/openagentic_web_e2e_online_test.erl`
   - 建议切口：`startup_smoke`、`query_smoke`、`workflow_smoke`、`governance_smoke`
+- 每拆完一个 backlog 条目，必须先 `git add` + `git commit` + `git push`，再继续下一条；提交中要同时带上对应 backlog 证据更新
 
 ---
 
