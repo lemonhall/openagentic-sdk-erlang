@@ -313,10 +313,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_case_store_case_create_test','openagentic_case_store_approve_test','openagentic_case_store_task_revision_test','openagentic_case_store_task_reauth_test','openagentic_case_store_credential_binding_test','openagentic_case_store_monitoring_run_test','openagentic_case_store_run_retry_test','openagentic_case_store_run_delivery_test','openagentic_case_store_template_library_test','openagentic_case_store_inbox_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
   - 验证结果：`19 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 case_store 测试拆分未引入新失败。
-- [ ] `756` 行 `apps/openagentic_sdk/src/openagentic_e2e_online.erl`
-  - 这是测试邻近源码，建议和测试一起处理
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_e2e_online/`
-  - 建议切口：`bootstrap`、`provider_cases`、`workflow_cases`、`web_cases`、`assertions`
+- [x] `756` 行 `apps/openagentic_sdk/src/openagentic_e2e_online.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_e2e_online/`
+  - 实际切口：`runner`、`cases_basic`、`cases_tools`、`cases_webfetch`、`query`、`assert`、`fixtures`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_e2e_online.erl` 已收缩为 `20` 行 facade；新增 `8` 个子模块，最大文件 `131` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_e2e_online_test`
+  - 验证结果：`0 tests`（`OPENAGENTIC_E2E` 未开启，完成编译与模块装载）
+  - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 e2e_online 源码拆分未引入新失败。
 - [ ] `412` 行 `apps/openagentic_sdk/test/openagentic_fs_tools_test.erl`
   - 建议切口：`read_write`、`edit`、`glob_grep`、`safety`
 - [ ] `285` 行 `apps/openagentic_sdk/test/openagentic_web_runtime_test.erl`
