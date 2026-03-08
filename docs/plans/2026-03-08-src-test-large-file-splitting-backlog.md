@@ -96,9 +96,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_compaction_test`
   - 验证结果：`2 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `162 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 compaction 拆分未引入新失败。
-- [ ] `454` 行 `apps/openagentic_sdk/src/openagentic_events.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_events/`
-  - 建议切口：`workflow_events`、`runtime_events`、`web_events`、`helpers`
+- [x] `454` 行 `apps/openagentic_sdk/src/openagentic_events.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_events/`
+  - 实际切口：`messages`、`tooling`、`workflow`、`runtime`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_events.erl` 已收缩为 `27` 行 facade；新增 5 个同名子目录模块，最大文件 `41` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_events_schema_test`
+  - 验证结果：`2 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `162 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 events 拆分未引入新失败。
 - [ ] `300` 行 `apps/openagentic_sdk/src/openagentic_provider_retry.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_provider_retry/`
   - 建议切口：`policy`、`backoff`、`classify`、`wrapper`
