@@ -28,6 +28,12 @@ Inside `rebar3 shell`:
 - Workflow mode: `openagentic_cli:main(["workflow", "--dsl", "workflows/three-provinces-six-ministries.v1.json", "Plan X"]).`
 - Web UI: `openagentic_cli:main(["web"]).`
 
+## Shell Gate
+
+- In this repo, agents must explicitly invoke `pwsh.exe` for shell work.
+- Do not fall back to `powershell.exe` 5.x, even for read-only text inspection.
+- If `pwsh.exe` is unavailable, stop immediately and report the blocker instead of continuing with `powershell.exe`.
+
 ## Architecture Overview
 
 ### Areas
@@ -168,6 +174,7 @@ Do not read, print, or commit real `.env` contents into the repo, tests, or logs
 
 - Do not rewrite UTF-8 repo files through Windows PowerShell 5.1 text output primitives.
   - Why: Codex shell invocations can land on `powershell.exe` 5.1 even when PowerShell 7 is installed. In that mode, `Set-Content` writes ACP/ANSI for new files, `>` / `Out-File` write UTF-16LE, and piping text into `python -` is constrained by `$OutputEncoding` (observed `us-ascii`). This corrupts UTF-8 Chinese text and shows up as mojibake, `??`, BOMs, or NUL bytes.
+  - Gate: agents must use `pwsh.exe` for repository text reads/writes and must not fall back to `powershell.exe` 5.x.
   - Do instead: prefer `pwsh.exe` for text-writing tasks, or use Python `Path.read_text(..., encoding='utf-8')` and `Path.write_text(..., encoding='utf-8')` with explicit newline handling.
   - Do instead: keep shell-side scripts ASCII-only when launching Python from PowerShell; use Unicode escapes or a temporary `.py` file instead of piping non-ASCII source text through PowerShell here-strings or pipelines.
   - Do instead: avoid `Set-Content`, `Add-Content`, `Out-File`, `>`, and `>>` for source, HTML/CSS/JS, Markdown, or docs edits unless encoding is explicitly controlled and then verified.
