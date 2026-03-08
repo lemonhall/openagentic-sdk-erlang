@@ -341,8 +341,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_tools_contract_todo_notebook_test','openagentic_tools_contract_webfetch_test','openagentic_tools_contract_websearch_test','openagentic_tools_contract_path_guard_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
   - 验证结果：`19 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 tools_contract 测试拆分未引入新失败。
-- [ ] `261` 行 `apps/openagentic_sdk/test/openagentic_web_e2e_online_test.erl`
-  - 建议切口：`startup_smoke`、`query_smoke`、`workflow_smoke`、`governance_smoke`
+- [x] `261` 行 `apps/openagentic_sdk/test/openagentic_web_e2e_online_test.erl`
+  - 实际目标：`apps/openagentic_sdk/test/`
+  - 实际切口：`smoke`、`sse`、`config_http`；辅助支持抽到 `openagentic_web_e2e_online_sse_support.erl` 与 `openagentic_web_e2e_online_test_support.erl`
+  - 结果证据：`apps/openagentic_sdk/test/openagentic_web_e2e_online_test.erl` 已收缩为 `1` 行 stub；新增 `1` 个拆分 `*_test.erl` 模块与 `2` 个 support 模块，最大文件 `118` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_web_e2e_online_smoke_test`
+  - 验证结果：`0 tests`（`OPENAGENTIC_E2E` 未开启，完成编译与模块装载）
+  - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 web_e2e_online 测试拆分未引入新失败。
 
 ---
 
