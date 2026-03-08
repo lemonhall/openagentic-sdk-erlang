@@ -227,9 +227,17 @@
   - 补充验证：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_tool_schemas_test`
   - 补充结果：`6 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 glob 拆分未引入新失败。
-- [ ] `314` 行 `apps/openagentic_sdk/src/openagentic_permissions.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_permissions/`
-  - 建议切口：`policy`、`defaults`、`workspace_scope`、`classify`
+- [x] `314` 行 `apps/openagentic_sdk/src/openagentic_permissions.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_permissions/`
+  - 实际切口：`gate`、`approve`、`finalize`、`policy`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_permissions.erl` 已收缩为 `45` 行 facade；新增 `5` 个同名子目录模块，最大文件 `96` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_permissions_test`
+  - 验证结果：`8 tests, 0 failures`
+  - 扩展验证：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_permission_mode_override_test`
+  - 扩展结果：`3 tests, 0 failures`
+  - 补充验证：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_hitl_order_test`
+  - 补充结果：`1 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 permissions 拆分未引入新失败。
 - [ ] `272` 行 `apps/openagentic_sdk/src/openagentic_tool_edit.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_tool_edit/`
   - 建议切口：`patch_parse`、`apply`、`validate`、`render`
