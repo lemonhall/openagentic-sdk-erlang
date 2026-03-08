@@ -75,9 +75,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_workflow_dsl_test`
   - 验证结果：`6 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `162 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 workflow_dsl 拆分未引入新失败。
-- [ ] `476` 行 `apps/openagentic_sdk/src/openagentic_case_scheduler.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_case_scheduler/`
-  - 建议切口：`due_scan`、`schedule_eval`、`dispatch`、`state_refresh`
+- [x] `476` 行 `apps/openagentic_sdk/src/openagentic_case_scheduler.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_case_scheduler/`
+  - 实际切口：`state_refresh`、`due_scan`、`dispatch`、`schedule_eval`、`time`、`store`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_case_scheduler.erl` 已收缩为 `33` 行 facade；新增 7 个同名子目录模块，最大文件 `137` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_case_store_test`
+  - 验证结果：`19 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `162 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 case_scheduler 拆分未引入新失败。
 - [ ] `460` 行 `apps/openagentic_sdk/src/openagentic_workflow_mgr.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_workflow_mgr/`
   - 建议切口：`queue_ops`、`continue_cancel`、`stall_resume`、`status_queries`
