@@ -291,8 +291,13 @@
 
 测试文件不要求和 `src` 完全一样的目录策略，但必须避免再出现巨型“全能测试文件”。
 
-- [ ] `990` 行 `apps/openagentic_sdk/test/openagentic_workflow_engine_test.erl`
-  - 建议切口：`dsl`、`guards`、`fanout_join`、`retry`、`queue_cancel`
+- [x] `990` 行 `apps/openagentic_sdk/test/openagentic_workflow_engine_test.erl`
+  - 实际目标：`apps/openagentic_sdk/test/`
+  - 实际切口：`core`、`contracts`、`retry`、`continue`、`decision_route`、`fanout`、`prompts`、`three_provinces_prompts`；共享 support 抽到 `workflows_a`、`workflows_b`、`workflows_c`、`test_utils`
+  - 结果证据：`apps/openagentic_sdk/test/openagentic_workflow_engine_test.erl` 已收缩为 `1` 行 stub；新增 `8` 个拆分 `*_test.erl` 模块与 `4` 个 support 模块，最大文件 `138` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_workflow_engine_core_test','openagentic_workflow_engine_contracts_test','openagentic_workflow_engine_retry_test','openagentic_workflow_engine_continue_test','openagentic_workflow_engine_decision_route_test','openagentic_workflow_engine_fanout_test','openagentic_workflow_engine_prompts_test','openagentic_workflow_engine_three_provinces_prompts_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
+  - 验证结果：`27 tests, 0 failures`（`3 + 2 + 2 + 2 + 2 + 3 + 5 + 8`）
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 workflow_engine 测试拆分未引入新失败。
 - [ ] `977` 行 `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
   - 建议切口：`cases`、`candidates`、`tasks`、`governance_query`、`inbox`
 - [ ] `898` 行 `apps/openagentic_sdk/test/openagentic_case_store_test.erl`

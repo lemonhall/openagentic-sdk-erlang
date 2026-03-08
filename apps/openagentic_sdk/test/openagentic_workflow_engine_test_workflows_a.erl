@@ -1,0 +1,101 @@
+-module(openagentic_workflow_engine_test_workflows_a).
+
+-export([write_workflow/1, write_workflow_task_filter/1, write_workflow_retry/1]).
+
+write_workflow(Root) ->
+  ok = openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
+  ok = openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
+  Json =
+    <<
+      "{",
+      "\"workflow_version\":\"1.0\",",
+      "\"name\":\"t\",",
+      "\"steps\":[",
+      "{",
+      "\"id\":\"a\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"controller_input\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/a.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"A\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":\"b\",",
+      "\"on_fail\":null",
+      "},",
+      "{",
+      "\"id\":\"b\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"a\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/b.md\"},",
+      "\"output_contract\":{\"type\":\"decision\",\"allowed\":[\"approve\",\"reject\"],\"format\":\"json\",\"fields\":[\"decision\",\"reasons\",\"required_changes\"]},",
+      "\"guards\":[{\"type\":\"decision_requires_reasons\",\"when\":\"reject\"}],",
+      "\"on_pass\":null,",
+      "\"on_fail\":null",
+      "}",
+      "]}">>,
+  openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "w.json"]), Json).
+
+write_workflow_task_filter(Root) ->
+  ok = openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "prompts", "dispatch.md"]), <<"# dispatch prompt\n">>),
+  ok = openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "prompts", "gongbu.md"]), <<"# gongbu prompt\n">>),
+  Json =
+    <<
+      "{",
+      "\"workflow_version\":\"1.0\",",
+      "\"name\":\"t\",",
+      "\"steps\":[",
+      "{",
+      "\"id\":\"dispatch\",",
+      "\"role\":\"shangshu\",",
+      "\"input\":{\"type\":\"controller_input\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/dispatch.md\"},",
+      "\"output_contract\":{\"type\":\"json_object\"},",
+      "\"guards\":[{\"type\":\"regex_must_match\",\"pattern\":\"\\\\\\\"tasks\\\\\\\"\\\\s*:\"}],",
+      "\"on_pass\":\"gongbu\",",
+      "\"on_fail\":null",
+      "},",
+      "{",
+      "\"id\":\"gongbu\",",
+      "\"role\":\"gongbu\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"dispatch\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/gongbu.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"R\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":null,",
+      "\"on_fail\":null",
+      "}",
+      "]}">>,
+  openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "w_filter.json"]), Json).
+
+write_workflow_retry(Root) ->
+  ok = openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "prompts", "a.md"]), <<"# prompt a\n">>),
+  ok = openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "prompts", "b.md"]), <<"# prompt b\n">>),
+  Json =
+    <<
+      "{",
+      "\"workflow_version\":\"1.0\",",
+      "\"name\":\"t\",",
+      "\"steps\":[",
+      "{",
+      "\"id\":\"a\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"controller_input\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/a.md\"},",
+      "\"output_contract\":{\"type\":\"markdown_sections\",\"required\":[\"A\"]},",
+      "\"guards\":[],",
+      "\"on_pass\":\"b\",",
+      "\"on_fail\":\"a\",",
+      "\"max_attempts\":2",
+      "},",
+      "{",
+      "\"id\":\"b\",",
+      "\"role\":\"r\",",
+      "\"input\":{\"type\":\"step_output\",\"step_id\":\"a\"},",
+      "\"prompt\":{\"type\":\"file\",\"path\":\"workflows/prompts/b.md\"},",
+      "\"output_contract\":{\"type\":\"decision\",\"allowed\":[\"approve\",\"reject\"],\"format\":\"json\",\"fields\":[\"decision\",\"reasons\",\"required_changes\"]},",
+      "\"guards\":[{\"type\":\"decision_requires_reasons\",\"when\":\"reject\"}],",
+      "\"on_pass\":null,",
+      "\"on_fail\":null",
+      "}",
+      "]}">>,
+  openagentic_workflow_engine_test_utils:write_file(filename:join([Root, "workflows", "w_retry.json"]), Json).
+
