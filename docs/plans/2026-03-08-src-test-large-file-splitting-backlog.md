@@ -61,9 +61,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_tool_loop_test --module=openagentic_runtime_resume_test --module=openagentic_runtime_api_key_header_test --module=openagentic_runtime_openai_store_test --module=openagentic_runtime_provider_error_semantics_test --module=openagentic_hitl_order_test --module=openagentic_partial_messages_test --module=openagentic_permission_mode_override_test`
   - 验证结果：`5 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `162 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 runtime 拆分未引入新失败。
-- [ ] `1304` 行 `apps/openagentic_sdk/src/openagentic_cli.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_cli/`
-  - 建议切口：`main`、`arg_parse`、`chat_cmd`、`workflow_cmd`、`web_cmd`、`formatter`
+- [x] `1304` ? `apps/openagentic_sdk/src/openagentic_cli.erl`
+  - ?????`apps/openagentic_sdk/src/openagentic_cli/`
+  - ?????`main_dispatch`?`main`?`run_chat`?`workflow_web`?`runtime_opts`?`project`?`flags`?`values`?`event_sink`?`tool_use`?`tool_use_search_fs`?`tool_use_content`?`tool_use_tasking`?`tool_result`?`tool_result_web`?`tool_result_fs`?`tool_result_misc`?`tool_output_utils`?`ansi`?`text_format`
+  - ?????`apps/openagentic_sdk/src/openagentic_cli.erl` ???? `28` ? facade??? 20 ????????????? `118` ??
+  - ?????`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_cli_flags_test --module=openagentic_cli_project_dir_test --module=openagentic_cli_dotenv_precedence_test --module=openagentic_cli_observability_test`
+  - ?????`7 tests, 0 failures`
+  - ???????`rebar3 eunit` ???? `162 tests, 0 failures, 3 cancelled`???????? `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` ????? cli ?????????
 - [ ] `719` 行 `apps/openagentic_sdk/src/openagentic_workflow_dsl.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_workflow_dsl/`
   - 建议切口：`loader`、`validator`、`normalizer`、`guard_schema`、`defaults`
