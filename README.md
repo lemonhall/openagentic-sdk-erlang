@@ -242,7 +242,7 @@ Current local web server routes:
 - `POST /api/workflows/cancel`
 - `POST /api/workspace/read`
 - `POST /api/questions/answer`
-- `POST /api/sessions/:sid/query` -> continue an existing governance/runtime session in place
+- `POST /api/sessions/:sid/query` -> continue an existing governance/runtime session in place; when the JSON body includes `case_id` + `task_id`, the server injects `TASK_GOVERNANCE_CONTEXT_V1` from persisted task detail
 - `GET /api/sessions/:sid/events` -> SSE session tailing
 - `GET /api/health`
 
@@ -252,7 +252,9 @@ Phase 1 case governance metadata is persisted under `cases/<case_id>/...`, while
 
 The case governance view now exposes a chat-style governance entry for both `review_session_id` and `governance_session_id` via `view/governance-session.html`, so candidate review can continue on the same long-lived session after promotion. For formal tasks, the same governance view can also create a new `task_version` in place, keeping version revision on the same governance line instead of forcing a parallel flow.
 
-Case governance also now includes `view/task-detail.html`, which surfaces task definition, version history, latest revision diff, reauthorization hints when a revision introduces new credential requirements, authorization status, persisted run history, promoted artifact lists, and a dedicated credential-binding flow that keeps `material_ref` separate from task JSON snapshots. The same task surface is now backed by manual run/retry APIs for Phase 2 monitoring execution.
+Case governance also now includes `view/task-detail.html`, which surfaces task definition, version history, latest revision diff, reauthorization hints when a revision introduces new credential requirements, authorization status, persisted run history, `run_attempts`, `fact_reports`, execution-session drill-down links, and promoted artifact lists. The same task surface is backed by manual run/retry APIs plus governance-context continuation for Phase 2 monitoring execution.
+
+Active tasks with `schedule_policy` are now scanned by `openagentic_case_scheduler`, so scheduled runs can materialize into persisted `monitoring_run` objects automatically. Run finalization now distinguishes `report_submitted` vs `needs_followup`, and contract/runtime failures emit `exception_brief` plus failure mail for governance follow-up.
 
 Phase 1 now also includes a case-local template library plus a unified inbox view. Templates live under `cases/<case_id>/meta/templates/...` and can be instantiated into fresh candidates without sharing a live task body; inbox data is aggregated from `meta/mail/` into `view/inbox.html` with read/archive/filter actions and corresponding JSON APIs.
 

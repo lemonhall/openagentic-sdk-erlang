@@ -173,6 +173,9 @@ to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(Other) -> iolist_to_binary(io_lib:format("~p", [Other])).
 
+trim_bin(undefined) -> <<>>;
+trim_bin(null) -> <<>>;
+trim_bin(<<"undefined">>) -> <<>>;
 trim_bin(Bin0) -> string:trim(to_bin(Bin0)).
 
 find_any(_Map, []) -> undefined;
