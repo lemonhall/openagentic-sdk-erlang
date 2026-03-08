@@ -14,3 +14,9 @@ system_prompt_contains_utf8_timezone_label_test() ->
   ?assert(binary:match(Prompt, <<"OPENAGENTIC_TIME_CONTEXT_V1">>) =/= nomatch),
   ?assert(binary:match(Prompt, <<"UTC+08:00 / 东八区"/utf8>>) =/= nomatch),
   ok.
+
+compose_system_prompt_does_not_duplicate_marker_test() ->
+  TimeBlock = openagentic_time_context:render_system_prompt(openagentic_time_context:resolve(#{})),
+  Prompt = openagentic_time_context:compose_system_prompt(TimeBlock, #{}),
+  ?assertEqual(TimeBlock, Prompt),
+  ok.
