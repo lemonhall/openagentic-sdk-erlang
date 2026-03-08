@@ -188,9 +188,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_tool_schemas_test`
   - 验证结果：`6 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 tool schemas 拆分未引入新失败。
-- [ ] `386` 行 `apps/openagentic_sdk/src/openagentic_tool_read.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_tool_read/`
-  - 建议切口：`safety`、`range`、`binary_text`、`render`
+- [x] `386` 行 `apps/openagentic_sdk/src/openagentic_tool_read.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_tool_read/`
+  - 实际切口：`api`、`file_read`、`line_window`、`byte_read`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_tool_read.erl` 已收缩为 `11` 行 facade；新增 5 个同名子目录模块，最大文件 `92` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_fs_tools_test --module=openagentic_tools_contract_test`
+  - 验证结果：`23 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 read 拆分未引入新失败。
 - [ ] `372` 行 `apps/openagentic_sdk/src/openagentic_openai_chat_completions.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_openai_chat_completions/`
   - 建议切口：`request`、`stream_parse`、`tool_call_bridge`、`normalize`
