@@ -62,3 +62,23 @@ retry_uses_backoff_when_no_retry_after_test() ->
   ?assertEqual([500], get(waited2)),
   ok.
 
+invalid_api_key_does_not_retry_test() ->
+  put(waited3, []),
+  SleepFun =
+    fun (Ms) ->
+      L = case get(waited3) of undefined -> []; V -> V end,
+      put(waited3, L ++ [Ms]),
+      ok
+    end,
+  put(attempts3, 0),
+  Fun =
+    fun () ->
+      A = case get(attempts3) of undefined -> 0; V -> V end,
+      put(attempts3, A + 1),
+      {error, {provider_error, <<"invalid api key">>}}
+    end,
+  RetryCfg = #{max_retries => 3, initial_backoff_ms => 500, max_backoff_ms => 30000, use_retry_after_ms => true},
+  ?assertEqual({error, {provider_error, <<"invalid api key">>}}, openagentic_provider_retry:call(Fun, RetryCfg, #{sleep_fun => SleepFun})),
+  ?assertEqual([], get(waited3)),
+  ?assertEqual(1, get(attempts3)),
+  ok.
