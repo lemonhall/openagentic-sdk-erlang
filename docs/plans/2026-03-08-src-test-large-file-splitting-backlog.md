@@ -54,9 +54,13 @@
   - 扩展验证：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_workflow_engine_test --module=openagentic_workflow_mgr_test`
   - 扩展结果：`27 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前在 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 出现既有超时取消（`162 tests, 0 failures, 3 cancelled`）；本轮变更相关的 workflow 护栏已全部通过。
-- [ ] `1498` 行 `apps/openagentic_sdk/src/openagentic_runtime.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_runtime/`
-  - 建议切口：`facade`、`request_build`、`stream_loop`、`tool_dispatch`、`session_persist`、`hook_bridge`
+- [x] `1498` 行 `apps/openagentic_sdk/src/openagentic_runtime.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_runtime/`
+  - 实际切口：`query`、`query_setup`、`query_state`、`resume`、`loop`、`model`、`compaction`、`tools`、`events`、`artifacts`、`truncate_hint`、`truncate_headtail`、`finalize`、`options`、`paths`、`tasks`、`questions`、`permissions`、`errors`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_runtime.erl` 已收缩为 `5` 行 facade；新增 20 个同名子目录模块，最大文件 `137` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_tool_loop_test --module=openagentic_runtime_resume_test --module=openagentic_runtime_api_key_header_test --module=openagentic_runtime_openai_store_test --module=openagentic_runtime_provider_error_semantics_test --module=openagentic_hitl_order_test --module=openagentic_partial_messages_test --module=openagentic_permission_mode_override_test`
+  - 验证结果：`5 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `162 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 runtime 拆分未引入新失败。
 - [ ] `1304` 行 `apps/openagentic_sdk/src/openagentic_cli.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_cli/`
   - 建议切口：`main`、`arg_parse`、`chat_cmd`、`workflow_cmd`、`web_cmd`、`formatter`
@@ -172,13 +176,13 @@
   - 建议切口：`registry`、`schemas`、`tool_contract`
 - [ ] `261` 行 `apps/openagentic_sdk/test/openagentic_web_e2e_online_test.erl`
   - 建议切口：`startup_smoke`、`query_smoke`、`workflow_smoke`、`governance_smoke`
-- 每拆完一个 backlog 条目，必须先 `git add` + `git commit` + `git push`，再继续下一条；提交中要同时带上对应 backlog 证据更新
 
 ---
 
 ## 推荐执行纪律
 
 - 每次只开一个 backlog 条目，不要并行拆多个高耦合核心文件
+- 每拆完一个 backlog 条目，必须先 `git add` + `git commit` + `git push`，再继续下一条；提交中要同时带上对应 backlog 证据更新
 - 每拆完一个条目，都要留下“切口说明 + 验证命令 + 结果证据”
 - 如果某个条目需要先改构建约定（尤其是 `test` 目录递归编译），先把它升级为前置条目，不要硬拆
 - 对于已有样板，优先复用已经形成的模式，不要每个条目发明一套新结构
