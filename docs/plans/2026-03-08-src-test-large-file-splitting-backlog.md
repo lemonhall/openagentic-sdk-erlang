@@ -298,8 +298,14 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_workflow_engine_core_test','openagentic_workflow_engine_contracts_test','openagentic_workflow_engine_retry_test','openagentic_workflow_engine_continue_test','openagentic_workflow_engine_decision_route_test','openagentic_workflow_engine_fanout_test','openagentic_workflow_engine_prompts_test','openagentic_workflow_engine_three_provinces_prompts_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
   - 验证结果：`27 tests, 0 failures`（`3 + 2 + 2 + 2 + 2 + 3 + 5 + 8`）
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 workflow_engine 测试拆分未引入新失败。
-- [ ] `977` 行 `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
-  - 建议切口：`cases`、`candidates`、`tasks`、`governance_query`、`inbox`
+- [x] `977` 行 `apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl`
+  - 实际目标：`apps/openagentic_sdk/test/`
+  - 实际切口：`phase1`、`session_query`、`task_detail`、`task_context`、`monitoring`、`task_revision`、`reauth_hint`、`library_inbox`、`case_create`、`static_page`；共享 support 抽到 `openagentic_web_case_governance_test_support.erl`
+  - 结果证据：`apps/openagentic_sdk/test/openagentic_web_case_governance_test.erl` 已收缩为 `1` 行 stub；新增 `10` 个拆分 `*_test.erl` 模块与 `1` 个 support 模块，最大文件 `147` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_web_case_governance_phase1_test','openagentic_web_case_governance_session_query_test','openagentic_web_case_governance_task_detail_test','openagentic_web_case_governance_monitoring_test','openagentic_web_case_governance_task_revision_test','openagentic_web_case_governance_reauth_hint_test','openagentic_web_case_governance_library_inbox_test','openagentic_web_case_governance_case_create_test','openagentic_web_case_governance_static_page_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
+  - 验证结果：`9 tests, 0 failures`
+  - 已知定向备注：`rebar3 eunit --module=openagentic_web_case_governance_task_context_test` 当前仍是 `2 tests, 0 failures, 2 cancelled`，对应既有 timeout 场景 `governance_session_query_injects_task_context_test/0`
+  - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 governance 测试拆分未引入新失败。
 - [ ] `898` 行 `apps/openagentic_sdk/test/openagentic_case_store_test.erl`
   - 建议切口：`case_create`、`candidate_flow`、`template_flow`、`task_flow`、`run_flow`、`fixtures`
 - [ ] `756` 行 `apps/openagentic_sdk/src/openagentic_e2e_online.erl`
