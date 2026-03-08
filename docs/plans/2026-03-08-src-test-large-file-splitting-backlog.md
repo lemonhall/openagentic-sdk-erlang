@@ -306,8 +306,13 @@
   - 验证结果：`9 tests, 0 failures`
   - 已知定向备注：`rebar3 eunit --module=openagentic_web_case_governance_task_context_test` 当前仍是 `2 tests, 0 failures, 2 cancelled`，对应既有 timeout 场景 `governance_session_query_injects_task_context_test/0`
   - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 governance 测试拆分未引入新失败。
-- [ ] `898` 行 `apps/openagentic_sdk/test/openagentic_case_store_test.erl`
-  - 建议切口：`case_create`、`candidate_flow`、`template_flow`、`task_flow`、`run_flow`、`fixtures`
+- [x] `898` 行 `apps/openagentic_sdk/test/openagentic_case_store_test.erl`
+  - 实际目标：`apps/openagentic_sdk/test/`
+  - 实际切口：`case_create`、`approve`、`task_revision`、`task_reauth`、`credential_binding`、`monitoring_run`、`run_retry`、`run_delivery`、`template_library`、`inbox`；共享 support 抽到 `openagentic_case_store_test_support.erl`
+  - 结果证据：`apps/openagentic_sdk/test/openagentic_case_store_test.erl` 已收缩为 `1` 行 stub；新增 `10` 个拆分 `*_test.erl` 模块与 `1` 个 support 模块，最大文件 `137` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; $mods='openagentic_case_store_case_create_test','openagentic_case_store_approve_test','openagentic_case_store_task_revision_test','openagentic_case_store_task_reauth_test','openagentic_case_store_credential_binding_test','openagentic_case_store_monitoring_run_test','openagentic_case_store_run_retry_test','openagentic_case_store_run_delivery_test','openagentic_case_store_template_library_test','openagentic_case_store_inbox_test'; foreach($m in $mods){ rebar3 eunit --module=$m }`
+  - 验证结果：`19 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前为 `173 tests, 0 failures, 2 cancelled`；已知取消点为 `openagentic_web_case_governance_task_context_test:governance_session_query_injects_task_context_test/0` 超时，本轮 case_store 测试拆分未引入新失败。
 - [ ] `756` 行 `apps/openagentic_sdk/src/openagentic_e2e_online.erl`
   - 这是测试邻近源码，建议和测试一起处理
   - 建议目标：`apps/openagentic_sdk/src/openagentic_e2e_online/`
