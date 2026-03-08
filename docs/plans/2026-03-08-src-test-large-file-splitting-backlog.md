@@ -136,9 +136,13 @@
 
 这些模块对外接口多，但切口通常比核心运行时更稳定；适合在主链稳定后连续推进。
 
-- [ ] `995` 行 `apps/openagentic_sdk/src/openagentic_tool_webfetch.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_tool_webfetch/`
-  - 建议切口：`facade`、`safety`、`request`、`extract`、`bounded_output`
+- [x] `995` 行 `apps/openagentic_sdk/src/openagentic_tool_webfetch.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_tool_webfetch/`
+  - 实际切口：`api`、`request`、`safety`、`sanitize`、`runtime`、`extract`、`anchors`、`tags`、`markdown`、`tavily`、`tavily_format`、`tavily_support`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_tool_webfetch.erl` 已收缩为 `11` 行 facade；新增 `12` 个同名子目录模块，最大文件 `136` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_tools_contract_test`
+  - 验证结果：`19 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `167 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 WebFetch 拆分未引入新失败。
 - [ ] `555` 行 `apps/openagentic_sdk/src/openagentic_tool_lsp.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_tool_lsp/`
   - 建议切口：`protocol`、`transport`、`actions`、`normalize`
