@@ -281,6 +281,163 @@ task_detail_and_credential_binding_api_test() ->
   end,
   ok.
 
+governance_session_query_injects_task_context_test() ->
+  Root = tmp_root(),
+  Port = pick_port(),
+  PrevTrap = process_flag(trap_exit, true),
+  ensure_httpc_started(),
+  try
+    {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+    ok =
+      append_round_result(
+        Root,
+        Sid,
+        <<"## Suggested Monitoring Items\n",
+          "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+          "- Track US sanctions policy and enforcement cadence\n">>
+      ),
+    {ok, _} =
+      openagentic_web:start(
+        #{
+          project_dir => Root,
+          session_root => Root,
+          web_bind => "127.0.0.1",
+          web_port => Port,
+          provider_mod => openagentic_testing_provider_echo_context,
+          permission_mode_override => bypass,
+          api_key => <<"x">>,
+          model => <<"x">>
+        }
+      ),
+    Base = ensure_list(openagentic_web:base_url(#{bind => "127.0.0.1", port => Port})),
+
+    {201, Created} =
+      http_post_json(
+        Base ++ "api/cases",
+        #{
+          workflow_session_id => to_bin(Sid),
+          title => <<"Iran Situation">>,
+          opening_brief => <<"Create a long-running governance case around Iran">>,
+          current_summary => <<"Deliberation completed; waiting for candidate extraction">>
+        }
+      ),
+    CaseId = deep_get_bin(maps:get(<<"case">>, Created), [<<"header">>, <<"id">>]),
+    [Candidate | _] = maps:get(<<"candidates">>, Created),
+    CandidateId = deep_get_bin(Candidate, [<<"header">>, <<"id">>]),
+
+    {201, Approved} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/candidates/" ++ ensure_list(CandidateId) ++ "/approve",
+        #{
+          approved_by_op_id => <<"lemon">>,
+          approval_summary => <<"Approve as monitoring task">>,
+          objective => <<"Track diplomatic statement frequency, wording, and topic shifts">>
+        }
+      ),
+    TaskId = deep_get_bin(maps:get(<<"task">>, Approved), [<<"header">>, <<"id">>]),
+    GovernanceSid = deep_get_bin(maps:get(<<"task">>, Approved), [<<"links">>, <<"governance_session_id">>]),
+
+    {200, QueryResp} =
+      http_post_json(
+        Base ++ "api/sessions/" ++ ensure_list(GovernanceSid) ++ "/query",
+        #{message => <<"Summarize the current task context.">>, case_id => CaseId, task_id => TaskId}
+      ),
+    FinalText = maps:get(<<"final_text">>, QueryResp),
+    ?assert(binary:match(FinalText, <<"TASK_GOVERNANCE_CONTEXT_V1">>) =/= nomatch),
+    ?assert(binary:match(FinalText, TaskId) =/= nomatch),
+    ?assert(binary:match(FinalText, <<"historical_version_summary">>) =/= nomatch),
+    ?assert(binary:match(FinalText, <<"latest_exception_summary">>) =/= nomatch)
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
+  end,
+  ok.
+
+monitoring_run_and_retry_api_test() ->
+  Root = tmp_root(),
+  Port = pick_port(),
+  PrevTrap = process_flag(trap_exit, true),
+  ensure_httpc_started(),
+  try
+    {ok, Sid} = openagentic_session_store:create_session(Root, #{}),
+    ok =
+      append_round_result(
+        Root,
+        Sid,
+        <<"## Suggested Monitoring Items\n",
+          "- Monitor Iran diplomatic statement frequency and wording shifts\n",
+          "- Track US sanctions policy and enforcement cadence\n">>
+      ),
+    {ok, _} = openagentic_web:start(#{project_dir => Root, session_root => Root, web_bind => "127.0.0.1", web_port => Port}),
+    Base = ensure_list(openagentic_web:base_url(#{bind => "127.0.0.1", port => Port})),
+
+    {201, Created} =
+      http_post_json(
+        Base ++ "api/cases",
+        #{
+          workflow_session_id => to_bin(Sid),
+          title => <<"Iran Situation">>,
+          opening_brief => <<"Create a long-running governance case around Iran">>,
+          current_summary => <<"Deliberation completed; waiting for candidate extraction">>
+        }
+      ),
+    CaseId = deep_get_bin(maps:get(<<"case">>, Created), [<<"header">>, <<"id">>]),
+    [Candidate | _] = maps:get(<<"candidates">>, Created),
+    CandidateId = deep_get_bin(Candidate, [<<"header">>, <<"id">>]),
+
+    {201, Approved} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/candidates/" ++ ensure_list(CandidateId) ++ "/approve",
+        #{
+          approved_by_op_id => <<"lemon">>,
+          approval_summary => <<"Approve as monitoring task">>,
+          objective => <<"Track diplomatic statement frequency and wording shifts">>
+        }
+      ),
+    TaskId = deep_get_bin(maps:get(<<"task">>, Approved), [<<"header">>, <<"id">>]),
+
+    {201, Failed} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/run",
+        #{runtime_opts => #{provider_mod => <<"openagentic_testing_provider_monitoring_invalid">>}}
+      ),
+    FailedRun = maps:get(<<"run">>, Failed),
+    FailedAttempt = maps:get(<<"run_attempt">>, Failed),
+    RunId = deep_get_bin(FailedRun, [<<"header">>, <<"id">>]),
+
+    ?assertEqual(<<"failed">>, deep_get_bin(FailedRun, [<<"state">>, <<"status">>])),
+    ?assertEqual(<<"failed">>, deep_get_bin(FailedAttempt, [<<"state">>, <<"status">>])),
+    ?assertEqual(<<"report_quality_insufficient">>, deep_get_bin(FailedAttempt, [<<"state">>, <<"failure_class">>])),
+
+    {200, Retried} =
+      http_post_json(
+        Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/runs/" ++ ensure_list(RunId) ++ "/retry",
+        #{runtime_opts => #{provider_mod => <<"openagentic_testing_provider_monitoring_success">>}}
+      ),
+    RetriedRun = maps:get(<<"run">>, Retried),
+    RetriedAttempt = maps:get(<<"run_attempt">>, Retried),
+
+    ?assertEqual(<<"report_submitted">>, deep_get_bin(RetriedRun, [<<"state">>, <<"status">>])),
+    ?assertEqual(2, deep_get_int(RetriedRun, [<<"state">>, <<"attempt_count">>])),
+    ?assertEqual(deep_get_bin(FailedAttempt, [<<"header">>, <<"id">>]), deep_get_bin(RetriedAttempt, [<<"links">>, <<"previous_attempt_id">>])),
+    ?assert(maps:is_key(<<"fact_report">>, Retried)),
+
+    {200, Detail} = http_get_json(Base ++ "api/cases/" ++ ensure_list(CaseId) ++ "/tasks/" ++ ensure_list(TaskId) ++ "/detail"),
+    ?assertEqual(1, length(maps:get(<<"runs">>, Detail))),
+    ?assertEqual(2, length(maps:get(<<"run_attempts">>, Detail))),
+    ?assertEqual(1, length(maps:get(<<"fact_reports">>, Detail))),
+    ?assert(length(maps:get(<<"artifacts">>, Detail)) >= 3),
+    [DetailRun | _] = maps:get(<<"runs">>, Detail),
+    [DetailReport | _] = maps:get(<<"fact_reports">>, Detail),
+    ?assertEqual(2, deep_get_int(DetailRun, [<<"state">>, <<"attempt_count">>])),
+    ?assertEqual(<<"submitted">>, deep_get_bin(DetailReport, [<<"state">>, <<"status">>])),
+    ?assert(deep_get_bin(DetailReport, [<<"ext">>, <<"report_lineage_id">>]) =/= <<>>)
+  after
+    reset_web_runtime(),
+    process_flag(trap_exit, PrevTrap)
+  end,
+  ok.
+
 task_revision_api_updates_task_detail_versions_test() ->
   Root = tmp_root(),
   Port = pick_port(),
@@ -656,6 +813,8 @@ case_governance_static_page_test() ->
     ?assert(string:find(TaskDetailHtml, "taskBreadcrumb") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "taskNextAction") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "taskVersionDiffPanel") =/= nomatch),
+    ?assert(string:find(TaskDetailHtml, "taskRunAttemptsPanel") =/= nomatch),
+    ?assert(string:find(TaskDetailHtml, "taskFactReportsPanel") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "emptyState") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "panelLead") =/= nomatch),
     ?assert(string:find(TaskDetailHtml, "/assets/task-detail.js") =/= nomatch),
@@ -696,6 +855,8 @@ case_governance_static_page_test() ->
     ?assert(string:find(TaskJs, "setEmptyState") =/= nomatch),
     ?assert(string:find(TaskJs, "taskPrimaryPathHint") =/= nomatch),
     ?assert(string:find(TaskJs, "objectSummaryCard") =/= nomatch),
+    ?assert(string:find(TaskJs, "renderRunAttempts") =/= nomatch),
+    ?assert(string:find(TaskJs, "renderFactReports") =/= nomatch),
     ?assert(string:find(GovernanceJs, "setEmptyState") =/= nomatch),
     ?assert(string:find(GovernanceJs, "\x{8fd4}\x{56de}\x{4efb}\x{52a1}\x{8be6}\x{60c5}") =/= nomatch),
     ?assert(string:find(InboxJs, "return_to") =/= nomatch),

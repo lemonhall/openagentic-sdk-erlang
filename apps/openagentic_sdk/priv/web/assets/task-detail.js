@@ -10,6 +10,8 @@ const ui = {
   taskVersionDiff: el("taskVersionDiff"),
   taskAuthorization: el("taskAuthorization"),
   taskRuns: el("taskRuns"),
+  taskRunAttempts: el("taskRunAttempts"),
+  taskFactReports: el("taskFactReports"),
   taskArtifacts: el("taskArtifacts"),
   credentialBindingForm: el("credentialBindingForm"),
   bindingSlotName: el("bindingSlotName"),
@@ -487,6 +489,86 @@ function renderRuns(detail) {
   );
 }
 
+function sessionEventsHref(sessionId) {
+  if (!sessionId) return "";
+  return `/api/sessions/${encodeURIComponent(sessionId)}/events`;
+}
+
+function reportLineageSummary(report) {
+  const ext = report?.ext || {};
+  const lineage = ext.report_lineage_id || "";
+  const supersedes = ext.supersedes_report_id || "";
+  const supersededBy = ext.superseded_by_report_id || "";
+  return [lineage ? `lineage=${lineage}` : "", supersedes ? `supersedes=${supersedes}` : "", supersededBy ? `superseded_by=${supersededBy}` : ""]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function renderRunAttempts(detail) {
+  renderList(
+    ui.taskRunAttempts,
+    detail?.run_attempts || [],
+    {
+      label: "Run Attempts",
+      title: "No attempts yet",
+      body: "Attempt-level execution records appear here after a run starts.",
+    },
+    (attempt) => {
+      const header = attempt?.header || {};
+      const state = attempt?.state || {};
+      const spec = attempt?.spec || {};
+      const links = attempt?.links || {};
+      const sessionId = links.execution_session_id || "";
+      const meta = [
+        { label: "attempt_id", value: header.id || "" },
+        { label: "attempt_index", value: spec.attempt_index || "" },
+        { label: "execution_session_id", value: sessionId },
+        { label: "events", value: sessionEventsHref(sessionId) },
+        { label: "scratch_ref", value: links.scratch_ref || "" },
+        { label: "failure_class", value: state.failure_class || "" },
+      ].filter((item) => item.value);
+      return summaryCardMarkup({
+        title: header.id || "Run Attempt",
+        status: state.status || "",
+        summary: state.failure_summary || spec.attempt_reason || "Run attempt recorded",
+        meta,
+      });
+    }
+  );
+}
+
+function renderFactReports(detail) {
+  renderList(
+    ui.taskFactReports,
+    detail?.fact_reports || [],
+    {
+      label: "Fact Reports",
+      title: "No reports yet",
+      body: "Successful monitoring deliveries will appear here with lineage and artifact refs.",
+    },
+    (report) => {
+      const header = report?.header || {};
+      const state = report?.state || {};
+      const spec = report?.spec || {};
+      const links = report?.links || {};
+      const meta = [
+        { label: "report_id", value: header.id || "" },
+        { label: "run_id", value: links.run_id || "" },
+        { label: "successful_attempt_id", value: links.successful_attempt_id || "" },
+        { label: "report_kind", value: spec.report_kind || "" },
+        { label: "lineage", value: reportLineageSummary(report) },
+        { label: "artifact_refs", value: Array.isArray(spec.artifact_refs) ? String(spec.artifact_refs.length) : "" },
+      ].filter((item) => item.value);
+      return summaryCardMarkup({
+        title: header.id || "Fact Report",
+        status: state.status || "",
+        summary: state.quality_summary || state.alert_summary || spec.report_kind || "Formal fact report",
+        meta,
+      });
+    }
+  );
+}
+
 function renderArtifacts(detail) {
   renderList(
     ui.taskArtifacts,
@@ -519,6 +601,8 @@ async function loadDetail() {
   renderLatestVersionDiff(data);
   renderAuthorization(data);
   renderRuns(data);
+  renderRunAttempts(data);
+  renderFactReports(data);
   renderArtifacts(data);
   const status = data?.task?.state?.status || "";
   const auth = data?.authorization?.status || status;

@@ -108,6 +108,14 @@ init([]) ->
         shutdown => 5000,
         type => worker,
         modules => [openagentic_workflow_mgr]
+      },
+      #{
+        id => openagentic_case_scheduler,
+        start => {openagentic_case_scheduler, start_link, []},
+        restart => permanent,
+        shutdown => 5000,
+        type => worker,
+        modules => [openagentic_case_scheduler]
       }
     ],
   {ok, {SupFlags, Children}}.

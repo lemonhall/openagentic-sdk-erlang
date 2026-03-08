@@ -15,7 +15,9 @@
   revise_task/2,
   upsert_credential_binding/2,
   invalidate_credential_binding/2,
-  activate_task/2
+  activate_task/2,
+  run_task/2,
+  retry_run/2
 ]).
 
 create_case_from_round(RootDir0, Input0) ->
@@ -558,7 +560,17 @@ get_task_detail(RootDir0, CaseId0, TaskId0) ->
           Task = read_json(TaskPath),
           Versions = read_task_versions(CaseDir, TaskId),
           CredentialBindings = read_task_credential_bindings(CaseDir, TaskId),
+          Runs = lists:reverse(read_task_runs(CaseDir, TaskId)),
+          Attempts = lists:reverse(read_task_run_attempts(CaseDir, TaskId)),
+          Reports = lists:reverse(read_task_fact_reports(CaseDir, TaskId)),
+          Briefs = lists:reverse(read_task_exception_briefs(CaseDir, TaskId)),
           Authorization = build_task_authorization(Task, Versions, CredentialBindings),
+          FailureStats = build_task_failure_stats(Runs, Attempts),
+          VersionSummary = build_historical_version_summary(Versions),
+          ExecutionSummary = build_historical_execution_summary(Runs, Attempts, Reports),
+          LatestExceptionSummary = build_latest_exception_summary(Attempts, Briefs),
+          LatestReportSummary = build_latest_report_summary(Reports),
+          RecentRectificationSummary = build_recent_rectification_summary(Versions),
           {ok,
            #{
               task => Task,
@@ -566,8 +578,17 @@ get_task_detail(RootDir0, CaseId0, TaskId0) ->
               credential_bindings => CredentialBindings,
               authorization => Authorization,
               latest_version_diff => build_latest_version_diff(Versions, Authorization),
-              runs => [],
-              artifacts => []
+              runs => Runs,
+              run_attempts => Attempts,
+              fact_reports => Reports,
+              exception_briefs => Briefs,
+              failure_stats => FailureStats,
+              historical_version_summary => VersionSummary,
+              historical_execution_summary => ExecutionSummary,
+              latest_exception_summary => LatestExceptionSummary,
+              latest_report_summary => LatestReportSummary,
+              recent_rectification_summary => RecentRectificationSummary,
+              artifacts => build_task_artifacts(Reports)
             }}
       end
   end.
@@ -827,6 +848,1003 @@ activate_task(RootDir0, Input0) ->
           end
       end
   end.
+
+run_task(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TaskId = required_bin(Input, [task_id, taskId]),
+  case load_monitoring_task_context(RootDir, CaseId, TaskId) of
+    {error, Reason} -> {error, Reason};
+    {ok, CaseDir, Task0, Version, Versions, CredentialBindings} ->
+      case first_defined([task_run_in_progress_error(CaseDir, TaskId), run_task_error(Task0, Versions, CredentialBindings)]) of
+        undefined ->
+          Now = now_ts(),
+          RunId = new_id(<<"run">>),
+          Run0 = build_monitoring_run(CaseId, TaskId, id_of(Version), RunId, Version, Input, Now),
+          ok = persist_case_object(CaseDir, run_file(CaseDir, TaskId, RunId), Run0),
+          execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, undefined, Input);
+        Error ->
+          {error, Error}
+      end
+  end.
+
+retry_run(RootDir0, Input0) ->
+  RootDir = ensure_list(RootDir0),
+  Input = ensure_map(Input0),
+  CaseId = required_bin(Input, [case_id, caseId]),
+  TaskId = required_bin(Input, [task_id, taskId]),
+  RunId = required_bin(Input, [run_id, runId]),
+  case load_monitoring_task_context(RootDir, CaseId, TaskId) of
+    {error, Reason} -> {error, Reason};
+    {ok, CaseDir, Task0, _CurrentVersion, Versions, CredentialBindings} ->
+      RunPath = run_file(CaseDir, TaskId, RunId),
+      case filelib:is_file(RunPath) of
+        false -> {error, not_found};
+        true ->
+          Run0 = read_json(RunPath),
+          case retry_run_error(Task0, Run0, Versions, CredentialBindings) of
+            undefined ->
+              VersionId = get_in_map(Run0, [links, task_version_id], undefined),
+              Version = load_task_version(CaseDir, TaskId, VersionId),
+              PreviousAttemptId = get_in_map(Run0, [links, latest_attempt_id], undefined),
+              execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAttemptId, Input);
+            Error ->
+              {error, Error}
+          end
+      end
+  end.
+
+load_monitoring_task_context(RootDir, CaseId, TaskId) ->
+  case load_case(RootDir, CaseId) of
+    {error, Reason} ->
+      {error, Reason};
+    {ok, _CaseObj, CaseDir} ->
+      TaskPath = task_file(CaseDir, TaskId),
+      case filelib:is_file(TaskPath) of
+        false ->
+          {error, not_found};
+        true ->
+          Task0 = read_json(TaskPath),
+          Versions = read_task_versions(CaseDir, TaskId),
+          CredentialBindings = read_task_credential_bindings(CaseDir, TaskId),
+          case resolve_task_version(Task0, Versions) of
+            undefined -> {error, no_task_version};
+            Version -> {ok, CaseDir, Task0, Version, Versions, CredentialBindings}
+          end
+      end
+  end.
+
+resolve_task_version(Task0, Versions0) ->
+  Versions = [ensure_map(V) || V <- Versions0],
+  ActiveVersionId = get_in_map(Task0, [links, active_version_id], undefined),
+  case [V || V <- Versions, id_of(V) =:= ActiveVersionId] of
+    [Version | _] -> Version;
+    [] ->
+      case lists:reverse(Versions) of
+        [Version | _] -> Version;
+        [] -> undefined
+      end
+  end.
+
+load_task_version(CaseDir, TaskId, undefined) ->
+  resolve_task_version(#{links => #{}}, read_task_versions(CaseDir, TaskId));
+load_task_version(CaseDir, TaskId, VersionId) ->
+  Path = task_version_file(CaseDir, TaskId, VersionId),
+  case filelib:is_file(Path) of
+    true -> read_json(Path);
+    false -> resolve_task_version(#{links => #{}}, read_task_versions(CaseDir, TaskId))
+  end.
+
+run_task_error(Task, Versions, CredentialBindings) ->
+  Authorization = build_task_authorization(Task, Versions, CredentialBindings),
+  case activation_error(Authorization) of
+    undefined ->
+      case get_in_map(Task, [state, status], <<"active">>) of
+        <<"active">> -> undefined;
+        <<"ready_to_activate">> -> ready_to_activate;
+        <<"rectification_required">> -> rectification_required;
+        <<"paused">> -> paused;
+        Other when Other =:= <<"awaiting_credentials">>; Other =:= <<"credential_expired">>; Other =:= <<"reauthorization_required">> -> Other;
+        _ -> undefined
+      end;
+    Error -> Error
+  end.
+
+retry_run_error(Task, Run, Versions, CredentialBindings) ->
+  case run_task_error(Task, Versions, CredentialBindings) of
+    undefined ->
+      case {get_in_map(Run, [state, status], <<>>), get_in_map(Run, [links, successful_attempt_id], undefined)} of
+        {<<"running">>, _} -> run_in_progress;
+        {_, SuccessfulAttemptId} when SuccessfulAttemptId =/= undefined -> run_already_completed;
+        _ -> undefined
+      end;
+    Error -> Error
+  end.
+
+execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAttemptId, Input0) ->
+  Input = ensure_map(Input0),
+  Now = now_ts(),
+  TaskId = id_of(Task0),
+  RunId = id_of(Run0),
+  AttemptId = new_id(<<"attempt">>),
+  AttemptIndex = get_number(get_in_map(Run0, [state], #{}), [attempt_count], 0) + 1,
+  ScratchRef = attempt_scratch_ref(TaskId, RunId, AttemptId),
+  ScratchDir = filename:join([CaseDir, ensure_list(ScratchRef)]),
+  ok = filelib:ensure_dir(filename:join([ScratchDir, "x"])),
+  ExecutionSessionId = create_attempt_session(RootDir, CaseId, TaskId, RunId, AttemptId),
+  CredentialBindings = read_task_credential_bindings(CaseDir, TaskId),
+  CredentialSnapshot = build_credential_resolution_snapshot(CredentialBindings),
+  AllowedTools = resolve_allowed_tools(Version),
+  RunContext = build_monitoring_run_context(CaseDir, Task0, Version),
+  ExecutionProfile = build_execution_profile_snapshot(Input, Task0, Version, AllowedTools, ScratchRef),
+  Attempt0 =
+    build_run_attempt(
+      CaseId,
+      TaskId,
+      RunId,
+      AttemptId,
+      PreviousAttemptId,
+      ExecutionSessionId,
+      ScratchRef,
+      AttemptIndex,
+      Input,
+      ExecutionProfile,
+      CredentialSnapshot,
+      Now
+    ),
+  ok = persist_case_object(CaseDir, run_attempt_file(CaseDir, TaskId, AttemptId), Attempt0),
+  Run1 =
+    update_object(
+      Run0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          links => maps:merge(maps:get(links, Obj, #{}), #{latest_attempt_id => AttemptId}),
+          state =>
+            maps:merge(
+              maps:get(state, Obj, #{}),
+              #{status => <<"running">>, attempt_count => AttemptIndex, last_attempt_status => <<"running">>, started_at => Now}
+            )
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, run_file(CaseDir, TaskId, RunId), Run1),
+  Task1 =
+    update_object(
+      Task0,
+      Now,
+      fun (Obj) ->
+        Obj#{state => maps:merge(maps:get(state, Obj, #{}), #{latest_run_id => RunId})}
+      end
+    ),
+  ok = persist_case_object(CaseDir, task_file(CaseDir, TaskId), Task1),
+  append_attempt_start_event(RootDir, ExecutionSessionId, CaseId, TaskId, RunId, AttemptId),
+  Prompt = build_monitoring_prompt(Task1, Version, Attempt0, RunContext),
+  RuntimeOpts = build_monitoring_runtime_opts(RootDir, CaseDir, Task1, ScratchDir, ExecutionSessionId, AllowedTools, Input),
+  case openagentic_runtime:query(Prompt, RuntimeOpts) of
+    {ok, RuntimeRes0} ->
+      RuntimeRes = ensure_map(RuntimeRes0),
+      FinalText = get_bin(RuntimeRes, [final_text, finalText], <<>>),
+      case parse_monitoring_delivery(FinalText, TaskId, RunId, Now) of
+        {ok, Delivery} ->
+          case validate_report_contract(Version, Delivery) of
+            ok ->
+              finalize_run_success(RootDir, CaseId, CaseDir, Task1, Version, Run1, Attempt0, Delivery);
+            {error, FailureClass, FailureSummary} ->
+              finalize_run_failure(
+                RootDir,
+                CaseId,
+                CaseDir,
+                Task1,
+                Run1,
+                Attempt0,
+                FailureClass,
+                FailureSummary,
+                FinalText
+              )
+          end;
+        {error, FailureClass, FailureSummary} ->
+          finalize_run_failure(
+            RootDir,
+            CaseId,
+            CaseDir,
+            Task1,
+            Run1,
+            Attempt0,
+            FailureClass,
+            FailureSummary,
+            FinalText
+          )
+      end;
+    {error, {runtime_error, Reason, _SessionId}} ->
+      {FailureClass, FailureSummary} = classify_runtime_failure(Reason),
+      finalize_run_failure(
+        RootDir,
+        CaseId,
+        CaseDir,
+        Task1,
+        Run1,
+        Attempt0,
+        FailureClass,
+        FailureSummary,
+        undefined
+      );
+    {error, Reason} ->
+      {FailureClass, FailureSummary} = classify_runtime_failure(Reason),
+      finalize_run_failure(
+        RootDir,
+        CaseId,
+        CaseDir,
+        Task1,
+        Run1,
+        Attempt0,
+        FailureClass,
+        FailureSummary,
+        undefined
+      )
+  end.
+
+create_attempt_session(RootDir, CaseId, TaskId, RunId, AttemptId) ->
+  {ok, SessionId0} =
+    openagentic_session_store:create_session(
+      RootDir,
+      #{
+        kind => <<"monitoring_run_attempt">>,
+        case_id => CaseId,
+        task_id => TaskId,
+        run_id => RunId,
+        attempt_id => AttemptId
+      }
+    ),
+  to_bin(SessionId0).
+
+append_attempt_start_event(RootDir, ExecutionSessionId, CaseId, TaskId, RunId, AttemptId) ->
+  _ =
+    catch
+      openagentic_session_store:append_event(
+        RootDir,
+        ensure_list(ExecutionSessionId),
+        #{
+          type => <<"monitoring.attempt.started">>,
+          case_id => CaseId,
+          task_id => TaskId,
+          run_id => RunId,
+          attempt_id => AttemptId
+        }
+      ),
+  ok.
+
+build_monitoring_run(CaseId, TaskId, VersionId, RunId, Version, Input, Now) ->
+  #{
+    header => header(RunId, <<"monitoring_run">>, Now),
+    links =>
+      compact_map(
+        #{
+          case_id => CaseId,
+          task_id => TaskId,
+          task_version_id => VersionId,
+          pack_ids => [],
+          latest_attempt_id => undefined,
+          successful_attempt_id => undefined,
+          report_id => undefined
+        }
+      ),
+    spec =>
+      compact_map(
+        #{
+          run_kind => get_bin(Input, [run_kind, runKind], <<"manual">>),
+          trigger_type => get_bin(Input, [trigger_type, triggerType], <<"manual">>),
+          trigger_ref => get_bin(Input, [trigger_ref, triggerRef], undefined),
+          expected_outputs_contract_ref => <<VersionId/binary, "#report_contract">>,
+          planned_for_at => get_number(Input, [planned_for_at, plannedForAt], Now),
+          timezone => task_timezone(Version)
+        }
+      ),
+    state =>
+      #{
+        status => <<"scheduled">>,
+        attempt_count => 0,
+        last_attempt_status => undefined,
+        completed_at => undefined,
+        result_summary => undefined,
+        started_at => undefined
+      },
+    audit => compact_map(#{triggered_at => Now, triggered_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined)}),
+    ext => #{}
+  }.
+
+build_run_attempt(
+  CaseId,
+  TaskId,
+  RunId,
+  AttemptId,
+  PreviousAttemptId,
+  ExecutionSessionId,
+  ScratchRef,
+  AttemptIndex,
+  Input,
+  ExecutionProfile,
+  CredentialSnapshot,
+  Now
+) ->
+  #{
+    header => header(AttemptId, <<"run_attempt">>, Now),
+    links =>
+      compact_map(
+        #{
+          case_id => CaseId,
+          task_id => TaskId,
+          run_id => RunId,
+          previous_attempt_id => PreviousAttemptId,
+          execution_session_id => ExecutionSessionId,
+          scratch_ref => ScratchRef
+        }
+      ),
+    spec =>
+      compact_map(
+        #{
+          attempt_index => AttemptIndex,
+          attempt_reason => get_bin(Input, [attempt_reason, attemptReason], default_attempt_reason(AttemptIndex)),
+          execution_profile_snapshot => ExecutionProfile,
+          strategy_note => get_bin(Input, [strategy_note, strategyNote], undefined),
+          credential_resolution_snapshot => CredentialSnapshot
+        }
+      ),
+    state =>
+      #{
+        status => <<"running">>,
+        started_at => Now,
+        ended_at => undefined,
+        failure_class => undefined,
+        failure_summary => undefined,
+        promoted_artifact_refs => []
+      },
+    audit => compact_map(#{triggered_by_op_id => get_bin(Input, [acted_by_op_id, actedByOpId], undefined)}),
+    ext => #{}
+  }.
+
+default_attempt_reason(1) -> <<"initial_execution">>;
+default_attempt_reason(_) -> <<"retry_after_failure">>.
+
+task_timezone(Version) ->
+  SchedulePolicy = ensure_map(get_in_map(Version, [spec, schedule_policy], #{})),
+  get_bin(SchedulePolicy, [timezone], <<"Asia/Shanghai">>).
+
+build_execution_profile_snapshot(Input, Task, Version, AllowedTools, ScratchRef) ->
+  RuntimeOpts = normalize_runtime_opts(ensure_map(get_in_map(Input, [runtime_opts], get_in_map(Input, [runtimeOpts], #{})))),
+  ToolProfile = ensure_map(get_in_map(Version, [spec, tool_profile], #{})),
+  compact_map(
+    #{
+      provider_mod => to_bin(find_any(RuntimeOpts, [provider_mod, providerMod])),
+      model => find_any(RuntimeOpts, [model]),
+      base_url => find_any(RuntimeOpts, [base_url, baseUrl]),
+      allowed_tools => AllowedTools,
+      tool_profile => ToolProfile,
+      schedule_policy => get_in_map(Version, [spec, schedule_policy], #{}),
+      permission_mode => maps:get(mode, ensure_map(find_any(RuntimeOpts, [permission_gate, permissionGate])), undefined),
+      max_steps => find_any(RuntimeOpts, [max_steps, maxSteps]),
+      task_workspace_ref => get_in_map(Task, [links, workspace_ref], undefined),
+      scratch_ref => ScratchRef
+    }
+  ).
+
+build_credential_resolution_snapshot(CredentialBindings0) ->
+  CredentialBindings = [ensure_map(B) || B <- CredentialBindings0],
+  Resolved =
+    [
+      compact_map(
+        #{
+          credential_binding_id => id_of(Binding),
+          slot_name => get_in_map(Binding, [spec, slot_name], undefined),
+          provider => get_in_map(Binding, [spec, provider], undefined),
+          status => get_in_map(Binding, [state, status], undefined)
+        }
+      )
+     || Binding <- CredentialBindings
+    ],
+  #{used_binding_ids => [id_of(Binding) || Binding <- CredentialBindings, binding_status_valid(Binding)], bindings => Resolved, fallback_used => false}.
+
+resolve_allowed_tools(Version) ->
+  ToolProfile = ensure_map(get_in_map(Version, [spec, tool_profile], #{})),
+  case find_any(ToolProfile, [allowed_tools, allowedTools]) of
+    undefined -> undefined;
+    Value when is_list(Value) -> [to_bin(Item) || Item <- Value, trim_bin(to_bin(Item)) =/= <<>>];
+    Value -> [to_bin(Value)]
+  end.
+
+build_monitoring_runtime_opts(RootDir, CaseDir, Task, ScratchDir, ExecutionSessionId, AllowedTools, Input) ->
+  RuntimeOpts0 = ensure_map(get_in_map(Input, [runtime_opts], get_in_map(Input, [runtimeOpts], #{}))),
+  RuntimeOpts1 = normalize_runtime_opts(RuntimeOpts0),
+  TaskWorkspaceDir = task_workspace_dir(CaseDir, Task),
+  BaseOpts =
+    compact_map(
+      #{
+        session_root => RootDir,
+        project_dir =>
+          case find_any(RuntimeOpts1, [project_dir, projectDir]) of
+            undefined -> RootDir;
+            ProjectDir -> ProjectDir
+          end,
+        cwd =>
+          case find_any(RuntimeOpts1, [cwd]) of
+            undefined -> TaskWorkspaceDir;
+            Cwd -> Cwd
+          end,
+        resume_session_id => ExecutionSessionId,
+        workspace_dir => TaskWorkspaceDir,
+        scratch_dir => ScratchDir,
+        tools =>
+          case find_any(RuntimeOpts1, [tools]) of
+            undefined -> [];
+            ToolMods -> ToolMods
+          end,
+        permission_gate =>
+          case find_any(RuntimeOpts1, [permission_gate, permissionGate]) of
+            undefined -> openagentic_permissions:default(undefined);
+            PermissionGate -> PermissionGate
+          end,
+        allowed_tools => AllowedTools,
+        strict_unknown_fields => true
+      }
+    ),
+  maps:merge(RuntimeOpts1, BaseOpts).
+
+normalize_runtime_opts(RuntimeOpts0) ->
+  RuntimeOpts = ensure_map(RuntimeOpts0),
+  case find_any(RuntimeOpts, [provider_mod, providerMod]) of
+    undefined -> RuntimeOpts;
+    ProviderMod -> RuntimeOpts#{provider_mod => normalize_provider_mod(ProviderMod)}
+  end.
+
+normalize_provider_mod(ProviderMod) when is_atom(ProviderMod) -> ProviderMod;
+normalize_provider_mod(ProviderMod) ->
+  ProviderModBin = trim_bin(to_bin(ProviderMod)),
+  case ProviderModBin of
+    <<>> -> ProviderMod;
+    _ ->
+      try binary_to_existing_atom(ProviderModBin, utf8) of
+        Mod -> Mod
+      catch
+        error:badarg -> ProviderMod
+      end
+  end.
+
+build_monitoring_prompt(Task, Version, Attempt, RunContext0) ->
+  RunContext = ensure_map(RunContext0),
+  TaskPayload =
+    #{
+      task_id => id_of(Task),
+      title => get_in_map(Task, [spec, title], <<>>),
+      mission_statement => get_in_map(Task, [spec, mission_statement], <<>>),
+      task_version_id => id_of(Version),
+      objective => get_in_map(Version, [spec, objective], <<>>),
+      schedule_policy => get_in_map(Version, [spec, schedule_policy], #{}),
+      report_contract => get_in_map(Version, [spec, report_contract], #{}),
+      attempt_id => id_of(Attempt),
+      attempt_index => get_in_map(Attempt, [spec, attempt_index], 1),
+      task_workspace_ref => get_in_map(Task, [links, workspace_ref], <<>>),
+      scratch_ref => get_in_map(Attempt, [links, scratch_ref], <<>>),
+      credential_resolution_snapshot => get_in_map(Attempt, [spec, credential_resolution_snapshot], #{}),
+      run_context => RunContext
+    },
+  Payload = openagentic_json:encode_safe(TaskPayload),
+  iolist_to_binary(
+    [
+      <<"You are the monitoring officer for one monitoring task. Execute one unattended monitoring run and return exactly one JSON object, with no prose outside JSON.\n\n">>,
+      <<"Required top-level fields: report_markdown (string), facts (array), artifacts (array). Optional: result_summary, alert_summary, report_kind, observed_window.\n">>,
+      <<"facts[] should include: title, fact_type, source or source_url, collection_method, value_summary, change_summary, alert_level, confidence_note, evidence_refs.\n">>,
+      <<"At least one fact must contain a traceable source reference via source_url or evidence_refs.\n">>,
+      <<"Task context JSON:\n">>,
+      Payload,
+      <<"\n">>
+    ]
+  ).
+
+parse_monitoring_delivery(Output0, TaskId, RunId, Now) ->
+  case parse_json_object(Output0) of
+    {error, _} ->
+      {error, <<"report_quality_insufficient">>, <<"monitoring delivery must be one JSON object">>};
+    {ok, Obj0} ->
+      Obj = ensure_map(Obj0),
+      ReportMarkdown = trim_bin(get_bin(Obj, [report_markdown, reportMarkdown], <<>>)),
+      Facts0 = get_list(Obj, [facts], []),
+      Artifacts0 = get_list(Obj, [artifacts], []),
+      case {byte_size(ReportMarkdown) > 0, is_list(Facts0), is_list(Artifacts0)} of
+        {true, true, true} ->
+          Facts = normalize_monitoring_facts(Facts0, TaskId, RunId, Now),
+          case has_traceable_source(Facts) of
+            false ->
+              {error, <<"report_quality_insufficient">>, <<"facts.json requires at least one traceable source reference">>};
+            true ->
+              {ok,
+               #{
+                 report_markdown => ReportMarkdown,
+                 facts => Facts,
+                 artifacts => normalize_monitoring_artifacts(Artifacts0, Now),
+                 result_summary => get_bin(Obj, [result_summary, resultSummary], <<"monitoring run completed">>),
+                 alert_summary => get_bin(Obj, [alert_summary, alertSummary], undefined),
+                 report_kind => get_bin(Obj, [report_kind, reportKind], <<"routine_fact_report">>),
+                 observed_window => normalize_observed_window(choose_map(Obj, [observed_window, observedWindow], #{}), Facts, Now)
+               }}
+          end;
+        _ ->
+          {error, <<"report_quality_insufficient">>, <<"monitoring delivery missing report_markdown/facts/artifacts">>}
+      end
+  end.
+
+normalize_monitoring_facts(Facts0, TaskId, RunId, Now) ->
+  normalize_monitoring_facts(Facts0, TaskId, RunId, Now, []).
+
+normalize_monitoring_facts([], _TaskId, _RunId, _Now, Acc) ->
+  lists:reverse(Acc);
+normalize_monitoring_facts([Fact0 | Rest], TaskId, RunId, Now, Acc) ->
+  Fact = ensure_map(Fact0),
+  SourceUrl = get_bin(Fact, [source_url, sourceUrl, url], undefined),
+  EvidenceRefs0 = get_list(Fact, [evidence_refs, evidenceRefs], []),
+  EvidenceRefs =
+    case {EvidenceRefs0, SourceUrl} of
+      {[], Url} when is_binary(Url), Url =/= <<>> -> [#{kind => <<"url">>, ref => Url}];
+      _ -> normalize_evidence_refs(EvidenceRefs0)
+    end,
+  ValueSummary = get_bin(Fact, [value_summary, valueSummary], <<>>),
+  Title =
+    case get_bin(Fact, [title], undefined) of
+      undefined when ValueSummary =/= <<>> -> ValueSummary;
+      undefined -> <<"Fact">>;
+      Value -> Value
+    end,
+  Fact1 =
+    compact_map(
+      #{
+        fact_id => get_bin(Fact, [fact_id, factId], new_id(<<"fact">>)),
+        task_id => TaskId,
+        run_id => RunId,
+        observed_at => get_number(Fact, [observed_at, observedAt], Now),
+        collected_at => get_number(Fact, [collected_at, collectedAt], Now),
+        title => Title,
+        fact_type => get_bin(Fact, [fact_type, factType], <<"observation">>),
+        source => get_bin(Fact, [source], get_bin(Fact, [source_name, sourceName], undefined)),
+        source_url => SourceUrl,
+        collection_method => get_bin(Fact, [collection_method, collectionMethod], <<"agent_monitoring">>),
+        value_summary => ValueSummary,
+        change_summary => get_bin(Fact, [change_summary, changeSummary], <<>>),
+        alert_level => get_bin(Fact, [alert_level, alertLevel], <<"normal">>),
+        confidence_note => get_bin(Fact, [confidence_note, confidenceNote], <<"not_provided">>),
+        evidence_refs => EvidenceRefs
+      }
+    ),
+  normalize_monitoring_facts(Rest, TaskId, RunId, Now, [Fact1 | Acc]).
+
+normalize_evidence_refs(Refs0) ->
+  lists:map(
+    fun (Ref0) when is_binary(Ref0); is_list(Ref0) -> #{kind => <<"text">>, ref => trim_bin(to_bin(Ref0))};
+        (Ref0) ->
+      Ref = ensure_map(Ref0),
+      compact_map(#{kind => get_bin(Ref, [kind], <<"text">>), ref => get_bin(Ref, [ref, value, url], undefined)})
+    end,
+    ensure_list(Refs0)
+  ).
+
+normalize_monitoring_artifacts(Artifacts0, Now) ->
+  normalize_monitoring_artifacts(Artifacts0, Now, []).
+
+normalize_monitoring_artifacts([], _Now, Acc) ->
+  lists:reverse(Acc);
+normalize_monitoring_artifacts([Artifact0 | Rest], Now, Acc) ->
+  Artifact = ensure_map_or_path(Artifact0),
+  Path = get_bin(Artifact, [path, url, source_url], undefined),
+  Title =
+    case get_bin(Artifact, [title], undefined) of
+      undefined when Path =/= undefined -> Path;
+      undefined -> <<"artifact">>;
+      Value -> Value
+    end,
+  Artifact1 =
+    compact_map(
+      #{
+        artifact_id => get_bin(Artifact, [artifact_id, artifactId], new_id(<<"artifact">>)),
+        title => Title,
+        kind => get_bin(Artifact, [kind], <<"attachment">>),
+        summary => get_bin(Artifact, [summary], undefined),
+        path => Path,
+        created_at => get_number(Artifact, [created_at, createdAt], Now)
+      }
+    ),
+  normalize_monitoring_artifacts(Rest, Now, [Artifact1 | Acc]).
+
+ensure_map_or_path(Value) when is_map(Value) -> Value;
+ensure_map_or_path(Value) when is_binary(Value); is_list(Value) -> #{path => to_bin(Value)};
+ensure_map_or_path(Value) -> ensure_map(Value).
+
+normalize_observed_window(Window0, Facts, Now) ->
+  Window = ensure_map(Window0),
+  StartedAt =
+    case get_number(Window, [started_at, startedAt], undefined) of
+      undefined -> infer_fact_time(Facts, observed_at, Now);
+      StartedValue -> StartedValue
+    end,
+  EndedAt =
+    case get_number(Window, [ended_at, endedAt], undefined) of
+      undefined -> infer_fact_time(Facts, collected_at, Now);
+      EndedValue -> EndedValue
+    end,
+  #{started_at => StartedAt, ended_at => EndedAt}.
+
+infer_fact_time([], _Field, Default) -> Default;
+infer_fact_time(Facts, Field, Default) ->
+  Values = [maps:get(Field, Fact, Default) || Fact <- Facts, maps:get(Field, Fact, undefined) =/= undefined],
+  case Values of
+    [] -> Default;
+    _ when Field =:= observed_at -> lists:min(Values);
+    _ -> lists:max(Values)
+  end.
+
+has_traceable_source(Facts) ->
+  lists:any(
+    fun (Fact) ->
+      SourceUrl = get_bin(Fact, [source_url, sourceUrl], <<>>),
+      EvidenceRefs = get_list(Fact, [evidence_refs, evidenceRefs], []),
+      SourceUrl =/= <<>> orelse EvidenceRefs =/= []
+    end,
+    Facts
+  ).
+
+parse_json_object(Output0) ->
+  Output = string:trim(to_bin(Output0)),
+  Bin = strip_json_code_fences(Output),
+  try
+    Obj = openagentic_json:decode(Bin),
+    case is_map(Obj) of
+      true -> {ok, normalize_keys(Obj)};
+      false -> {error, not_object}
+    end
+  catch
+    _:_ -> {error, invalid_json}
+  end.
+
+strip_json_code_fences(Bin0) ->
+  Bin = to_bin(Bin0),
+  case re:run(Bin, <<"(?s)^```[a-zA-Z0-9_-]*\\s*(\\{.*\\})\\s*```\\s*$">>, [{capture, [1], binary}, unicode]) of
+    {match, [Inner]} -> Inner;
+    _ -> Bin
+  end.
+
+finalize_run_success(RootDir, CaseId, CaseDir, Task0, Version, Run0, Attempt0, Delivery0) ->
+  Delivery = ensure_map(Delivery0),
+  Now = now_ts(),
+  TaskId = id_of(Task0),
+  RunId = id_of(Run0),
+  AttemptId = id_of(Attempt0),
+  ScratchDir = filename:join([CaseDir, ensure_list(get_in_map(Attempt0, [links, scratch_ref], <<>>))]),
+  ok = write_attempt_delivery_files(ScratchDir, Delivery),
+  ArtifactRefs = promote_attempt_delivery(CaseDir, TaskId, RunId, AttemptId, Delivery, Now),
+  PreviousReports = lists:reverse(read_task_fact_reports(CaseDir, TaskId)),
+  ReportId = new_id(<<"report">>),
+  {SupersedesReportId, ReportLineageId} =
+    case PreviousReports of
+      [PreviousReport | _] ->
+        PrevLineageId = get_in_map(PreviousReport, [ext, report_lineage_id], id_of(PreviousReport)),
+        {id_of(PreviousReport), PrevLineageId};
+      [] ->
+        {undefined, ReportId}
+    end,
+  ReportsToSupersede =
+    case PreviousReports of
+      [PreviousReport0 | _] -> [PreviousReport0];
+      [] -> []
+    end,
+  lists:foreach(
+    fun (PreviousReport0) ->
+      PreviousReport1 =
+        update_object(
+          ensure_map(PreviousReport0),
+          Now,
+          fun (Obj) ->
+            Obj#{ext => maps:merge(maps:get(ext, Obj, #{}), #{superseded_by_report_id => ReportId})}
+          end
+        ),
+      ok = persist_case_object(CaseDir, fact_report_file(CaseDir, TaskId, id_of(PreviousReport1)), PreviousReport1)
+    end,
+    ReportsToSupersede
+  ),
+  FactReport =
+    build_fact_report(
+      CaseId,
+      TaskId,
+      RunId,
+      AttemptId,
+      id_of(Version),
+      ReportId,
+      Delivery,
+      ArtifactRefs,
+      SupersedesReportId,
+      ReportLineageId,
+      Now
+    ),
+  ok = persist_case_object(CaseDir, fact_report_file(CaseDir, TaskId, ReportId), FactReport),
+  Attempt1 =
+    update_object(
+      Attempt0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          state =>
+            maps:merge(
+              maps:get(state, Obj, #{}),
+              #{status => <<"succeeded">>, ended_at => Now, promoted_artifact_refs => [id_of(Artifact) || Artifact <- ArtifactRefs]}
+            )
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, run_attempt_file(CaseDir, TaskId, AttemptId), Attempt1),
+  Run1 =
+    update_object(
+      Run0,
+      Now,
+      fun (Obj) ->
+        RunStatus =
+          case delivery_needs_followup(Delivery) of
+            true -> <<"needs_followup">>;
+            false -> <<"report_submitted">>
+          end,
+        Obj#{
+          links => maps:merge(maps:get(links, Obj, #{}), #{latest_attempt_id => AttemptId, successful_attempt_id => AttemptId, report_id => ReportId}),
+          state =>
+            maps:merge(
+              maps:get(state, Obj, #{}),
+              #{
+                status => RunStatus,
+                attempt_count => get_in_map(Attempt1, [spec, attempt_index], 1),
+                last_attempt_status => <<"succeeded">>,
+                completed_at => Now,
+                result_summary => get_bin(Delivery, [result_summary], <<"monitoring run completed">>)
+              }
+            )
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, run_file(CaseDir, TaskId, RunId), Run1),
+  Task1 =
+    update_object(
+      Task0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          state =>
+            maps:merge(
+              maps:get(state, Obj, #{}),
+              #{status => <<"active">>, health => <<"healthy">>, latest_run_id => RunId, latest_successful_run_id => RunId, last_report_at => Now}
+            )
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, task_file(CaseDir, TaskId), Task1),
+  ok = refresh_case_state(RootDir, CaseId),
+  ok = rebuild_indexes(RootDir, CaseId),
+  {ok, #{task => Task1, run => Run1, run_attempt => Attempt1, fact_report => FactReport, overview => get_case_overview_map(RootDir, CaseId)}}.
+
+finalize_run_failure(RootDir, CaseId, CaseDir, Task0, Run0, Attempt0, FailureClass, FailureSummary0, RawOutput) ->
+  Now = now_ts(),
+  TaskId = id_of(Task0),
+  RunId = id_of(Run0),
+  AttemptId = id_of(Attempt0),
+  ScratchDir = filename:join([CaseDir, ensure_list(get_in_map(Attempt0, [links, scratch_ref], <<>>))]),
+  FailureSummary = trim_bin(to_bin(FailureSummary0)),
+  ok = maybe_write_failure_output(ScratchDir, RawOutput, FailureSummary),
+  Attempt1 =
+    update_object(
+      Attempt0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          state =>
+            maps:merge(
+              maps:get(state, Obj, #{}),
+              #{status => <<"failed">>, ended_at => Now, failure_class => FailureClass, failure_summary => FailureSummary, promoted_artifact_refs => []}
+            )
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, run_attempt_file(CaseDir, TaskId, AttemptId), Attempt1),
+  Run1 =
+    update_object(
+      Run0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          links => maps:merge(maps:get(links, Obj, #{}), #{latest_attempt_id => AttemptId}),
+          state =>
+            maps:merge(
+              maps:get(state, Obj, #{}),
+              #{status => <<"failed">>, attempt_count => get_in_map(Attempt1, [spec, attempt_index], 1), last_attempt_status => <<"failed">>, completed_at => Now, result_summary => FailureSummary}
+            ),
+          audit => maps:merge(maps:get(audit, Obj, #{}), #{failure_class => FailureClass, failure_summary => FailureSummary})
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, run_file(CaseDir, TaskId, RunId), Run1),
+  ExceptionBrief = build_exception_brief(CaseId, Task0, Run1, Attempt1, FailureClass, FailureSummary, Now),
+  FailureMail = build_task_run_failure_mail(CaseId, Task0, Run1, Attempt1, ExceptionBrief, FailureClass, FailureSummary, Now),
+  {TaskStatus, TaskHealth, RectificationMail} = derive_task_failure_outcome(CaseDir, Task0, Now),
+  Task1 =
+    update_object(
+      Task0,
+      Now,
+      fun (Obj) ->
+        Obj#{
+          state => maps:merge(maps:get(state, Obj, #{}), #{status => TaskStatus, health => TaskHealth, latest_run_id => RunId})
+        }
+      end
+    ),
+  ok = persist_case_object(CaseDir, task_file(CaseDir, TaskId), Task1),
+  ok = persist_case_object(CaseDir, exception_brief_file(CaseDir, TaskId, id_of(ExceptionBrief)), ExceptionBrief),
+  ok = maybe_persist_mail(CaseDir, FailureMail),
+  ok = maybe_persist_mail(CaseDir, RectificationMail),
+  ok = refresh_case_state(RootDir, CaseId),
+  ok = rebuild_indexes(RootDir, CaseId),
+  Base =
+    #{
+      task => Task1,
+      run => Run1,
+      run_attempt => Attempt1,
+      exception_brief => ExceptionBrief,
+      mail => FailureMail,
+      overview => get_case_overview_map(RootDir, CaseId)
+    },
+  case RectificationMail of
+    undefined -> {ok, Base};
+    _ -> {ok, Base#{rectification_mail => RectificationMail}}
+  end.
+
+maybe_write_failure_output(ScratchDir, RawOutput, FailureSummary) ->
+  ok = filelib:ensure_dir(filename:join([ScratchDir, "x"])),
+  case RawOutput of
+    undefined -> file:write_file(filename:join([ScratchDir, "failure.txt"]), <<FailureSummary/binary, "\n">>);
+    <<>> -> file:write_file(filename:join([ScratchDir, "failure.txt"]), <<FailureSummary/binary, "\n">>);
+    Bin -> file:write_file(filename:join([ScratchDir, "raw-output.txt"]), <<(to_bin(Bin))/binary, "\n">>)
+  end,
+  ok.
+
+write_attempt_delivery_files(ScratchDir, Delivery) ->
+  ok = filelib:ensure_dir(filename:join([ScratchDir, "x"])),
+  ok = file:write_file(filename:join([ScratchDir, "report.md"]), <<(get_bin(Delivery, [report_markdown], <<>>))/binary, "\n">>),
+  FactsBody = openagentic_json:encode_safe(#{facts => maps:get(facts, Delivery, [])}),
+  ArtifactsBody = openagentic_json:encode_safe(#{artifacts => maps:get(artifacts, Delivery, [])}),
+  ok = file:write_file(filename:join([ScratchDir, "facts.json"]), <<FactsBody/binary, "\n">>),
+  ok = file:write_file(filename:join([ScratchDir, "artifacts.json"]), <<ArtifactsBody/binary, "\n">>).
+
+promote_attempt_delivery(CaseDir, TaskId, RunId, AttemptId, Delivery, Now) ->
+  DeliverDir = deliverables_dir(CaseDir, TaskId, RunId),
+  ok = filelib:ensure_dir(filename:join([DeliverDir, "x"])),
+  ScratchDir = filename:join([CaseDir, ensure_list(attempt_scratch_ref(TaskId, RunId, AttemptId))]),
+  ok = copy_if_exists(filename:join([ScratchDir, "report.md"]), filename:join([DeliverDir, "report.md"])),
+  ok = copy_if_exists(filename:join([ScratchDir, "facts.json"]), filename:join([DeliverDir, "facts.json"])),
+  ExternalArtifacts = maps:get(artifacts, Delivery, []),
+  ExternalRefs = build_external_artifact_refs(TaskId, RunId, AttemptId, ExternalArtifacts, Now),
+  BaseRefs =
+    [
+      build_promoted_artifact(TaskId, RunId, AttemptId, <<"report.md">>, <<"report_markdown">>, <<"Human-readable monitoring report">>, Now),
+      build_promoted_artifact(TaskId, RunId, AttemptId, <<"facts.json">>, <<"facts_json">>, <<"Structured facts payload">>, Now)
+    ],
+  IndexRefs = BaseRefs ++ ExternalRefs,
+  ArtifactsIndexBody = openagentic_json:encode_safe(#{artifacts => IndexRefs}),
+  ok = file:write_file(filename:join([DeliverDir, "artifacts.json"]), <<ArtifactsIndexBody/binary, "\n">>),
+  BaseRefs ++ [build_promoted_artifact(TaskId, RunId, AttemptId, <<"artifacts.json">>, <<"artifact_index">>, <<"Formal artifact index">>, Now)] ++ ExternalRefs.
+
+copy_if_exists(Src, Dest) ->
+  case filelib:is_file(Src) of
+    true ->
+      case file:copy(Src, Dest) of
+        {ok, _} -> ok;
+        ok -> ok;
+        _ -> ok
+      end;
+    false -> ok
+  end.
+
+build_promoted_artifact(TaskId, RunId, AttemptId, FileName, Kind, Summary, Now) ->
+  RelPath = deliverable_ref(TaskId, RunId, FileName),
+  #{
+    header => header(new_id(<<"artifact">>), <<"run_artifact">>, Now),
+    links => compact_map(#{task_id => TaskId, run_id => RunId, source_attempt_id => AttemptId}),
+    spec => #{title => FileName, kind => Kind, summary => Summary, path => RelPath},
+    state => #{status => <<"promoted">>},
+    audit => #{},
+    ext => #{}
+  }.
+
+build_external_artifact_refs(TaskId, RunId, AttemptId, Artifacts0, Now) ->
+  lists:map(
+    fun(Artifact0) ->
+      Artifact = ensure_map(Artifact0),
+      # {
+        header => header(new_id(<<"artifact">>), <<"run_artifact">>, Now),
+        links => compact_map(#{task_id => TaskId, run_id => RunId, source_attempt_id => AttemptId}),
+        spec => compact_map(#{title => get_bin(Artifact, [title], <<"artifact">>), kind => get_bin(Artifact, [kind], <<"attachment">>), summary => get_bin(Artifact, [summary], undefined), path => get_bin(Artifact, [path], undefined)}),
+        state => #{status => <<"indexed">>},
+        audit => #{},
+        ext => #{}
+      }
+    end,
+    Artifacts0
+  ).
+
+build_fact_report(CaseId, TaskId, RunId, AttemptId, VersionId, ReportId, Delivery, ArtifactRefs, SupersedesReportId, ReportLineageId, Now) ->
+  #{
+    header => header(ReportId, <<"fact_report">>, Now),
+    links => compact_map(#{case_id => CaseId, task_id => TaskId, run_id => RunId, successful_attempt_id => AttemptId, pack_ids => []}),
+    spec => compact_map(#{report_contract_ref => <<VersionId/binary, "#report_contract">>, artifact_refs => ArtifactRefs, observed_window => get_in_map(Delivery, [observed_window], #{}), report_kind => get_bin(Delivery, [report_kind], <<"routine_fact_report">>)}),
+    state => compact_map(#{status => <<"submitted">>, submitted_at => Now, accepted_at => undefined, quality_summary => get_bin(Delivery, [result_summary], undefined), alert_summary => get_bin(Delivery, [alert_summary], undefined)}),
+    audit => #{},
+    ext => #{report_lineage_id => ReportLineageId, supersedes_report_id => SupersedesReportId, superseded_by_report_id => undefined}
+  }.
+
+derive_task_failure_outcome(CaseDir, Task0, Now) ->
+  TaskId = id_of(Task0),
+  Runs = lists:reverse(read_task_runs(CaseDir, TaskId)),
+  Attempts = read_task_run_attempts(CaseDir, TaskId),
+  Count = consecutive_failure_count(Runs, Attempts),
+  LatestFailureClass = latest_failure_class(Attempts),
+  CurrentStatus = get_in_map(Task0, [state, status], <<"active">>),
+  case Count >= 3 of
+    true ->
+      MailObj =
+        case CurrentStatus of
+          <<"rectification_required">> -> undefined;
+          _ -> build_rectification_mail(get_in_map(Task0, [links, case_id], undefined), Task0, LatestFailureClass, Count, Now)
+        end,
+      {<<"rectification_required">>, <<"rectification_required">>, MailObj};
+    false when Count =:= 2 -> {<<"active">>, <<"flaky">>, undefined};
+    false -> {<<"active">>, <<"degraded">>, undefined}
+  end.
+
+consecutive_failure_count(Runs0, Attempts0) ->
+  Runs = [ensure_map(R) || R <- Runs0],
+  Attempts = [ensure_map(A) || A <- Attempts0],
+  consecutive_failure_count(Runs, Attempts, 0).
+
+consecutive_failure_count([], _Attempts, Acc) -> Acc;
+consecutive_failure_count([Run | Rest], Attempts, Acc) ->
+  LatestAttemptId = get_in_map(Run, [links, latest_attempt_id], undefined),
+  case find_attempt(Attempts, LatestAttemptId) of
+    undefined -> Acc;
+    Attempt ->
+      case get_in_map(Attempt, [state, status], <<>>) of
+        <<"failed">> -> consecutive_failure_count(Rest, Attempts, Acc + 1);
+        _ -> Acc
+      end
+  end.
+
+latest_failure_class(Attempts0) ->
+  Attempts = lists:reverse([ensure_map(Attempt) || Attempt <- Attempts0]),
+  case [get_in_map(Attempt, [state, failure_class], undefined) || Attempt <- Attempts, get_in_map(Attempt, [state, status], <<>>) =:= <<"failed">>] of
+    [FailureClass | _] -> FailureClass;
+    [] -> undefined
+  end.
+
+find_attempt([], _AttemptId) -> undefined;
+find_attempt([Attempt | Rest], AttemptId) ->
+  case id_of(Attempt) =:= AttemptId of
+    true -> Attempt;
+    false -> find_attempt(Rest, AttemptId)
+  end.
+
+build_rectification_mail(CaseId, Task0, FailureClass, Count, Now) ->
+  TaskId = id_of(Task0),
+  Title = get_in_map(Task0, [spec, title], <<"Untitled Task">>),
+  MailId = new_id(<<"mail">>),
+  #{
+    header => header(MailId, <<"internal_mail">>, Now),
+    links => compact_map(#{case_id => CaseId, related_object_refs => [#{type => <<"monitoring_task">>, id => TaskId}], source_op_id => undefined, source_session_id => undefined}),
+    spec => #{message_type => <<"task_rectification_required">>, title => <<"task rectification required">>, summary => Title, recommended_action => <<"rectify_task">>, available_actions => [<<"review">>], failure_class => FailureClass, failure_count => Count},
+    state => #{status => <<"unread">>, severity => <<"high">>, acted_at => undefined, acted_action => undefined, consumed_by_op_id => undefined},
+    audit => #{issuer_role => <<"inspector">>},
+    ext => #{}
+  }.
+
+maybe_persist_mail(_CaseDir, undefined) -> ok;
+maybe_persist_mail(CaseDir, MailObj) -> persist_case_object(CaseDir, mail_file(CaseDir, id_of(MailObj)), MailObj).
 
 revise_task_with_session(RootDir, CaseId, CaseDir, Task0, Input, GovernanceSessionId) ->
   TaskId = get_in_map(Task0, [header, id], <<>>),
@@ -1117,12 +2135,19 @@ get_case_overview_map(RootDir, CaseId) ->
 refresh_case_state(RootDir, CaseId) ->
   {ok, CaseObj0, CaseDir} = load_case(RootDir, CaseId),
   Tasks = read_task_objects(filename:join([CaseDir, "meta", "tasks"])),
-  ActiveTaskCount = length([T || T <- Tasks, get_in_map(T, [state, status], <<>>) =:= <<"active">>]),
+  ActiveTaskCount =
+    length(
+      [
+        T
+       || T <- Tasks,
+          counts_as_live_task(get_in_map(T, [state, status], <<>>))
+      ]
+    ),
   Phase =
     case ActiveTaskCount > 0 of
       true -> <<"monitoring_active">>;
       false -> <<"post_deliberation_extraction">>
-    end,
+  end,
   CaseObj1 =
     update_object(
       CaseObj0,
@@ -1133,6 +2158,10 @@ refresh_case_state(RootDir, CaseId) ->
       end
     ),
   persist_case_object(CaseDir, case_file(CaseDir), CaseObj1).
+
+counts_as_live_task(<<"active">>) -> true;
+counts_as_live_task(<<"rectification_required">>) -> true;
+counts_as_live_task(_) -> false.
 
 rebuild_indexes(RootDir, CaseId) ->
   {ok, _CaseObj, CaseDir} = load_case(RootDir, CaseId),
@@ -1390,6 +2419,33 @@ read_task_credential_bindings(CaseDir, TaskId0) ->
   TaskId = ensure_list(TaskId0),
   sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "credential_bindings"]))).
 
+read_task_runs(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "runs"]))).
+
+read_task_run_attempts(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "attempts"]))).
+
+read_task_fact_reports(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "reports"]))).
+
+read_task_exception_briefs(CaseDir, TaskId0) ->
+  TaskId = ensure_list(TaskId0),
+  sort_by_created_at(read_objects_in_dir(filename:join([CaseDir, "meta", "tasks", TaskId, "briefs"]))).
+
+build_task_artifacts(Reports0) ->
+  Reports = [ensure_map(Report) || Report <- Reports0],
+  lists:foldl(
+    fun (Report, Acc0) ->
+      ArtifactRefs = get_in_map(Report, [spec, artifact_refs], []),
+      Acc0 ++ ensure_list_of_maps(ArtifactRefs)
+    end,
+    [],
+    Reports
+  ).
+
 read_objects_in_dir(Dir) ->
   [read_json(Path) || Path <- json_files(Dir)].
 
@@ -1443,6 +2499,43 @@ credential_binding_file(CaseDir, TaskId0, BindingId0) ->
   TaskId = ensure_list(TaskId0),
   BindingId = ensure_list(BindingId0),
   filename:join([CaseDir, "meta", "tasks", TaskId, "credential_bindings", BindingId ++ ".json"]).
+
+run_file(CaseDir, TaskId0, RunId0) ->
+  TaskId = ensure_list(TaskId0),
+  RunId = ensure_list(RunId0),
+  filename:join([CaseDir, "meta", "tasks", TaskId, "runs", RunId ++ ".json"]).
+
+run_attempt_file(CaseDir, TaskId0, AttemptId0) ->
+  TaskId = ensure_list(TaskId0),
+  AttemptId = ensure_list(AttemptId0),
+  filename:join([CaseDir, "meta", "tasks", TaskId, "attempts", AttemptId ++ ".json"]).
+
+fact_report_file(CaseDir, TaskId0, ReportId0) ->
+  TaskId = ensure_list(TaskId0),
+  ReportId = ensure_list(ReportId0),
+  filename:join([CaseDir, "meta", "tasks", TaskId, "reports", ReportId ++ ".json"]).
+
+exception_brief_file(CaseDir, TaskId0, BriefId0) ->
+  TaskId = ensure_list(TaskId0),
+  BriefId = ensure_list(BriefId0),
+  filename:join([CaseDir, "meta", "tasks", TaskId, "briefs", BriefId ++ ".json"]).
+
+attempt_scratch_ref(TaskId0, RunId0, AttemptId0) ->
+  TaskId = ensure_list(TaskId0),
+  RunId = ensure_list(RunId0),
+  AttemptId = ensure_list(AttemptId0),
+  iolist_to_binary(["runs/", TaskId, "/", RunId, "/attempts/", AttemptId, "/scratch"]).
+
+deliverables_dir(CaseDir, TaskId0, RunId0) ->
+  TaskId = ensure_list(TaskId0),
+  RunId = ensure_list(RunId0),
+  filename:join([CaseDir, "artifacts", "tasks", TaskId, "runs", RunId]).
+
+deliverable_ref(TaskId0, RunId0, FileName0) ->
+  TaskId = ensure_list(TaskId0),
+  RunId = ensure_list(RunId0),
+  FileName = ensure_list(FileName0),
+  iolist_to_binary(["artifacts/tasks/", TaskId, "/runs/", RunId, "/", FileName]).
 
 task_history_file(CaseDir, TaskId0) ->
   TaskId = ensure_list(TaskId0),
@@ -1573,6 +2666,10 @@ object_history_path(CaseDir, Obj) ->
     <<"monitoring_task">> -> task_history_file(CaseDir, id_of(Obj));
     <<"task_version">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
     <<"credential_binding">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
+    <<"monitoring_run">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
+    <<"run_attempt">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
+    <<"fact_report">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
+    <<"briefing">> -> task_history_file(CaseDir, get_in_map(Obj, [links, task_id], undefined));
     <<"task_template">> -> template_history_file(CaseDir, id_of(Obj));
     _ -> undefined
   end.
@@ -1832,6 +2929,415 @@ build_latest_version_diff(Versions0, Authorization0) ->
       #{}
   end.
 
+first_defined([]) -> undefined;
+first_defined([undefined | Rest]) -> first_defined(Rest);
+first_defined([Value | _]) -> Value.
+
+task_run_in_progress_error(CaseDir, TaskId0) ->
+  TaskId = to_bin(TaskId0),
+  case lists:reverse(read_task_runs(CaseDir, TaskId)) of
+    [Run | _] ->
+      case get_in_map(Run, [state, status], <<>>) of
+        <<"running">> -> run_in_progress;
+        <<"scheduled">> -> run_in_progress;
+        _ -> undefined
+      end;
+    [] ->
+      undefined
+  end.
+
+task_workspace_dir(CaseDir, Task0) ->
+  Task = ensure_map(Task0),
+  case get_in_map(Task, [links, workspace_ref], undefined) of
+    undefined -> CaseDir;
+    Ref -> filename:join([CaseDir, ensure_list(Ref)])
+  end.
+
+build_monitoring_run_context(CaseDir, Task0, Version0) ->
+  Task = ensure_map(Task0),
+  Version = ensure_map(Version0),
+  TaskId = id_of(Task),
+  Versions = read_task_versions(CaseDir, TaskId),
+  Runs = lists:reverse(read_task_runs(CaseDir, TaskId)),
+  Attempts = lists:reverse(read_task_run_attempts(CaseDir, TaskId)),
+  Reports = lists:reverse(read_task_fact_reports(CaseDir, TaskId)),
+  Briefs = lists:reverse(read_task_exception_briefs(CaseDir, TaskId)),
+  #{
+    task_workspace_ref => get_in_map(Task, [links, workspace_ref], undefined),
+    current_task_version_id => id_of(Version),
+    historical_version_summary => build_historical_version_summary(Versions),
+    historical_execution_summary => build_historical_execution_summary(Runs, Attempts, Reports),
+    latest_report_summary => build_latest_report_summary(Reports),
+    latest_exception_summary => build_latest_exception_summary(Attempts, Briefs),
+    recent_rectification_summary => build_recent_rectification_summary(Versions)
+  }.
+
+build_historical_version_summary(Versions0) ->
+  Versions = lists:reverse([ensure_map(Version) || Version <- Versions0]),
+  lists:sublist(
+    [
+      compact_map(
+        #{
+          task_version_id => id_of(Version),
+          status => get_in_map(Version, [state, status], undefined),
+          created_at => get_in_map(Version, [header, created_at], undefined),
+          change_summary => get_in_map(Version, [audit, change_summary], undefined),
+          revised_by_op_id => get_in_map(Version, [audit, revised_by_op_id], undefined),
+          objective => get_in_map(Version, [spec, objective], undefined)
+        }
+      )
+     || Version <- Versions
+    ],
+    5
+  ).
+
+build_historical_execution_summary(Runs0, Attempts0, Reports0) ->
+  Runs = [ensure_map(Run) || Run <- Runs0],
+  Attempts = [ensure_map(Attempt) || Attempt <- Attempts0],
+  Reports = [ensure_map(Report) || Report <- Reports0],
+  lists:sublist(
+    [
+      compact_map(
+        #{
+          run_id => id_of(Run),
+          status => get_in_map(Run, [state, status], undefined),
+          planned_for_at => get_in_map(Run, [spec, planned_for_at], undefined),
+          attempt_count => get_in_map(Run, [state, attempt_count], undefined),
+          last_attempt_status => get_in_map(Run, [state, last_attempt_status], undefined),
+          result_summary => get_in_map(Run, [state, result_summary], undefined),
+          latest_attempt => summarize_attempt(find_attempt(Attempts, get_in_map(Run, [links, latest_attempt_id], undefined))),
+          fact_report => summarize_report(find_report(Reports, get_in_map(Run, [links, report_id], undefined)))
+        }
+      )
+     || Run <- Runs
+    ],
+    5
+  ).
+
+summarize_attempt(undefined) -> #{};
+summarize_attempt(Attempt0) ->
+  Attempt = ensure_map(Attempt0),
+  compact_map(
+    #{
+      attempt_id => id_of(Attempt),
+      status => get_in_map(Attempt, [state, status], undefined),
+      failure_class => get_in_map(Attempt, [state, failure_class], undefined),
+      failure_summary => get_in_map(Attempt, [state, failure_summary], undefined),
+      execution_session_id => get_in_map(Attempt, [links, execution_session_id], undefined),
+      scratch_ref => get_in_map(Attempt, [links, scratch_ref], undefined)
+    }
+  ).
+
+summarize_report(undefined) -> #{};
+summarize_report(Report0) ->
+  Report = ensure_map(Report0),
+  compact_map(
+    #{
+      report_id => id_of(Report),
+      status => get_in_map(Report, [state, status], undefined),
+      quality_summary => get_in_map(Report, [state, quality_summary], undefined),
+      alert_summary => get_in_map(Report, [state, alert_summary], undefined),
+      report_lineage_id => get_in_map(Report, [ext, report_lineage_id], undefined),
+      supersedes_report_id => get_in_map(Report, [ext, supersedes_report_id], undefined)
+    }
+  ).
+
+find_report([], _ReportId) -> undefined;
+find_report([Report | Rest], ReportId) ->
+  case id_of(Report) =:= ReportId of
+    true -> Report;
+    false -> find_report(Rest, ReportId)
+  end.
+
+build_latest_exception_summary(Attempts0, Briefs0) ->
+  Attempts = lists:reverse([ensure_map(Attempt) || Attempt <- Attempts0]),
+  Briefs = lists:reverse([ensure_map(Brief) || Brief <- Briefs0]),
+  case [Attempt || Attempt <- Attempts, get_in_map(Attempt, [state, status], <<>>) =:= <<"failed">>] of
+    [Attempt | _] ->
+      AttemptId = id_of(Attempt),
+      Brief =
+        case [Item || Item <- Briefs, get_in_map(Item, [links, attempt_id], undefined) =:= AttemptId] of
+          [Item | _] -> Item;
+          [] -> undefined
+        end,
+      compact_map(
+        #{
+          attempt_id => AttemptId,
+          failure_class => get_in_map(Attempt, [state, failure_class], undefined),
+          failure_summary => get_in_map(Attempt, [state, failure_summary], undefined),
+          execution_session_id => get_in_map(Attempt, [links, execution_session_id], undefined),
+          exception_brief_id =>
+            case Brief of
+              undefined -> undefined;
+              _ -> id_of(Brief)
+            end
+        }
+      );
+    [] ->
+      #{}
+  end.
+
+build_latest_report_summary(Reports0) ->
+  Reports = lists:reverse([ensure_map(Report) || Report <- Reports0]),
+  case Reports of
+    [Report | _] -> summarize_report(Report);
+    [] -> #{}
+  end.
+
+build_recent_rectification_summary(Versions0) ->
+  Versions = lists:reverse([ensure_map(Version) || Version <- Versions0]),
+  case Versions of
+    [Current, Previous | _] ->
+      compact_map(
+        #{
+          current_version_id => id_of(Current),
+          previous_version_id => id_of(Previous),
+          change_summary => get_in_map(Current, [audit, change_summary], undefined),
+          revised_by_op_id => get_in_map(Current, [audit, revised_by_op_id], undefined)
+        }
+      );
+    _ -> #{}
+  end.
+
+build_task_failure_stats(Runs0, Attempts0) ->
+  Attempts = [ensure_map(Attempt) || Attempt <- Attempts0],
+  FailedAttempts = [Attempt || Attempt <- Attempts, get_in_map(Attempt, [state, status], <<>>) =:= <<"failed">>],
+  #{
+    total_failed_attempts => length(FailedAttempts),
+    consecutive_failure_count => consecutive_failure_count(Runs0, Attempts0),
+    latest_failure_class => latest_failure_class(Attempts0),
+    by_class => count_failures_by_class(FailedAttempts)
+  }.
+
+count_failures_by_class(Attempts0) ->
+  lists:foldl(
+    fun (Attempt0, Acc0) ->
+      Attempt = ensure_map(Attempt0),
+      FailureClass = get_in_map(Attempt, [state, failure_class], <<"unknown">>),
+      Prev = maps:get(FailureClass, Acc0, 0),
+      Acc0#{FailureClass => Prev + 1}
+    end,
+    #{},
+    Attempts0
+  ).
+
+validate_report_contract(Version0, Delivery0) ->
+  Version = ensure_map(Version0),
+  Delivery = ensure_map(Delivery0),
+  ReportContract = ensure_map(get_in_map(Version, [spec, report_contract], #{})),
+  Markdown = get_bin(Delivery, [report_markdown], <<>>),
+  Facts = ensure_list_of_maps(get_in_map(Delivery, [facts], [])),
+  Artifacts = ensure_list_of_maps(get_in_map(Delivery, [artifacts], [])),
+  RequiredSections = [to_bin(Item) || Item <- get_list(ReportContract, [required_sections, requiredSections], [])],
+  MissingSections = missing_markdown_sections(Markdown, RequiredSections),
+  RequiredFactFields = [to_bin(Item) || Item <- get_list(ReportContract, [required_fact_fields, requiredFactFields], [])],
+  MissingFactFields = missing_required_fact_fields(Facts, RequiredFactFields),
+  case {Artifacts =:= [], MissingSections, MissingFactFields} of
+    {true, _, _} ->
+      {error, <<"report_contract_rejected">>, <<"artifacts.json must contain at least one formal artifact reference">>};
+    {false, [_ | _], _} ->
+      {error, <<"report_contract_rejected">>, format_missing_sections(MissingSections)};
+    {false, [], [_ | _]} ->
+      {error, <<"report_contract_rejected">>, format_missing_fact_fields(MissingFactFields)};
+    _ ->
+      ok
+  end.
+
+missing_markdown_sections(_Markdown, []) -> [];
+missing_markdown_sections(Markdown0, Sections0) ->
+  Markdown = string:lowercase(to_bin(Markdown0)),
+  [Section || Section <- Sections0, not markdown_has_section(Markdown, string:lowercase(to_bin(Section)))].
+
+markdown_has_section(Markdown, Section) ->
+  Patterns = [<<"## ", Section/binary>>, <<"# ", Section/binary>>, <<"### ", Section/binary>>],
+  lists:any(fun (Pattern) -> binary:match(Markdown, Pattern) =/= nomatch end, Patterns).
+
+missing_required_fact_fields(_Facts, []) -> [];
+missing_required_fact_fields(Facts, Fields) ->
+  Missing =
+    [
+      Field
+     || Field <- Fields,
+        lists:any(fun (Fact) -> fact_field_missing(ensure_map(Fact), Field) end, Facts)
+    ],
+  unique_binaries(Missing).
+
+fact_field_missing(Fact, Field) ->
+  trim_bin(fact_field_value(Fact, Field)) =:= <<>>.
+
+fact_field_value(Fact, Field) ->
+  case maps:get(Field, Fact, undefined) of
+    undefined ->
+      case field_atom(Field) of
+        undefined -> <<>>;
+        Atom -> to_bin(maps:get(Atom, Fact, <<>>))
+      end;
+    Value ->
+      to_bin(Value)
+  end.
+
+field_atom(Bin) when is_binary(Bin) ->
+  try binary_to_existing_atom(Bin, utf8) of
+    Atom -> Atom
+  catch
+    _:_ -> undefined
+  end;
+field_atom(Atom) when is_atom(Atom) -> Atom;
+field_atom(_) -> undefined.
+
+format_missing_sections(Sections) ->
+  iolist_to_binary([<<"report_contract missing markdown sections: ">>, binary:join([to_bin(Section) || Section <- Sections], <<", ">>)]).
+
+format_missing_fact_fields(Fields) ->
+  iolist_to_binary([<<"report_contract missing required fact fields: ">>, binary:join([to_bin(Field) || Field <- Fields], <<", ">>)]).
+
+classify_runtime_failure({http_error, Status, _Headers, Body}) when Status =:= 401; Status =:= 403 ->
+  {<<"auth_expired">>, runtime_failure_summary(Body, {http_error, Status})};
+classify_runtime_failure({http_error, Status, _Headers, Body}) when Status =:= 404; Status =:= 408 ->
+  {<<"source_unreachable">>, runtime_failure_summary(Body, {http_error, Status})};
+classify_runtime_failure({http_error, Status, _Headers, Body}) when Status =:= 409 ->
+  {<<"data_conflict_unresolved">>, runtime_failure_summary(Body, {http_error, Status})};
+classify_runtime_failure({http_error, Status, _Headers, Body}) when Status =:= 429 ->
+  {<<"rate_limited">>, runtime_failure_summary(Body, {http_error, Status})};
+classify_runtime_failure({http_error, Status, _Headers, Body}) when Status >= 500 ->
+  {<<"source_unreachable">>, runtime_failure_summary(Body, {http_error, Status})};
+classify_runtime_failure(Reason0) ->
+  Summary = runtime_failure_summary(undefined, Reason0),
+  Lower = string:lowercase(Summary),
+  Class =
+    case contains_any_fragment(Lower, [<<"expired">>, <<"login required">>, <<"unauthorized">>, <<"401">>, <<"403">>, <<"token expired">>]) of
+      true -> <<"auth_expired">>;
+      false ->
+        case contains_any_fragment(Lower, [<<"rate limit">>, <<"rate_limit">>, <<"429">>, <<"too many requests">>]) of
+          true -> <<"rate_limited">>;
+          false ->
+            case contains_any_fragment(Lower, [<<"schema">>, <<"unexpected field">>, <<"invalid structure">>, <<"parse">>, <<"selector">>]) of
+              true -> <<"source_schema_changed">>;
+              false ->
+                case contains_any_fragment(Lower, [<<"conflict">>, <<"mismatch">>, <<"inconsistent">>]) of
+                  true -> <<"data_conflict_unresolved">>;
+                  false ->
+                    case contains_any_fragment(Lower, [<<"timeout">>, <<"unreachable">>, <<"connection">>, <<"refused">>, <<"dns">>, <<"not found">>, <<"404">>, <<"5xx">>]) of
+                      true -> <<"source_unreachable">>;
+                      false -> <<"script_runtime_error">>
+                    end
+                end
+            end
+        end
+    end,
+  {Class, Summary}.
+
+runtime_failure_summary(Body, Reason) ->
+  Candidate =
+    case trim_bin(to_bin(Body)) of
+      <<>> -> trim_bin(to_bin(Reason));
+      Bin -> Bin
+    end,
+  case Candidate of
+    <<>> -> <<"runtime error">>;
+    _ -> Candidate
+  end.
+
+contains_any_fragment(Bin, Fragments) ->
+  lists:any(fun (Fragment) -> binary:match(Bin, Fragment) =/= nomatch end, Fragments).
+
+delivery_needs_followup(Delivery0) ->
+  Delivery = ensure_map(Delivery0),
+  Facts = ensure_list_of_maps(get_in_map(Delivery, [facts], [])),
+  lists:any(
+    fun (Fact0) ->
+      Fact = ensure_map(Fact0),
+      case string:lowercase(get_bin(Fact, [alert_level, alertLevel], <<"normal">>)) of
+        <<"normal">> -> false;
+        <<"low">> -> false;
+        _ -> true
+      end
+    end,
+    Facts
+  ).
+
+build_exception_brief(CaseId, Task0, Run0, Attempt0, FailureClass, FailureSummary, Now) ->
+  Task = ensure_map(Task0),
+  Run = ensure_map(Run0),
+  Attempt = ensure_map(Attempt0),
+  BriefId = new_id(<<"brief">>),
+  #{
+    header => header(BriefId, <<"briefing">>, Now),
+    links =>
+      compact_map(
+        #{
+          case_id => CaseId,
+          task_id => id_of(Task),
+          run_id => id_of(Run),
+          attempt_id => id_of(Attempt),
+          execution_session_id => get_in_map(Attempt, [links, execution_session_id], undefined)
+        }
+      ),
+    spec =>
+      compact_map(
+        #{
+          briefing_kind => <<"task_exception_brief">>,
+          title => <<"task execution failed">>,
+          summary => get_in_map(Task, [spec, title], <<"Untitled Task">>),
+          failure_class => FailureClass,
+          failure_summary => FailureSummary,
+          recommended_action => <<"review_and_rectify">>,
+          scratch_ref => get_in_map(Attempt, [links, scratch_ref], undefined)
+        }
+      ),
+    state => #{status => <<"submitted">>, severity => exception_severity(FailureClass), submitted_at => Now},
+    audit => #{issuer_role => <<"inspector">>},
+    ext => #{}
+  }.
+
+build_task_run_failure_mail(CaseId, Task0, Run0, Attempt0, ExceptionBrief0, FailureClass, FailureSummary, Now) ->
+  Task = ensure_map(Task0),
+  Run = ensure_map(Run0),
+  Attempt = ensure_map(Attempt0),
+  ExceptionBrief = ensure_map(ExceptionBrief0),
+  MailId = new_id(<<"mail">>),
+  #{
+    header => header(MailId, <<"internal_mail">>, Now),
+    links =>
+      compact_map(
+        #{
+          case_id => CaseId,
+          related_object_refs =>
+            [
+              #{type => <<"monitoring_task">>, id => id_of(Task)},
+              #{type => <<"monitoring_run">>, id => id_of(Run)},
+              #{type => <<"run_attempt">>, id => id_of(Attempt)},
+              #{type => <<"briefing">>, id => id_of(ExceptionBrief)}
+            ],
+          source_op_id => undefined,
+          source_session_id => get_in_map(Attempt, [links, execution_session_id], undefined)
+        }
+      ),
+    spec =>
+      compact_map(
+        #{
+          message_type => <<"task_run_failed">>,
+          title => <<"task run failed">>,
+          summary => get_in_map(Task, [spec, title], <<"Untitled Task">>),
+          recommended_action => <<"review">>,
+          available_actions => [<<"review">>, <<"rectify_task">>],
+          failure_class => FailureClass,
+          failure_summary => FailureSummary,
+          exception_brief_id => id_of(ExceptionBrief)
+        }
+      ),
+    state => #{status => <<"unread">>, severity => exception_severity(FailureClass), acted_at => undefined, acted_action => undefined, consumed_by_op_id => undefined},
+    audit => #{issuer_role => <<"inspector">>},
+    ext => #{}
+  }.
+
+exception_severity(<<"auth_expired">>) -> <<"high">>;
+exception_severity(<<"rate_limited">>) -> <<"medium">>;
+exception_severity(<<"source_unreachable">>) -> <<"medium">>;
+exception_severity(<<"source_schema_changed">>) -> <<"high">>;
+exception_severity(<<"data_conflict_unresolved">>) -> <<"high">>;
+exception_severity(_) -> <<"medium">>.
+
 version_changed_fields(PreviousSpec, CurrentSpec) ->
   Fields =
     [
@@ -1978,10 +3484,14 @@ choose_map(Map, Keys, Default) ->
     Value -> ensure_map(Value)
   end.
 
-get_in_map(Map0, [Key], Default) -> maps:get(Key, ensure_map(Map0), Default);
+get_in_map(Map0, [Key], Default) ->
+  case find_any(ensure_map(Map0), [Key]) of
+    undefined -> Default;
+    Value -> Value
+  end;
 get_in_map(Map0, [Key | Rest], Default) ->
   Map = ensure_map(Map0),
-  case maps:get(Key, Map, undefined) of
+  case find_any(Map, [Key]) of
     undefined -> Default;
     Value -> get_in_map(Value, Rest, Default)
   end.

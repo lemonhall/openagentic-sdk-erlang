@@ -740,7 +740,11 @@ function applyContext() {
 }
 
 async function continueGovernance(message) {
-  return postJson(`/api/sessions/${encodeURIComponent(state.sid)}/query`, { message });
+  const { caseId, taskId } = taskContext();
+  const payload = { message };
+  if (caseId) payload.case_id = caseId;
+  if (taskId) payload.task_id = taskId;
+  return postJson(`/api/sessions/${encodeURIComponent(state.sid)}/query`, payload);
 }
 
 async function createRevision(changeSummary, objective) {

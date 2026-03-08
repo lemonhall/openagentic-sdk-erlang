@@ -466,6 +466,210 @@ credential_binding_rotation_and_invalidation_test() ->
   ?assertEqual(<<"reauthorization_required">>, maps:get(status, maps:get(authorization, Invalidated))),
   ok.
 
+run_task_creates_monitoring_run_attempt_and_fact_report_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+
+  {ok, Res} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_success}
+      }
+    ),
+
+  Run = maps:get(run, Res),
+  Attempt = maps:get(run_attempt, Res),
+  Report = maps:get(fact_report, Res),
+  CaseDir = filename:join([Root, "cases", ensure_list(CaseId)]),
+  ScratchDir = filename:join([CaseDir, ensure_list(deep_get(Attempt, [links, scratch_ref]))]),
+  ExecSid = deep_get(Attempt, [links, execution_session_id]),
+
+  ?assertEqual(<<"report_submitted">>, deep_get(Run, [state, status])),
+  ?assertEqual(1, deep_get(Run, [state, attempt_count])),
+  ?assertEqual(<<"succeeded">>, deep_get(Attempt, [state, status])),
+  ?assertEqual(<<"submitted">>, deep_get(Report, [state, status])),
+  ?assert(filelib:is_dir(ScratchDir)),
+  ?assert(filelib:is_file(filename:join([ScratchDir, "report.md"]))),
+  ?assert(filelib:is_file(filename:join([ScratchDir, "facts.json"]))),
+  ?assert(filelib:is_file(filename:join([ScratchDir, "artifacts.json"]))),
+  ?assert(filelib:is_dir(openagentic_session_store:session_dir(Root, ensure_list(ExecSid)))),
+  ?assert(
+    lists:any(
+      fun (Event) -> maps:get(<<"type">>, Event, <<>>) =:= <<"result">> end,
+      openagentic_session_store:read_events(Root, ensure_list(ExecSid))
+    )
+  ),
+
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  ?assertEqual(1, length(maps:get(runs, Detail))),
+  ?assertEqual(1, length(maps:get(run_attempts, Detail))),
+  ?assertEqual(1, length(maps:get(fact_reports, Detail))),
+  ?assert(length(maps:get(artifacts, Detail)) >= 3),
+  ok.
+
+scheduled_interval_task_run_once_creates_due_run_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} =
+    create_active_task_fixture(
+      Root,
+      #{
+        schedule_policy => #{mode => <<"interval">>, timezone => <<"Asia/Shanghai">>, interval => #{value => 1, unit => <<"hours">>}},
+        report_contract => #{kind => <<"markdown">>, required_sections => [<<"Summary">>, <<"Facts">>]}
+      }
+    ),
+
+  {ok, RunRes} =
+    openagentic_case_scheduler:run_once(
+      #{
+        session_root => Root,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_success}
+      }
+    ),
+
+  ?assertEqual(1, maps:get(triggered_run_count, RunRes)),
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  [Run] = maps:get(runs, Detail),
+  [Attempt] = maps:get(run_attempts, Detail),
+  [Report] = maps:get(fact_reports, Detail),
+  ?assertEqual(<<"scheduled">>, deep_get(Run, [spec, run_kind])),
+  ?assertEqual(<<"schedule_policy">>, deep_get(Run, [spec, trigger_type])),
+  ?assertEqual(<<"report_submitted">>, deep_get(Run, [state, status])),
+  ?assertEqual(<<"succeeded">>, deep_get(Attempt, [state, status])),
+  ?assertEqual(<<"submitted">>, deep_get(Report, [state, status])),
+  ok.
+
+retry_run_adds_second_attempt_after_failure_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+
+  {ok, Failed0} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_invalid}
+      }
+    ),
+  FailedRun = maps:get(run, Failed0),
+  FailedAttempt = maps:get(run_attempt, Failed0),
+  RunId = id_of(FailedRun),
+
+  ?assertEqual(<<"failed">>, deep_get(FailedRun, [state, status])),
+  ?assertEqual(<<"failed">>, deep_get(FailedAttempt, [state, status])),
+  ?assertEqual(<<"report_quality_insufficient">>, deep_get(FailedAttempt, [state, failure_class])),
+  ?assert(not maps:is_key(fact_report, Failed0)),
+
+  {ok, Retried} =
+    openagentic_case_store:retry_run(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        run_id => RunId,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_success}
+      }
+    ),
+
+  RetriedRun = maps:get(run, Retried),
+  RetriedAttempt = maps:get(run_attempt, Retried),
+  ?assertEqual(<<"report_submitted">>, deep_get(RetriedRun, [state, status])),
+  ?assertEqual(2, deep_get(RetriedRun, [state, attempt_count])),
+  ?assertEqual(id_of(FailedAttempt), deep_get(RetriedAttempt, [links, previous_attempt_id])),
+  ?assertEqual(id_of(RetriedAttempt), deep_get(RetriedRun, [links, successful_attempt_id])),
+  ?assert(maps:is_key(fact_report, Retried)),
+  ok.
+
+repeated_failed_runs_mark_task_rectification_required_and_create_mail_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+
+  lists:foreach(
+    fun (_) ->
+      {ok, _} =
+        openagentic_case_store:run_task(
+          Root,
+          #{
+            case_id => CaseId,
+            task_id => TaskId,
+            runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_invalid}
+          }
+        )
+    end,
+    lists:seq(1, 3)
+  ),
+
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  Task = maps:get(task, Detail),
+  ?assertEqual(<<"rectification_required">>, deep_get(Task, [state, status])),
+  ?assertEqual(<<"rectification_required">>, deep_get(Task, [state, health])),
+
+  {ok, Overview} = openagentic_case_store:get_case_overview(Root, CaseId),
+  Mail = maps:get(mail, Overview),
+  ?assert(
+    lists:any(
+      fun (MailObj) -> deep_get(MailObj, [spec, message_type]) =:= <<"task_rectification_required">> end,
+      Mail
+    )
+  ),
+  ok.
+
+run_task_rejects_delivery_that_violates_report_contract_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} =
+    create_active_task_fixture(
+      Root,
+      #{report_contract => #{kind => <<"markdown">>, required_sections => [<<"Summary">>, <<"Facts">>]}}
+    ),
+
+  {ok, Res} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_contract_invalid}
+      }
+    ),
+
+  Run = maps:get(run, Res),
+  Attempt = maps:get(run_attempt, Res),
+  ?assertEqual(<<"failed">>, deep_get(Run, [state, status])),
+  ?assertEqual(<<"report_contract_rejected">>, deep_get(Attempt, [state, failure_class])),
+  ?assert(not maps:is_key(fact_report, Res)),
+  ?assert(maps:is_key(mail, Res)),
+  ?assert(maps:is_key(exception_brief, Res)),
+  ok.
+
+failed_run_creates_exception_brief_mail_and_failure_stats_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+
+  {ok, Res} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_auth_expired}
+      }
+    ),
+
+  Attempt = maps:get(run_attempt, Res),
+  Mail = maps:get(mail, Res),
+  Brief = maps:get(exception_brief, Res),
+  ?assertEqual(<<"auth_expired">>, deep_get(Attempt, [state, failure_class])),
+  ?assertEqual(<<"task_run_failed">>, deep_get(Mail, [spec, message_type])),
+  ?assertEqual(<<"task_exception_brief">>, deep_get(Brief, [spec, briefing_kind])),
+  {ok, Detail} = openagentic_case_store:get_task_detail(Root, CaseId, TaskId),
+  FailureStats = maps:get(failure_stats, Detail),
+  ?assertEqual(1, deep_get(FailureStats, [by_class, <<"auth_expired">>])),
+  ?assertEqual(1, length(maps:get(exception_briefs, Detail))),
+  ok.
+
 template_library_instantiation_and_history_registry_test() ->
   Root = tmp_root(),
   {CaseId, _RoundId, _Sid} = create_case_fixture(Root),
@@ -633,6 +837,29 @@ create_case_fixture(Root) ->
       }
     ),
   {id_of(maps:get('case', Created)), id_of(maps:get(round, Created)), Sid}.
+
+create_active_task_fixture(Root) ->
+  create_active_task_fixture(Root, #{}).
+
+create_active_task_fixture(Root, ApproveExtras0) ->
+  {CaseId, RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Extracted} = openagentic_case_store:extract_candidates(Root, #{case_id => CaseId, round_id => RoundId}),
+  [Candidate | _] = maps:get(candidates, Extracted),
+  CandidateId = id_of(Candidate),
+  ApproveExtras =
+    maps:merge(
+      #{
+        case_id => CaseId,
+        candidate_id => CandidateId,
+        approved_by_op_id => <<"lemon">>,
+        approval_summary => <<"approve for monitoring execution">>,
+        objective => <<"Track diplomatic statement frequency and wording shifts">>
+      },
+      ApproveExtras0
+    ),
+  {ok, Approved} =
+    openagentic_case_store:approve_candidate(Root, ApproveExtras),
+  {CaseId, id_of(maps:get(task, Approved))}.
 
 append_round_result(Root, Sid, FinalText) ->
   {ok, _} =
