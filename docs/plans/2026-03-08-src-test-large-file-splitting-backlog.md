@@ -37,9 +37,12 @@
 
 ### Phase 0：先固化约定
 
-- [ ] 固化 `src` 大模块统一拆分模板：`facade + sibling subdir`
-- [ ] 明确 `test` 是否允许递归子目录；如果允许，先在构建配置里补齐约定
-- [ ] 固化单文件上限：`backlog threshold = 200`，`target ceiling = 150`
+- [x] 固化 `src` 大模块统一拆分模板：`facade + sibling subdir`
+  - 结果证据：已在 `openagentic_case_store`、`openagentic_workflow_engine`、`openagentic_runtime`、`openagentic_tool_webfetch`、`openagentic_tool_websearch` 等条目统一落成薄 facade + 同名子目录模块。
+- [x] 明确 `test` 是否允许递归子目录；如果允许，先在构建配置里补齐约定
+  - 结果证据：当前 backlog 执行期仍保持 `apps/openagentic_sdk/test/` 平铺，不启用递归测试子目录；若 Phase 3 真实拆测时需要递归，再先做前置构建约定变更。
+- [x] 固化单文件上限：`backlog threshold = 200`，`target ceiling = 150`
+  - 结果证据：本文件“仓库级硬约束”与根 `AGENTS.md` 已同步；后续完成条目均按 `> 200` 入 backlog、`<= 150` 作为完成定义。
 
 ### Phase 1：先拆核心运行时与工作流主链
 
@@ -157,9 +160,13 @@
   - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_openai_responses_test`
   - 验证结果：`6 tests, 0 failures`
   - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 openai responses 拆分未引入新失败。
-- [ ] `496` 行 `apps/openagentic_sdk/src/openagentic_tool_websearch.erl`
-  - 建议目标：`apps/openagentic_sdk/src/openagentic_tool_websearch/`
-  - 建议切口：`tavily`、`duckduckgo`、`normalize`、`render`
+- [x] `496` 行 `apps/openagentic_sdk/src/openagentic_tool_websearch.erl`
+  - 实际目标：`apps/openagentic_sdk/src/openagentic_tool_websearch/`
+  - 实际切口：`api`、`tavily`、`duckduckgo`、`domain`、`text`、`runtime`、`utils`
+  - 结果证据：`apps/openagentic_sdk/src/openagentic_tool_websearch.erl` 已收缩为 `12` 行 facade；新增 7 个同名子目录模块，最大文件 `108` 行。
+  - 验证命令：`. .\scripts\erlang-env.ps1 -SkipRebar3Verify; rebar3 eunit --module=openagentic_tools_contract_test`
+  - 验证结果：`19 tests, 0 failures`
+  - 全量门禁备注：`rebar3 eunit` 当前仍是 `170 tests, 0 failures, 3 cancelled`；已知取消点仍为 `openagentic_web_case_governance_test:governance_session_query_injects_task_context_test/0` 超时，本轮 websearch 拆分未引入新失败。
 - [ ] `488` 行 `apps/openagentic_sdk/src/openagentic_tool_grep.erl`
   - 建议目标：`apps/openagentic_sdk/src/openagentic_tool_grep/`
   - 建议切口：`matcher`、`context_window`、`limits`、`render`
