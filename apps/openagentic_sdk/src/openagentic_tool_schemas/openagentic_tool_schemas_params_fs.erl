@@ -11,9 +11,9 @@ tool_params(_Mod, <<"Write">>) ->
 tool_params(_Mod, <<"Edit">>) ->
   #{type => <<"object">>, properties => #{file_path => #{type => <<"string">>}, filePath => #{type => <<"string">>}, old => #{type => <<"string">>}, new => #{type => <<"string">>}, old_string => #{type => <<"string">>}, new_string => #{type => <<"string">>}, oldString => #{type => <<"string">>}, newString => #{type => <<"string">>}, count => #{type => <<"integer">>}, replace_all => #{type => <<"boolean">>}, replaceAll => #{type => <<"boolean">>}, before => #{type => <<"string">>}, 'after' => #{type => <<"string">>}}, required => []};
 tool_params(_Mod, <<"Glob">>) ->
-  #{type => <<"object">>, properties => #{pattern => #{type => <<"string">>}, root => #{type => <<"string">>}}, required => [<<"pattern">>]};
+  #{type => <<"object">>, properties => #{pattern => #{type => <<"string">>}, root => #{type => <<"string">>}, path => #{type => <<"string">>}}, required => [<<"pattern">>]};
 tool_params(_Mod, <<"Grep">>) ->
-  #{type => <<"object">>, properties => #{query => #{type => <<"string">>}, file_glob => #{type => <<"string">>}, root => #{type => <<"string">>}, case_sensitive => #{type => <<"boolean">>}}, required => [<<"query">>]};
+  #{type => <<"object">>, properties => #{query => #{type => <<"string">>}, file_glob => #{type => <<"string">>}, root => #{type => <<"string">>}, path => #{type => <<"string">>}, case_sensitive => #{type => <<"boolean">>}, mode => #{type => <<"string">>, enum => [<<"content">>, <<"files_with_matches">>]}}, required => [<<"query">>]};
 tool_params(_Mod, <<"Bash">>) ->
   #{type => <<"object">>, properties => #{command => #{type => <<"string">>}, workdir => #{type => <<"string">>}, timeout => #{type => <<"integer">>}, timeout_s => #{type => <<"number">>}}, required => [<<"command">>]};
 tool_params(_Mod, <<"NotebookEdit">>) ->

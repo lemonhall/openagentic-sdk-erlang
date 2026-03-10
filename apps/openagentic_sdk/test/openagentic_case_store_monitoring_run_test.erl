@@ -90,3 +90,74 @@ scheduled_interval_task_run_once_creates_due_run_test() ->
   ?assertEqual(<<"submitted">>, deep_get(Report, [state, status])),
   ok.
 
+urgent_monitoring_run_creates_urgent_brief_and_mail_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+
+  {ok, Res} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_urgent}
+      }
+    ),
+
+  Report = maps:get(fact_report, Res),
+  CaseDir = filename:join([Root, "cases", ensure_list(CaseId)]),
+  Briefs = openagentic_case_store_repo_readers:read_task_exception_briefs(CaseDir, TaskId),
+  {ok, Inbox} = openagentic_case_store:list_inbox(Root, #{status => <<"unread">>}),
+  UrgentBriefs = [Brief || Brief <- Briefs, deep_get(Brief, [header, type]) =:= <<"urgent_brief">>],
+  UrgentMail = [Mail || Mail <- Inbox, deep_get(Mail, [spec, message_type]) =:= <<"urgent_brief">>],
+
+  TimelinePath = filename:join([CaseDir, "meta", "timeline.jsonl"]),
+  TimelineEntries = [openagentic_case_store_repo_persist:decode_json(Line) || Line <- file_lines(TimelinePath)],
+  TimelineTypes = [maps:get(event_type, Entry) || Entry <- TimelineEntries],
+
+  ?assertEqual(<<"Major escalation detected">>, deep_get(Report, [state, alert_summary])),
+  ?assert(length(UrgentBriefs) >= 1),
+  ?assert(length(UrgentMail) >= 1),
+  ?assert(lists:member(<<"urgent_brief_triggered">>, TimelineTypes)),
+  ok.
+
+run_task_can_skip_overview_when_requested_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+
+  {ok, Res} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        include_overview => false,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_success}
+      }
+    ),
+
+  ?assertEqual(false, maps:is_key(overview, Res)),
+  ?assert(maps:is_key(run, Res)),
+  ?assert(maps:is_key(run_attempt, Res)),
+  ?assert(maps:is_key(fact_report, Res)),
+  ok.
+
+run_task_success_skips_casewide_reindex_when_no_casewide_state_changes_test() ->
+  Root = tmp_root(),
+  {CaseId, TaskId} = create_active_task_fixture(Root),
+  CaseDir = filename:join([Root, "cases", ensure_list(CaseId)]),
+  PoisonTaskDir = filename:join([CaseDir, "meta", "tasks", "poison_task"]),
+  ok = filelib:ensure_dir(filename:join([PoisonTaskDir, "x"])),
+  ok = file:write_file(filename:join([PoisonTaskDir, "task.json"]), <<"{">>),
+
+  {ok, _Res} =
+    openagentic_case_store:run_task(
+      Root,
+      #{
+        case_id => CaseId,
+        task_id => TaskId,
+        include_overview => false,
+        runtime_opts => #{provider_mod => openagentic_testing_provider_monitoring_success}
+      }
+    ),
+  ok.

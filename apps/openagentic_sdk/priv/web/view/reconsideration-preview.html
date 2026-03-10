@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OpenAgentic - 复议卷宗预览</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" href="/assets/case-governance.css" />
+  </head>
+  <body>
+    <div class="app caseApp" id="reconsiderationPreviewView">
+      <header class="topbar">
+        <div class="brand">OpenAgentic</div>
+        <nav class="topnav" aria-label="一级导航">
+          <a class="btn" href="/">Workflow</a>
+          <a class="btn" href="/view/cases.html">Cases</a>
+          <a class="btn" id="inboxLink" href="/view/inbox.html">Inbox <span class="navUnreadBadge" id="inboxUnreadBadge" hidden>0</span></a>
+        </nav>
+        <div class="subtitle">复议卷宗预览：先阅卷，再决定是否正式开启新一轮复议。</div>
+      </header>
+
+      <main class="caseMain">
+        <section class="casePanel casePanelWide">
+          <div class="panelTitle" id="reconsiderationBreadcrumb">Cases / 复议卷宗预览</div>
+          <div class="hint" id="reconsiderationHint">正在加载卷宗预览...</div>
+          <div class="hint" id="reconsiderationLifecycleHint">正在分析卷宗状态...</div>
+          <div id="reconsiderationPreview" class="overviewCard empty">暂无卷宗内容</div>
+          <div id="reconsiderationBaselinePanel" class="entityList empty">暂无基线摘要</div>
+          <div id="reconsiderationChangesPanel" class="entityList empty">暂无变化事实</div>
+          <div id="reconsiderationControversiesPanel" class="entityList empty">暂无争议条目</div>
+          <div class="caseActions">
+            <button type="button" class="btn primary" id="btnStartReconsideration">开启复议</button>
+            <button type="button" class="btn" id="btnDeferReconsideration">继续观察</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/reconsideration-preview.js"></script>
+    <script src="/assets/topbar.js"></script>
+  </body>
+</html>

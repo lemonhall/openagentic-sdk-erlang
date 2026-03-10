@@ -1,5 +1,5 @@
 -module(openagentic_case_store_repo_paths).
--export([case_dir/2, case_file/1, round_file/2, candidate_file/2, task_file/2, task_version_file/3, credential_binding_file/3, run_file/3, run_attempt_file/3, fact_report_file/3, exception_brief_file/3, attempt_scratch_ref/3, deliverables_dir/3, deliverable_ref/3, task_history_file/2, template_file/2, template_history_file/2, case_history_file/1, object_type_registry_file/1, mail_file/2, ensure_case_layout/1, ensure_dirs/1]).
+-export([case_dir/2, case_file/1, round_file/2, candidate_file/2, task_file/2, task_version_file/3, credential_binding_file/3, run_file/3, run_attempt_file/3, fact_report_file/3, exception_brief_file/3, observation_pack_file/2, inspection_review_file/2, reconsideration_package_file/2, operation_file/2, timeline_file/1, attempt_scratch_ref/3, deliverables_dir/3, deliverable_ref/3, task_history_file/2, template_file/2, template_history_file/2, case_history_file/1, object_type_registry_file/1, mail_file/2, ensure_case_layout/1, ensure_dirs/1]).
 
 case_dir(RootDir, CaseId0) ->
   CaseId = openagentic_case_store_common_core:ensure_list(CaseId0),
@@ -49,6 +49,24 @@ exception_brief_file(CaseDir, TaskId0, BriefId0) ->
   BriefId = openagentic_case_store_common_core:ensure_list(BriefId0),
   filename:join([CaseDir, "meta", "tasks", TaskId, "briefs", BriefId ++ ".json"]).
 
+observation_pack_file(CaseDir, PackId0) ->
+  PackId = openagentic_case_store_common_core:ensure_list(PackId0),
+  filename:join([CaseDir, "meta", "packs", PackId ++ ".json"]).
+
+inspection_review_file(CaseDir, ReviewId0) ->
+  ReviewId = openagentic_case_store_common_core:ensure_list(ReviewId0),
+  filename:join([CaseDir, "meta", "inspection_reviews", ReviewId ++ ".json"]).
+
+reconsideration_package_file(CaseDir, PackageId0) ->
+  PackageId = openagentic_case_store_common_core:ensure_list(PackageId0),
+  filename:join([CaseDir, "meta", "reconsideration_packages", PackageId ++ ".json"]).
+
+operation_file(CaseDir, OperationId0) ->
+  OperationId = openagentic_case_store_common_core:ensure_list(OperationId0),
+  filename:join([CaseDir, "meta", "ops", OperationId ++ ".json"]).
+
+timeline_file(CaseDir) -> filename:join([CaseDir, "meta", "timeline.jsonl"]).
+
 attempt_scratch_ref(TaskId0, RunId0, AttemptId0) ->
   TaskId = openagentic_case_store_common_core:ensure_list(TaskId0),
   RunId = openagentic_case_store_common_core:ensure_list(RunId0),
@@ -94,6 +112,10 @@ ensure_case_layout(CaseDir) ->
       filename:join([CaseDir, "meta", "tasks"]),
       filename:join([CaseDir, "meta", "templates"]),
       filename:join([CaseDir, "meta", "mail"]),
+      filename:join([CaseDir, "meta", "packs"]),
+      filename:join([CaseDir, "meta", "inspection_reviews"]),
+      filename:join([CaseDir, "meta", "reconsideration_packages"]),
+      filename:join([CaseDir, "meta", "ops"]),
       filename:join([CaseDir, "meta", "indexes"]),
       filename:join([CaseDir, "artifacts"]),
       filename:join([CaseDir, "workspaces"]),

@@ -11,18 +11,40 @@ iter_skill_files_dir(Dir) ->
 
 iter_skill_walk(Dir, Acc0) ->
   Children = case file:list_dir(Dir) of {ok, Names} -> lists:sort(Names); _ -> [] end,
+  HasSkillFile = lists:member("SKILL.md", Children),
+  Acc1 =
+    case HasSkillFile of
+      true -> [filename:join([Dir, "SKILL.md"]) | Acc0];
+      false -> Acc0
+    end,
   lists:foldl(
-    fun (Name0, Acc1) ->
+    fun (Name0, Acc2) ->
       Name = openagentic_skills_utils:ensure_list(Name0),
       Full = filename:join([Dir, Name]),
       case filelib:is_dir(Full) of
-        true -> iter_skill_walk(Full, Acc1);
-        false -> case filename:basename(Full) of "SKILL.md" -> [Full | Acc1]; _ -> Acc1 end
+        true ->
+          case should_descend(Name, HasSkillFile) of
+            true -> iter_skill_walk(Full, Acc2);
+            false -> Acc2
+          end;
+        false ->
+          Acc2
       end
     end,
-    Acc0,
+    Acc1,
     Children
   ).
+
+should_descend(Name0, HasSkillFile) ->
+  Name = string:lowercase(openagentic_skills_utils:ensure_list(Name0)),
+  case lists:member(Name, [".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"]) of
+    true -> false;
+    false ->
+      case HasSkillFile of
+        true -> not lists:member(Name, ["assets", "references", "scripts", "templates"]);
+        false -> true
+      end
+  end.
 
 read_skill_file(Path0) ->
   Path = openagentic_skills_utils:ensure_list(Path0),

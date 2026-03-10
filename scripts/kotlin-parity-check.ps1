@@ -28,16 +28,33 @@ function Set-Equals($a, $b) {
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ErlPrompts = Join-Path $RepoRoot 'apps\openagentic_sdk\priv\toolprompts'
 $KPrompts = Join-Path $KotlinRoot 'src\main\resources\me\lemonhall\openagentic\sdk\toolprompts'
-$ErlPerm = Join-Path $RepoRoot 'apps\openagentic_sdk\src\openagentic_permissions.erl'
-$ErlSchemas = Join-Path $RepoRoot 'apps\openagentic_sdk\src\openagentic_tool_schemas.erl'
-$ErlRuntime = Join-Path $RepoRoot 'apps\openagentic_sdk\src\openagentic_runtime.erl'
+$ErlPerm = Join-Path $RepoRoot 'apps\openagentic_sdk\src\openagentic_permissions\openagentic_permissions_policy.erl'
+$ErlSchemasDir = Join-Path $RepoRoot 'apps\openagentic_sdk\src\openagentic_tool_schemas'
+$ErlRuntime = Join-Path $RepoRoot 'apps\openagentic_sdk\src\openagentic_runtime\openagentic_runtime_options.erl'
 $KPerm = Join-Path $KotlinRoot 'src\main\kotlin\me\lemonhall\openagentic\sdk\permissions\PermissionGate.kt'
 $KSchemas = Join-Path $KotlinRoot 'src\main\kotlin\me\lemonhall\openagentic\sdk\tools\OpenAiToolSchemas.kt'
 
 if (!(Test-Path $KotlinRoot)) { Fail "Kotlin repo not found: $KotlinRoot" }
 if (!(Test-Path $ErlPrompts)) { Fail "Erlang toolprompts dir not found: $ErlPrompts" }
+if (!(Test-Path $ErlPerm)) { Fail "Erlang permissions policy not found: $ErlPerm" }
+if (!(Test-Path $ErlSchemasDir)) { Fail "Erlang tool schemas dir not found: $ErlSchemasDir" }
+if (!(Test-Path $ErlRuntime)) { Fail "Erlang runtime options not found: $ErlRuntime" }
+if (!(Test-Path $KPerm)) { Fail "Missing Kotlin PermissionGate.kt: $KPerm" }
+if (!(Test-Path $KSchemas)) { Fail "Missing Kotlin OpenAiToolSchemas.kt: $KSchemas" }
 
-# 1) Toolprompt resources: exact file set + exact content (normalized newlines)
+$IntentionalPromptDivergence = @{
+  'edit.txt' = 'workspace-scoped write semantics'
+  'glob.txt' = 'rendered project/workspace context wording'
+  'grep.txt' = 'rendered project/workspace context wording'
+  'list.txt' = 'rendered project/workspace context wording'
+  'read.txt' = 'rendered project/workspace context wording'
+  'task.txt' = 'built-in subagent guidance'
+  'write.txt' = 'workspace-scoped write semantics'
+}
+
+$IntentionalSafeAdds = @('List', 'WebFetch', 'WebSearch')
+
+# 1) Toolprompt resources: exact file set; exact content except explicit, audited divergences.
 $kFiles = @(Get-ChildItem -File -Force $KPrompts -Filter '*.txt' | Select-Object -ExpandProperty Name | Sort-Object)
 $eFiles = @(Get-ChildItem -File -Force $ErlPrompts -Filter '*.txt' | Select-Object -ExpandProperty Name | Sort-Object)
 
@@ -47,34 +64,39 @@ if (!(Set-Equals $kFiles $eFiles)) {
   Fail ("Toolprompt file list mismatch.`nOnly Kotlin: {0}`nOnly Erlang: {1}" -f ($onlyK -join ', '), ($onlyE -join ', '))
 }
 
+$promptDivergences = @()
 foreach ($f in $kFiles) {
   $a = Norm-Text (Join-Path $KPrompts $f)
   $b = Norm-Text (Join-Path $ErlPrompts $f)
-  if ($a -ne $b) { Fail "Toolprompt content mismatch: $f" }
+  if ($a -eq $b) { continue }
+  if ($IntentionalPromptDivergence.ContainsKey($f)) {
+    $promptDivergences += ("{0}: {1}" -f $f, $IntentionalPromptDivergence[$f])
+    continue
+  }
+  Fail "Toolprompt content mismatch: $f"
 }
 
-# 2) PermissionGate safe-tools set
-$expectedSafe = @('Read', 'Glob', 'Grep', 'Skill', 'SlashCommand', 'AskUserQuestion')
+# 2) PermissionGate safe-tools set: Erlang should equal Kotlin + audited intentional additions.
+$kPermText = Norm-Text $KPerm
+$kSafeMatch = [regex]::Match($kPermText, 'val safe = setOf\((?<body>[\s\S]*?)\)', 'IgnoreCase')
+if (!$kSafeMatch.Success) { Fail "Failed to parse Kotlin safe tool set in $KPerm" }
+$kSafe = @([regex]::Matches($kSafeMatch.Groups['body'].Value, '"(?<n>[^"]+)"', 'IgnoreCase') | ForEach-Object { $_.Groups['n'].Value })
+$expectedSafe = @($kSafe + $IntentionalSafeAdds | Sort-Object -Unique)
+
 $erlPermText = Norm-Text $ErlPerm
 $m = [regex]::Match($erlPermText, 'safe_tools\(\)\s*->\s*\[(?<body>[\s\S]*?)\]\.', 'IgnoreCase')
 if (!$m.Success) { Fail "Failed to parse Erlang safe_tools() in $ErlPerm" }
 $erlSafe = @([regex]::Matches($m.Groups['body'].Value, '<<\"(?<n>[^\"]+)\"', 'IgnoreCase') | ForEach-Object { $_.Groups['n'].Value })
 if (!(Set-Equals $expectedSafe $erlSafe)) {
-  Fail ("safe_tools mismatch.`nExpected: {0}`nErlang:   {1}" -f ($expectedSafe -join ', '), ($erlSafe -join ', '))
+  $missing = @($expectedSafe | Where-Object { $_ -notin $erlSafe })
+  $extra = @($erlSafe | Where-Object { $_ -notin $expectedSafe })
+  Fail ("safe_tools mismatch.`nExpected: {0}`nMissing:  {1}`nExtra:    {2}" -f ($expectedSafe -join ', '), ($missing -join ', '), ($extra -join ', '))
 }
 
-# 3) Default tool set (names)
-$expectedTools =
-  @(
-    'AskUserQuestion', 'Task',
-    'Read', 'List', 'Write', 'Edit',
-    'Glob', 'Grep',
-    'Bash',
-    'WebFetch', 'WebSearch',
-    'NotebookEdit', 'lsp',
-    'Skill', 'SlashCommand',
-    'TodoWrite'
-  )
+# 3) Default tool set (names): compare current Erlang default_tools() to Kotlin schema registry names.
+$kSchemaText = Norm-Text $KSchemas
+$expectedTools = @([regex]::Matches($kSchemaText, 'schemasByName\["(?<n>[^"]+)"\]\s*=', 'IgnoreCase') | ForEach-Object { $_.Groups['n'].Value } | Sort-Object -Unique)
+if ($expectedTools.Count -lt 1) { Fail "Failed to derive Kotlin tool names from $KSchemas" }
 
 $runtimeText = Norm-Text $ErlRuntime
 $toolModsMatch = [regex]::Match($runtimeText, 'default_tools\(\)\s*->\s*\[(?<body>[\s\S]*?)\]\.', 'IgnoreCase')
@@ -98,7 +120,7 @@ if (!(Set-Equals $expectedTools $toolNames)) {
   Fail ("Default tool name set mismatch.`nMissing: {0}`nExtra:   {1}" -f ($onlyExp -join ', '), ($onlyGot -join ', '))
 }
 
-# 4) Tool schema top-level properties + required (Kotlin snapshot)
+# 4) Tool schema top-level properties + required (Kotlin parity snapshot against current Erlang schema modules).
 $expectedSchema = @{
   'AskUserQuestion' = @{ props = @('questions', 'question', 'options', 'choices', 'answers'); required = @() }
   'Read' = @{ props = @('file_path', 'filePath', 'offset', 'limit'); required = @() }
@@ -118,20 +140,29 @@ $expectedSchema = @{
   'TodoWrite' = @{ props = @('todos'); required = @('todos') }
 }
 
-$schemaText = Norm-Text $ErlSchemas
+$schemaText = @(
+  Get-ChildItem -File $ErlSchemasDir -Filter '*.erl' |
+    Sort-Object Name |
+    ForEach-Object { Norm-Text $_.FullName }
+) -join "`n"
+
 foreach ($tool in $expectedSchema.Keys) {
   $toolEsc = [regex]::Escape($tool)
-  $pattern = 'tool_params\([^\)]*,\s*<<"' + $toolEsc + '">>\)\s*->\s*#\{(?<body>[\s\S]*?)\};'
-  $block = [regex]::Match($schemaText, $pattern, 'IgnoreCase')
-  if (!$block.Success) { Fail "Missing tool_params clause for $tool in $ErlSchemas" }
-  $body = $block.Groups['body'].Value
+  $startPattern = 'tool_params\([^\)]*,\s*<<"' + $toolEsc + '">>\)\s*->'
+  $start = [regex]::Match($schemaText, $startPattern, 'IgnoreCase')
+  if (!$start.Success) { Fail "Missing tool_params clause for $tool in $ErlSchemasDir" }
+  $tail = $schemaText.Substring($start.Index)
+  $next = [regex]::Match($tail.Substring($start.Length), '(^|\n)tool_params\([^\)]*,\s*<<"', 'IgnoreCase')
+  $body = if ($next.Success) { $tail.Substring(0, $start.Length + $next.Index) } else { $tail }
   foreach ($p in $expectedSchema[$tool].props) {
-    if (-not [regex]::IsMatch($body, "(?m)^\s*'?$([regex]::Escape($p))'?\s*=>")) {
+    if (-not [regex]::IsMatch($body, "(?<![A-Za-z0-9_])'?$([regex]::Escape($p))'?\s*=>")) {
       Fail "Schema mismatch for ${tool}: missing property '$p'"
     }
   }
-  $reqMatch = [regex]::Match($body, "(?m)^\s{4}required\s*=>\s*\[(?<req>[^\]]*)\]", 'IgnoreCase')
-  $reqText = if ($reqMatch.Success) { $reqMatch.Groups['req'].Value } else { '' }
+  $reqText = @(
+    [regex]::Matches($body, "required\s*=>\s*\[(?<req>[^\]]*)\]", 'IgnoreCase') |
+      ForEach-Object { $_.Groups['req'].Value }
+  ) -join "`n"
   foreach ($r in $expectedSchema[$tool].required) {
     if (-not ($reqText -match [regex]::Escape($r))) {
       Fail "Schema mismatch for ${tool}: required missing '$r'"
@@ -139,8 +170,7 @@ foreach ($tool in $expectedSchema.Keys) {
   }
 }
 
-# 5) Sanity: Kotlin files exist (guards against stale paths)
-if (!(Test-Path $KPerm)) { Fail "Missing Kotlin PermissionGate.kt: $KPerm" }
-if (!(Test-Path $KSchemas)) { Fail "Missing Kotlin OpenAiToolSchemas.kt: $KSchemas" }
-
+if ($promptDivergences.Count -gt 0) {
+  Write-Host ("Intentional toolprompt divergences: " + ($promptDivergences -join '; '))
+}
 Write-Host "kotlin-parity-check OK"

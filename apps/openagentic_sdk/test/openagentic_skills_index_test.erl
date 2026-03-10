@@ -83,6 +83,40 @@ project_overrides_global_on_name_collision_test() ->
     restore_env("OPENAGENTIC_SDK_HOME", OldSdk)
   end.
 
+
+skill_root_skips_helper_subtrees_but_keeps_nested_skill_dirs_test() ->
+  Root = test_root(),
+  ProjectDir = filename:join([Root, "proj4"]),
+  AgentsHome = filename:join([Root, "agents4"]),
+  GlobalHome = filename:join([Root, "home4"]),
+  ok = filelib:ensure_dir(filename:join([AgentsHome, "x"])),
+  ok = filelib:ensure_dir(filename:join([GlobalHome, "x"])),
+
+  OldAgents = os:getenv("OPENAGENTIC_AGENTS_HOME"),
+  OldSdk = os:getenv("OPENAGENTIC_SDK_HOME"),
+  try
+    true = os:putenv("OPENAGENTIC_AGENTS_HOME", AgentsHome),
+    true = os:putenv("OPENAGENTIC_SDK_HOME", GlobalHome),
+
+    Outer = filename:join([ProjectDir, ".claude", "skills", "outer"]),
+    Nested = filename:join([Outer, "nested"]),
+    Helper = filename:join([Outer, "scripts", "helper"]),
+    ok = filelib:ensure_dir(filename:join([Nested, "x"])),
+    ok = filelib:ensure_dir(filename:join([Helper, "x"])),
+    ok = file:write_file(filename:join([Outer, "SKILL.md"]), <<"---\nname: outer\ndescription: outer\n---\n\n# Outer\n">>),
+    ok = file:write_file(filename:join([Nested, "SKILL.md"]), <<"---\nname: nested\ndescription: nested\n---\n\n# Nested\n">>),
+    ok = file:write_file(filename:join([Helper, "SKILL.md"]), <<"---\nname: helper\ndescription: helper\n---\n\n# Helper\n">>),
+
+    Infos = openagentic_skills:index(ProjectDir),
+    Names = [maps:get(name, I) || I <- Infos],
+    ?assert(lists:member(<<"outer">>, Names)),
+    ?assert(lists:member(<<"nested">>, Names)),
+    ?assertNot(lists:member(<<"helper">>, Names))
+  after
+    restore_env("OPENAGENTIC_AGENTS_HOME", OldAgents),
+    restore_env("OPENAGENTIC_SDK_HOME", OldSdk)
+  end.
+
 restore_env(Name, false) ->
   os:unsetenv(Name);
 restore_env(Name, Val) ->

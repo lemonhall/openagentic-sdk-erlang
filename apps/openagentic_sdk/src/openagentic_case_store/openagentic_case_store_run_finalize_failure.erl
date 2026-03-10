@@ -1,7 +1,8 @@
 -module(openagentic_case_store_run_finalize_failure).
--export([finalize_run_failure/9, maybe_write_failure_output/3, write_attempt_delivery_files/2]).
+-export([finalize_run_failure/10, maybe_write_failure_output/3, write_attempt_delivery_files/2]).
 
-finalize_run_failure(RootDir, CaseId, CaseDir, Task0, Run0, Attempt0, FailureClass, FailureSummary0, RawOutput) ->
+finalize_run_failure(RootDir, CaseId, CaseDir, Task0, Run0, Attempt0, FailureClass, FailureSummary0, RawOutput, Input0) ->
+  Input = openagentic_case_store_common_core:ensure_map(Input0),
   Now = openagentic_case_store_common_meta:now_ts(),
   TaskId = openagentic_case_store_common_meta:id_of(Task0),
   RunId = openagentic_case_store_common_meta:id_of(Run0),
@@ -67,7 +68,7 @@ finalize_run_failure(RootDir, CaseId, CaseDir, Task0, Run0, Attempt0, FailureCla
       run_attempt => Attempt1,
       exception_brief => ExceptionBrief,
       mail => FailureMail,
-      overview => openagentic_case_store_case_state:get_case_overview_map(RootDir, CaseId)
+      overview => maybe_response_overview(RootDir, CaseId, Input)
     },
   case RectificationMail of
     undefined -> {ok, Base};
@@ -90,3 +91,9 @@ write_attempt_delivery_files(ScratchDir, Delivery) ->
   ArtifactsBody = openagentic_json:encode_safe(#{artifacts => maps:get(artifacts, Delivery, [])}),
   ok = file:write_file(filename:join([ScratchDir, "facts.json"]), <<FactsBody/binary, "\n">>),
   ok = file:write_file(filename:join([ScratchDir, "artifacts.json"]), <<ArtifactsBody/binary, "\n">>).
+
+maybe_response_overview(RootDir, CaseId, Input) ->
+  case maps:get(include_overview, Input, true) of
+    false -> undefined;
+    _ -> openagentic_case_store_case_state:get_case_overview_map(RootDir, CaseId)
+  end.

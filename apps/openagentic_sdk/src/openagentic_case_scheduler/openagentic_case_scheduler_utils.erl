@@ -3,26 +3,51 @@
 
 compact_map(Map0) -> maps:filter(fun (_K, V) -> V =/= undefined end, ensure_map(Map0)).
 
-find_any(_Map, []) -> undefined;
-find_any(Map, [K | Rest]) ->
-  case maps:get(K, Map, undefined) of
-    undefined -> find_any(Map, Rest);
-    V -> V
+find_any(Map0, Keys0) ->
+  Map = ensure_map(Map0),
+  Keys = expand_keys(Keys0),
+  find_any_keys(Map, Keys).
+
+find_any_keys(_Map, []) -> undefined;
+find_any_keys(Map, [Key | Rest]) ->
+  case maps:find(Key, Map) of
+    {ok, Value} -> Value;
+    error -> find_any_keys(Map, Rest)
   end.
 
-get_in_map(Map0, [Key], Default) -> maps:get(Key, ensure_map(Map0), Default);
+get_in_map(Map0, [Key], Default) ->
+  case find_any(ensure_map(Map0), [Key]) of
+    undefined -> Default;
+    Value -> Value
+  end;
 get_in_map(Map0, [Key | Rest], Default) ->
-  case maps:get(Key, ensure_map(Map0), undefined) of
+  case find_any(ensure_map(Map0), [Key]) of
     undefined -> Default;
     Next -> get_in_map(Next, Rest, Default)
   end.
 
-get_bin(Map0, [Key], Default) -> to_bin(maps:get(Key, ensure_map(Map0), Default));
-get_bin(Map0, [Key | Rest], Default) ->
-  case maps:get(Key, ensure_map(Map0), undefined) of
+get_bin(Map0, Keys, Default) ->
+  case find_any(Map0, Keys) of
     undefined -> to_bin(Default);
-    Next -> get_bin(Next, Rest, Default)
+    Value -> to_bin(Value)
   end.
+
+expand_keys(Keys) ->
+  lists:foldl(
+    fun (Key, Acc) ->
+      case Key of
+        K when is_atom(K) -> [K, atom_to_binary(K, utf8) | Acc];
+        K when is_binary(K) ->
+          case catch binary_to_existing_atom(K, utf8) of
+            Atom when is_atom(Atom) -> [K, Atom | Acc];
+            _ -> [K | Acc]
+          end;
+        Other -> [Other | Acc]
+      end
+    end,
+    [],
+    Keys
+  ).
 
 ensure_map(M) when is_map(M) -> M;
 ensure_map(L) when is_list(L) -> maps:from_list(L);

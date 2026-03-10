@@ -233,6 +233,12 @@ Current local web server routes:
 - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` -> upsert one task-level `credential_binding`
 - `POST /api/cases/:case_id/tasks/:task_id/activate` -> activate a task after required bindings are satisfied
 - `POST /api/cases/:case_id/tasks/:task_id/runs/:run_id/retry` -> append a new `run_attempt` to an existing failed `monitoring_run`
+- `POST /api/cases/:case_id/observation-packs` -> create one `observation_pack` that groups task outputs into a reconsideration trigger unit
+- `POST /api/cases/:case_id/observation-packs/:pack_id/inspect` -> materialize one `inspection_review` snapshot for the pack; accepts optional `current_revision` and returns `revision_conflict` on stale writes
+- `POST /api/cases/:case_id/observation-packs/:pack_id/reconsideration-packages` -> freeze one versioned `reconsideration_package` plus ready-mail notification
+- `GET /api/cases/:case_id/reconsideration-packages/:package_id/preview` -> load the frozen reconsideration preview payload, including baseline facts, change facts, controversies, and lifecycle hints
+- `POST /api/cases/:case_id/reconsideration-packages/:package_id/defer` -> mark the package as `deferred` and continue observing
+- `POST /api/cases/:case_id/reconsideration-packages/:package_id/start` -> revalidate stale/superseded gates, allocate a new `deliberation_round` + `workflow_session_id`, inject `reconsideration_context`, and mark the package as consumed
 - `GET /api/inbox` -> query the unified cross-case inbox with status filtering
 - `GET /api/inbox/unread-count` -> get unified unread inbox count
 - `POST /api/cases/:case_id/mail/:mail_id/read` -> mark inbox items as read
@@ -257,6 +263,8 @@ Case governance also now includes `view/task-detail.html`, which surfaces task d
 Active tasks with `schedule_policy` are now scanned by `openagentic_case_scheduler`, so scheduled runs can materialize into persisted `monitoring_run` objects automatically. Run finalization now distinguishes `report_submitted` vs `needs_followup`, and contract/runtime failures emit `exception_brief` plus failure mail for governance follow-up.
 
 Phase 1 now also includes a case-local template library plus a unified inbox view. Templates live under `cases/<case_id>/meta/templates/...` and can be instantiated into fresh candidates without sharing a live task body; inbox data is aggregated from `meta/mail/` into `view/inbox.html` with read/archive/filter actions and corresponding JSON APIs.
+
+Phase 3 adds the inspection and reconsideration loop on top of those monitoring artifacts. `observation_pack`, `inspection_review`, and `reconsideration_package` objects now persist under the case tree, the overview API exposes them alongside tasks/mail, and the preview payload now freezes `based_on_round`, `baseline_facts`, `change_facts`, and controversy text for preview-first review. Review-to-package adoption backlinks are written back through `inspection_review.links.derived_briefing_id`, inspection now records `pending -> reviewing -> ready_for_reconsideration | insufficient` process history, versioned reconsideration packages now carry pack-local `version_no` plus semantic `display_code`, urgent briefs append `urgent_brief_triggered` entries into the case timeline, deferred packages are revalidated against stale/superseded conditions before restart, and new reconsideration rounds start with `reconsideration_context` already injected into the new workflow session instead of relying on ad-hoc prompt reconstruction.
 
 ## Tools and safety behavior
 

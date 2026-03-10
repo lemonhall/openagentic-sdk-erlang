@@ -30,7 +30,11 @@ normalize_keys(Map) when is_map(Map) -> maps:from_list([{normalize_key(K), norma
 normalize_keys(List) when is_list(List) -> [normalize_keys(Item) || Item <- List];
 normalize_keys(Other) -> Other.
 
-normalize_key(K) when is_binary(K) -> binary_to_atom(K, utf8);
+normalize_key(K) when is_binary(K) ->
+  case catch binary_to_existing_atom(K, utf8) of
+    Atom when is_atom(Atom) -> Atom;
+    _ -> K
+  end;
 normalize_key(K) -> K.
 
 id_of(Obj0) -> openagentic_case_scheduler_utils:get_in_map(openagentic_case_scheduler_utils:ensure_map(Obj0), [header, id], undefined).

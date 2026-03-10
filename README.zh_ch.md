@@ -233,6 +233,12 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 - `POST /api/cases/:case_id/tasks/:task_id/credential-bindings` -> 为任务创建或更新一个 `credential_binding`
 - `POST /api/cases/:case_id/tasks/:task_id/activate` -> 在授权条件满足后激活任务
 - `POST /api/cases/:case_id/tasks/:task_id/runs/:run_id/retry` -> 对已有失败的 `monitoring_run` 追加新的 `run_attempt`
+- `POST /api/cases/:case_id/observation-packs` -> 创建一个 `observation_pack`，把多项监测材料聚成“能否复议”的触发单元
+- `POST /api/cases/:case_id/observation-packs/:pack_id/inspect` -> 为观察包生成一份 `inspection_review` 检察快照；支持可选 `current_revision`，陈旧写入会返回 `revision_conflict`
+- `POST /api/cases/:case_id/observation-packs/:pack_id/reconsideration-packages` -> 冻结生成一份带版本语义的 `reconsideration_package`，并投递“可复议”内邮
+- `GET /api/cases/:case_id/reconsideration-packages/:package_id/preview` -> 读取冻结后的复议卷宗预览内容，包括基线事实、变化事实、争议正文与生命周期提示
+- `POST /api/cases/:case_id/reconsideration-packages/:package_id/defer` -> 把卷宗标记为 `deferred`，继续观察
+- `POST /api/cases/:case_id/reconsideration-packages/:package_id/start` -> 在 stale / superseded 门禁重新校验通过后，分配新的 `deliberation_round` 与 `workflow_session_id`，注入 `reconsideration_context`，并把卷宗标记为已被该轮消费
 - `GET /api/inbox` -> 读取统一信箱，并支持状态筛选
 - `GET /api/inbox/unread-count` -> 读取统一信箱未读计数
 - `POST /api/cases/:case_id/mail/:mail_id/read` -> 标记内邮为已读
@@ -255,6 +261,8 @@ workflow 子系统现在已经不是占位实现了，代码里已经支持：
 案卷治理现在也补上了 `view/task-detail.html`：可查看任务定义、版本历史、最新修订差异、修订引入新凭证要求时的重授权提示、授权状态、已落盘的运行记录、正式交付物列表，并通过独立的授权接驳表单维护 `credential_binding`，只保存 `material_ref` 引用而不把敏感材料本体写进任务主 JSON。Phase 2 还补上了手动 `run/retry` API，用于驱动监测执行与失败重试。
 
 Phase 1 现在还补上了案卷级模板库与统一信箱：模板落在 `cases/<case_id>/meta/templates/...` 与模板工作区中，可被实例化为新的候选任务，但不与正式任务共享执行体；统一信箱由各案卷 `meta/mail/` 聚合到 `view/inbox.html`，支持已读、归档、筛选与对应 JSON API。
+
+Phase 3 在此基础上补上了“检察验卷 -> 卷宗预览 -> 是否开启复议”的闭环。`observation_pack`、`inspection_review` 与 `reconsideration_package` 现在都会正式落盘到案卷目录；总览 API 会把这些对象一并暴露出来；`view/reconsideration-preview.html` 也已经能展示 `based_on_round`、`baseline_facts`、`change_facts`、争议正文与生命周期提示。与此同时，`inspection_review.links.derived_briefing_id` 会在卷宗生成后回填 adoption 回链，检察过程现在会显式记录 `pending -> reviewing -> ready_for_reconsideration | insufficient` 状态轨迹，版本化卷宗会携带 pack-local `version_no` 与语义化 `display_code`，`urgent_brief` 触发也会追加进 case timeline，`deferred` 卷宗会在启动前重新经过 stale / superseded 门禁校验，新复议轮次则会把 `reconsideration_context` 直接注入新建 session，而不是依赖临时 prompt 重组。
 
 ## 工具与安全行为
 

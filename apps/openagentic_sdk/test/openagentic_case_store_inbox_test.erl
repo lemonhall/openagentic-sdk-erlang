@@ -64,9 +64,9 @@ global_inbox_read_archive_filter_test() ->
     ),
   ?assertEqual(<<"read">>, deep_get(ReadMail, [state, status])),
 
-  {ok, InboxUnread} = openagentic_case_store:list_inbox(Root, #{status => <<"unread">>}),
-  ?assertEqual([], InboxUnread),
-  {ok, InboxRead} = openagentic_case_store:list_inbox(Root, #{status => <<"read">>}),
+  {ok, InboxUnread} = openagentic_case_store:list_inbox(Root, #{case_id => CaseId, status => <<"unread">>}),
+  ?assertEqual(false, lists:any(fun (Item) -> id_of(Item) =:= MailId end, InboxUnread)),
+  {ok, InboxRead} = openagentic_case_store:list_inbox(Root, #{case_id => CaseId, status => <<"read">>}),
   ?assert(lists:any(fun (Item) -> id_of(Item) =:= MailId end, InboxRead)),
 
   {ok, ArchivedMail} =
@@ -77,6 +77,33 @@ global_inbox_read_archive_filter_test() ->
   ?assertEqual(<<"archived">>, deep_get(ArchivedMail, [state, status])),
   {ok, InboxArchived} = openagentic_case_store:list_inbox(Root, #{status => <<"archived">>}),
   ?assert(lists:any(fun (Item) -> id_of(Item) =:= MailId end, InboxArchived)),
+  ok.
+
+update_mail_state_only_updates_target_mail_test() ->
+  Root = tmp_root(),
+  {CaseId, _RoundId, _Sid} = create_case_fixture(Root),
+  {ok, Inbox0} = openagentic_case_store:list_inbox(Root, #{case_id => CaseId, status => <<"unread">>}),
+  ?assert(length(Inbox0) >= 2),
+  [Mail0, OtherMail | _] = Inbox0,
+  MailId = id_of(Mail0),
+  OtherMailId = id_of(OtherMail),
+
+  {ok, ReadMail} =
+    openagentic_case_store:update_mail_state(
+      Root,
+      #{case_id => CaseId, mail_id => MailId, status => <<"read">>, acted_by_op_id => <<"lemon">>}
+    ),
+  ?assertEqual(<<"read">>, deep_get(ReadMail, [state, status])),
+
+  {ok, InboxUnread} = openagentic_case_store:list_inbox(Root, #{case_id => CaseId, status => <<"unread">>}),
+  UnreadIds = [id_of(Item) || Item <- InboxUnread],
+  ?assertEqual(false, lists:member(MailId, UnreadIds)),
+  ?assert(lists:member(OtherMailId, UnreadIds)),
+
+  {ok, InboxRead} = openagentic_case_store:list_inbox(Root, #{case_id => CaseId, status => <<"read">>}),
+  ReadIds = [id_of(Item) || Item <- InboxRead],
+  ?assert(lists:member(MailId, ReadIds)),
+  ?assertEqual(false, lists:member(OtherMailId, ReadIds)),
   ok.
 
 discard_candidate_marks_candidate_discarded_test() ->
@@ -98,4 +125,3 @@ discard_candidate_marks_candidate_discarded_test() ->
 
   ?assertEqual(<<"discarded">>, deep_get(Discarded, [state, status])),
   ok.
-

@@ -69,7 +69,7 @@ execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAtte
         {ok, Delivery} ->
           case openagentic_case_store_run_contract:validate_report_contract(Version, Delivery) of
             ok ->
-              openagentic_case_store_run_finalize_success:finalize_run_success(RootDir, CaseId, CaseDir, Task1, Version, Run1, Attempt0, Delivery);
+              openagentic_case_store_run_finalize_success:finalize_run_success(RootDir, CaseId, CaseDir, Task1, Version, Run1, Attempt0, Delivery, Input);
             {error, FailureClass, FailureSummary} ->
               openagentic_case_store_run_finalize_failure:finalize_run_failure(
                 RootDir,
@@ -80,7 +80,8 @@ execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAtte
                 Attempt0,
                 FailureClass,
                 FailureSummary,
-                FinalText
+                FinalText,
+                Input
               )
           end;
         {error, FailureClass, FailureSummary} ->
@@ -93,7 +94,8 @@ execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAtte
             Attempt0,
             FailureClass,
             FailureSummary,
-            FinalText
+            FinalText,
+            Input
           )
       end;
     {error, {runtime_error, Reason, _SessionId}} ->
@@ -107,7 +109,8 @@ execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAtte
         Attempt0,
         FailureClass,
         FailureSummary,
-        undefined
+        undefined,
+        Input
       );
     {error, Reason} ->
       {FailureClass, FailureSummary} = openagentic_case_store_run_failure_classify:classify_runtime_failure(Reason),
@@ -120,6 +123,7 @@ execute_run_attempt(RootDir, CaseId, CaseDir, Task0, Version, Run0, PreviousAtte
         Attempt0,
         FailureClass,
         FailureSummary,
-        undefined
+        undefined,
+        Input
       )
   end.

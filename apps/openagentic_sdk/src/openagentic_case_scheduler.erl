@@ -17,7 +17,7 @@ run_once(Opts0) ->
 
 init(_InitArg) ->
   _ = erlang:send_after(?DEFAULT_TICK_MS, self(), tick),
-  {ok, openagentic_case_scheduler_state_refresh:init_state(?DEFAULT_TICK_MS)}.
+  {ok, (openagentic_case_scheduler_state_refresh:init_state(?DEFAULT_TICK_MS))#{scan_worker_ref => undefined}}.
 
 handle_call({configure, Opts0}, _From, State0) ->
   {reply, ok, openagentic_case_scheduler_state_refresh:apply_config(Opts0, State0, ?DEFAULT_TICK_MS)};
@@ -32,10 +32,29 @@ handle_info(tick, State0) ->
   _ = erlang:send_after(TickMs, self(), tick),
   case maps:get(enabled, State0, false) of
     true ->
-      _ = catch openagentic_case_scheduler_due_scan:scan_once(openagentic_case_scheduler_state_refresh:scan_opts(State0)),
-      {noreply, State0};
+      {noreply, maybe_start_scan(State0)};
     false ->
       {noreply, State0}
   end;
+handle_info({'DOWN', Ref, process, _Pid, _Reason}, State0) ->
+  case maps:get(scan_worker_ref, State0, undefined) of
+    Ref -> {noreply, State0#{scan_worker_ref => undefined}};
+    _ -> {noreply, State0}
+  end;
 handle_info(_Info, State) ->
   {noreply, State}.
+
+maybe_start_scan(State0) ->
+  case maps:get(scan_worker_ref, State0, undefined) of
+    undefined ->
+      ScanOpts = openagentic_case_scheduler_state_refresh:scan_opts(State0),
+      {_Pid, Ref} =
+        erlang:spawn_monitor(
+          fun () ->
+            _ = catch openagentic_case_scheduler_due_scan:scan_once(ScanOpts),
+            ok
+          end
+        ),
+      State0#{scan_worker_ref => Ref};
+    _ -> State0
+  end.

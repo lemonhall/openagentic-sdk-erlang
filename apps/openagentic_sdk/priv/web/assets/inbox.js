@@ -115,6 +115,7 @@ function renderMailList(items) {
           </div>
           <div class="entityBody">${escapeHtml(spec.summary || "")}</div>
           <div class="caseActions">
+            ${ext.preview_url ? `<a class="btn primary" href="${escapeHtml(ext.preview_url)}">查看卷宗</a>` : ""}
             <button type="button" class="btn" data-action="read" data-case-id="${escapeHtml(links.case_id || "")}" data-id="${escapeHtml(header.id || "")}">标记已读</button>
             <button type="button" class="btn" data-action="archive" data-case-id="${escapeHtml(links.case_id || "")}" data-id="${escapeHtml(header.id || "")}">归档</button>
           </div>

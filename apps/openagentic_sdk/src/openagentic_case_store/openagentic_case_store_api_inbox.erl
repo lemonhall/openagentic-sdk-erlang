@@ -20,7 +20,10 @@ list_inbox(RootDir0, Input0) ->
               true ->
                 CaseObj = openagentic_case_store_repo_persist:read_json(openagentic_case_store_repo_paths:case_file(CaseDir)),
                 MailItems =
-                  [openagentic_case_store_mail:decorate_global_mail(Item, CaseObj) || Item <- openagentic_case_store_repo_readers:read_objects_in_dir(filename:join([CaseDir, "meta", "mail"]))],
+                  [
+                    openagentic_case_store_mail:decorate_global_mail(Item, CaseObj)
+                   || Item <- openagentic_case_store_repo_readers:read_mail_objects_indexed(CaseDir, StatusFilter)
+                  ],
                 Acc ++ MailItems
             end
         end
@@ -53,16 +56,8 @@ update_mail_state(RootDir0, Input0) ->
           case openagentic_case_store_task_auth_validation:maybe_check_expected_revision(Input, Mail0) of
             ok ->
               Now = openagentic_case_store_common_meta:now_ts(),
-              MailDir = filename:join([CaseDir, "meta", "mail"]),
               Mail1 = openagentic_case_store_mail:update_mail_status(Mail0, Input, Status, Now),
-              lists:foreach(
-                fun (Path) ->
-                  MailObj0 = openagentic_case_store_repo_persist:read_json(Path),
-                  MailObj1 = openagentic_case_store_mail:update_mail_status(MailObj0, Input, Status, Now),
-                  ok = openagentic_case_store_repo_persist:persist_case_object(CaseDir, Path, MailObj1)
-                end,
-                openagentic_case_store_repo_readers:json_files(MailDir)
-              ),
+              ok = openagentic_case_store_repo_persist:persist_case_object(CaseDir, MailPath, Mail1),
               ok = openagentic_case_store_case_state:rebuild_indexes(RootDir, CaseId),
               {ok, Mail1};
             {error, Reason} -> {error, Reason}
